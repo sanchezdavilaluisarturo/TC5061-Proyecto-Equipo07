@@ -12,7 +12,7 @@ El flujo sigue la convención de datos de CCDS (`raw` → `interim` → `process
 
 | Etapa | Entrada | Código (CCDS) | Salida |
 |---|---|---|---|
-| **1. Ingesta** | CSV del portal | `dataset.py` | `data/raw/` con los CSV originales y `manifest.json` (registros y SHA-256) |
+| **1. Ingesta** | CSV del portal | `dataset.py` | `data/raw/` con los CSV originales y el manifiesto `references/fuentes-datos.csv` (registros y SHA-256) |
 | **2. Limpieza** | `data/raw/` | `dataset.py` | `data/interim/` con Parquet limpio (columnas, fechas y tipos normalizados) |
 | **3. Agregación y features** | `data/interim/` | `features.py` | `data/processed/` con tablas de features por estación-hora y por estación |
 | **4. Partición** | `data/processed/` | `features.py` | Conjuntos de entrenamiento, validación y prueba (temporal) |

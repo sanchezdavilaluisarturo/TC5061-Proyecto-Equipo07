@@ -207,14 +207,17 @@ Reglas aplicadas por `dataset.limpiar` y documentadas en `0.03-lasd-limpieza-p3`
 
 ![Arquitectura del sistema](references/arquitectura.png)
 
-| Componente | Herramienta | Justificación |
-|---|---|---|
-| Ingesta (CLI) | Python + Typer + loguru | Comando único, sin pasos manuales |
-| Almacenamiento | Parquet (pyarrow) | Columnar y comprimido para millones de viajes |
-| Versionado de datos | Manifiesto JSON + `hashlib` en Git | Trazabilidad simple: nº de registros y SHA-256 por archivo |
-| Procesamiento | pandas | Suficiente para agregados por estación/hora |
-| Modelado | scikit-learn, XGBoost, Optuna | Baselines y candidatos para regresión, clasificación y clustering |
-| Experimentos | MLflow Tracking | Parámetros, métricas, tags (equipo, pregunta, commit) y artefactos |
+| Componente | Herramienta | Justificación | Lectura |
+|---|---|---|---|
+| Formulación | ML Canvas | Fija para cada pregunta qué se predice, para quién y qué decisión habilita, antes de escribir código | Dorard (2018) |
+| Ingesta (CLI) | Python + Typer + loguru (`dataset.py`) | Un comando reconstruye los mismos datos en cualquier computadora, sin pasos manuales | Treveil et al. (2020) |
+| Almacenamiento | Parquet (pyarrow) | Formato columnar y comprimido: se leen solo las columnas que usa cada pregunta sobre 27 millones de viajes | Huyen (2022) |
+| Versionado de datos | Manifiesto CSV (`references/fuentes-datos.csv`) + `hashlib`, versionado en Git | Registros y SHA-256 por archivo; su hash es el `data_version` que se registra en cada run | Huyen (2022) |
+| Procesamiento y features | pandas + scikit-learn (`features.py`) | Suficiente para agregados por estación y hora; los transformers aprenden solo con train, sin fuga | Huyen (2022) |
+| Modelado | scikit-learn y XGBoost (`modeling/`) | Un baseline sencillo por pregunta antes de los candidatos, para medir cuánto aporta cada modelo | Huyen (2022) |
+| Experimentos | MLflow Tracking, servidor del equipo (https://mlflow.equipo7mlops.com) | Parámetros, métricas, etiquetas (equipo, pregunta, commit), artefactos y modelo en un solo lugar compartido | Treveil et al. (2020); MLflow (s.f.) |
+| Código y colaboración | Cookiecutter Data Science + Git/GitHub (ramas, PR y revisión) | Estructura estándar y cambios revisados antes de integrarse | Wilson (2022) |
+| Automatización | Makefile + GitHub Actions | Calidad (ruff y pytest) en cada PR y entrenamiento de cada pregunta con un comando | Treveil et al. (2020) |
 
 Etapas por pregunta (limpieza, agregaciones, features, entrenamiento y evaluación): [Diseño del pipeline de ML](references/pipeline-ml.md).
 
@@ -401,6 +404,7 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 - Commits con [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/) en español, sin alcance entre paréntesis y mencionando la pregunta: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `build:`, `ci:`, `style:`, `chore:`.
 - Cada integrante abre al menos un PR y revisa al menos uno de otro integrante.
 - En cada PR, GitHub Actions corre `ruff` y `pytest` (`TC5061-Proyecto-Equipo07.yml`).
+- El código entra a `EDA` siempre por PR. En el cierre de cada entrega, los ajustes de documentación (README, `references/` y diagramas) se suben directo a `EDA`.
 
 ## Buenas prácticas
 
@@ -427,6 +431,18 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 | Luis Arturo Sánchez Davila | A01840576 | P3 (clustering de estaciones); estructura del repositorio y CI |
 
 ## Referencias
+
+Dorard, L. (2018, 9 de marzo). *From data to AI with the Machine Learning Canvas (Part I)*. Own Machine Learning (Medium). https://medium.com/louis-dorard/from-data-to-ai-with-the-machine-learning-canvas-part-i-d171b867b047
+
+Huyen, C. (2022). *Designing machine learning systems: An iterative process for production-ready applications*. O'Reilly Media.
+
+MiBici. (s.f.). *Datos abiertos* [Conjunto de datos]. Sistema de Bicicleta Pública del Área Metropolitana de Guadalajara. https://mibici.net/es/datos-abiertos/
+
+MLflow. (s.f.). *MLflow Tracking* [Documentación]. https://mlflow.org/docs/latest/ml/tracking/
+
+Treveil, M., Omont, N., Stenac, C., Lefevre, K., Phan, D., Zentici, J., Lavoillotte, A., Miyazaki, M., & Heidmann, L. (2020). *Introducing MLOps: How to scale machine learning in the enterprise*. O'Reilly Media.
+
+Wilson, B. (2022). *Machine learning engineering in action*. Manning Publications.
 
 ### Uso de herramientas de inteligencia artificial
 
