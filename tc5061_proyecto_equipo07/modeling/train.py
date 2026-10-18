@@ -35,10 +35,10 @@ import warnings
 from loguru import logger
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import (
     average_precision_score,
@@ -56,19 +56,18 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 import typer
+from xgboost import XGBRegressor
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import dataset, plots
 from tc5061_proyecto_equipo07.features import (
+    P1NivelEstacion,
     p2_preparar_conjuntos,
     p3_construir_caracteristicas,
 )
-from tc5061_proyecto_equipo07.modeling.p1_modelos import (
-    P1_DESCRIPCIONES,
-    P1_MODELOS,
-    p1_construir_modelo,
-)
 from tc5061_proyecto_equipo07.modeling.predict import (
+    p1_predecir,
+    p1_predecir_por_zona,
     p2_decidir_clase,
     p3_estabilidad_ari,
     p3_reasignar_grupos,
@@ -930,6 +929,58 @@ def p3_alternativo(
 # ---------------------------------------------------------------------------------------------
 
 
+# Por qué estos candidatos (según el EDA de P1):
+# - El target es un conteo con 44% de ceros y varianza ~4 veces la media: la pérdida Poisson
+#   modela conteos y nunca predice viajes negativos.
+# - La tabla tiene ~16M de filas: los dos usan histogramas y entrenan en minutos.
+# - Los rezagos de estaciones nuevas vienen vacíos (NaN): los dos los manejan sin imputar.
+# - La demanda depende de combinaciones (estación × hora × día): los árboles las capturan
+#   sin crearlas a mano.
+# HGB viene en sklearn; XGBoost es el estándar de la industria y sirve para comparar.
+
+
+class P1BaselinePromedio(BaseEstimator, RegressorMixin):
+    """Predice el promedio de la misma hora en las semanas anteriores (baseline estacional).
+
+    Si una estación-hora no tiene historia (estación nueva), usa su nivel de train y, si tampoco
+    existe, el nivel del sistema para esa hora y día. Tiene la misma interfaz `fit`/`predict` que
+    los modelos candidatos, así que se evalúa y registra con las mismas funciones.
+    """
+
+    def fit(self, X: pd.DataFrame, y) -> "P1BaselinePromedio":
+        self.nivel_ = P1NivelEstacion().fit(X, y)
+        return self
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        niveles = self.nivel_.transform(X)
+        prediccion = X[f"viajes_promedio_{cfg.P1_SEMANAS_PROMEDIO}sem"].to_numpy(
+            "float64", copy=True
+        )
+        for respaldo in ["viajes_nivel_estacion", "viajes_nivel_sistema"]:
+            faltante = np.isnan(prediccion)
+            prediccion[faltante] = niveles[respaldo].to_numpy("float64")[faltante]
+        return np.nan_to_num(prediccion, nan=0.0)
+
+
+def p1_construir_modelo(clave: str, semilla: int = cfg.SEMILLA):
+    """Regresa el modelo sin entrenar: baseline, HGB o XGBoost (estos dos con el nivel de train)."""
+    if clave == "baseline":
+        return P1BaselinePromedio()
+    if clave == "hgb":
+        regresor = HistGradientBoostingRegressor(
+            **cfg.P1_PARAMETROS_HGB, categorical_features="from_dtype", random_state=semilla
+        )
+    elif clave == "xgb":
+        regresor = XGBRegressor(
+            **cfg.P1_PARAMETROS_XGB, enable_categorical=True, random_state=semilla
+        )
+    else:
+        raise ValueError(
+            f"Modelo de P1 desconocido: {clave} (opciones: {', '.join(cfg.P1_MODELOS)})"
+        )
+    return Pipeline([("nivel", P1NivelEstacion()), ("modelo", regresor)])
+
+
 def p1_cargar_conjuntos(ruta: Path = cfg.RUTA_P1_DEMANDA) -> dict[str, pd.DataFrame]:
     """Lee la tabla de P1 y regresa train, valid y test (las horas en `brecha` se descartan)."""
     if not ruta.exists():
@@ -945,7 +996,7 @@ def p1_cargar_conjuntos(ruta: Path = cfg.RUTA_P1_DEMANDA) -> dict[str, pd.DataFr
 
 def p1_evaluar(modelo, datos: pd.DataFrame, conjunto: str) -> tuple[dict[str, float], np.ndarray]:
     """Regresa ({conjunto}_mae, {conjunto}_rmse) y las predicciones del modelo en `datos`."""
-    prediccion = modelo.predict(datos[cfg.P1_VARIABLES])
+    prediccion = p1_predecir(modelo, datos)
     metricas = {
         f"{conjunto}_mae": float(mean_absolute_error(datos["viajes"], prediccion)),
         f"{conjunto}_rmse": float(root_mean_squared_error(datos["viajes"], prediccion)),
@@ -972,6 +1023,15 @@ def p1_serie_diaria(datos: pd.DataFrame, prediccion: np.ndarray) -> pd.DataFrame
     """Suma por día de los viajes reales y predichos de todas las estaciones."""
     dia = datos["hora_inicio"].dt.normalize()
     return pd.DataFrame({"real": datos["viajes"], "prediccion": prediccion}).groupby(dia).sum()
+
+
+def p1_mae_por_zona(datos: pd.DataFrame, prediccion: np.ndarray) -> pd.DataFrame:
+    """MAE diario por zona (municipio): el nivel al que el operador planea la flota."""
+    por_zona = p1_predecir_por_zona(datos, prediccion)
+    error = (por_zona["real"] - por_zona["prediccion"]).abs()
+    resumen = error.groupby(por_zona["zona"], observed=True).agg(mae_diario="mean", dias="size")
+    resumen["viajes_diarios_promedio"] = por_zona.groupby("zona", observed=True)["real"].mean()
+    return resumen.round(2)
 
 
 def p1_curva_aprendizaje(
@@ -1024,7 +1084,7 @@ def p1_guardar_diagnosticos(
     clave: str, modelo, conjuntos: dict[str, pd.DataFrame], predicciones: dict[str, np.ndarray]
 ) -> tuple[list[Path], pd.DataFrame | None]:
     """Guarda en reports/figures/ las gráficas y tablas de un modelo; regresa rutas y curva."""
-    carpeta, nombre = cfg.FIGURES_DIR, P1_MODELOS[clave][0]
+    carpeta, nombre = cfg.FIGURES_DIR, cfg.P1_MODELOS[clave][0]
     valid, test = conjuntos["valid"], conjuntos["test"]
     mae_hora = pd.DataFrame(
         {
@@ -1036,9 +1096,12 @@ def p1_guardar_diagnosticos(
     mae_hora.round(4).to_csv(carpeta / f"p1_{clave}_mae_por_hora.csv")
     peores = p1_peores_estaciones(test, predicciones["test"])
     peores.to_csv(carpeta / f"p1_{clave}_peores_estaciones_test.csv")
+    zonas = p1_mae_por_zona(test, predicciones["test"])
+    zonas.to_csv(carpeta / f"p1_{clave}_mae_por_zona_test.csv")
     rutas = [
         carpeta / f"p1_{clave}_mae_por_hora.csv",
         carpeta / f"p1_{clave}_peores_estaciones_test.csv",
+        carpeta / f"p1_{clave}_mae_por_zona_test.csv",
     ]
     rutas.append(
         plots.p1_guardar_figura(
@@ -1134,7 +1197,7 @@ def p1_registrar_run(
         raise ValueError("MLFLOW_TRACKING_URI no está definida: copiar .env.example a .env")
     mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
     mlflow.set_experiment(cfg.EXPERIMENTO_MLFLOW)
-    nombre_run, etapa, familia = P1_MODELOS[clave]
+    nombre_run, etapa, familia = cfg.P1_MODELOS[clave]
     with mlflow.start_run(run_name=nombre_run) as corrida:
         mlflow.set_tags(
             {
@@ -1144,7 +1207,7 @@ def p1_registrar_run(
                 "autor": "Daniel Sánchez Hernández",
                 "stage": etapa,
                 "model_family": familia,
-                "mlflow.note.content": P1_DESCRIPCIONES[clave],
+                "mlflow.note.content": cfg.P1_DESCRIPCIONES[clave],
             }
         )
         mlflow.log_params(parametros)
@@ -1178,7 +1241,7 @@ def p1_entrenar(
     resumen = {}
     for clave in claves:
         modelo = p1_construir_modelo(clave)
-        logger.info(f"Entrenando {P1_MODELOS[clave][0]}")
+        logger.info(f"Entrenando {cfg.P1_MODELOS[clave][0]}")
         inicio = time.perf_counter()
         modelo.fit(train[cfg.P1_VARIABLES], train["viajes"])
         # El run se abre después de entrenar, así que su duración en MLflow no incluye el fit
@@ -1188,8 +1251,8 @@ def p1_entrenar(
             resultado, predicciones[conjunto] = p1_evaluar(modelo, conjuntos[conjunto], conjunto)
             metricas.update(resultado)
         artefactos, curva = p1_guardar_diagnosticos(clave, modelo, conjuntos, predicciones)
-        resumen[P1_MODELOS[clave][0]] = metricas
-        logger.info(f"{P1_MODELOS[clave][0]}: {metricas}")
+        resumen[cfg.P1_MODELOS[clave][0]] = metricas
+        logger.info(f"{cfg.P1_MODELOS[clave][0]}: {metricas}")
         if registrar:
             p1_registrar_run(
                 clave,
