@@ -1,0 +1,4 @@
+,segundos_entrenamiento,valid_mae,valid_rmse,test_mae,test_rmse
+p1-xgb-poisson,67.2,0.9761,1.5639,0.9952,1.6781
+p1-hgb-poisson,72.5,0.9928,1.6157,1.0082,1.7138
+p1-baseline-promedio-4sem,1.6,1.0189,1.6539,1.0146,1.75
