@@ -1,7 +1,9 @@
-"""Features de P1 (demanda por estación-hora) y de P3 (clustering de estaciones).
+"""Features de P1 (demanda por estación-hora), P2 y P3 (clustering de estaciones).
 
 P1: lee data/processed/viajes_limpios_AAAA-MM_AAAA-MM.parquet (`make data`) y deja
 data/processed/p1_demanda_estacion_hora.parquet con el target y sus variables.
+P2: lee data/processed/viajes_limpios_AAAA-MM_AAAA-MM.parquet (`make data`) y deja
+data/processed/p2_cambios_estacion_bin.parquet
 P3: lee data/processed/viajes_modelado_AAAA-MM_AAAA-MM.parquet (`dataset p3-particionar`) y deja
 estaciones_train.parquet y demanda_estacion_hora.parquet en data/processed/.
 
@@ -12,6 +14,7 @@ from loguru import logger
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_is_fitted
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
@@ -469,7 +472,8 @@ class P1NivelEstacion(BaseEstimator, TransformerMixin):
 
 @app.callback()
 def p3_ayuda_features():
-    """Features de P1 (demanda por estación-hora) y de P3 (tablas de estaciones y de demanda)."""
+    """Features de P1 (demanda por estación-hora), P2 (riesgo por estación-bin) y P3 (tablas de
+    estaciones y de demanda)."""
 
 
 @app.command()
@@ -518,6 +522,17 @@ def p3_features(mes_inicio: str = cfg.MES_INICIO, mes_fin: str = cfg.MES_FIN):
     demanda.to_parquet(cfg.RUTA_DEMANDA_ESTACION_HORA, index=False)
     logger.info(f"Demanda estación-hora: {len(demanda)} filas | fuera de la rejilla: {excluidos}")
     logger.success("Features de P3 listas en data/processed/")
+
+
+@app.command()
+def p2_features():
+    """Deja p2_cambios_estacion_bin.parquet en data/processed/ (etiqueta y variables de P2)."""
+    viajes, estaciones = p2_cargar_viajes()
+    cambios = p2_construir_caracteristicas(viajes, estaciones)
+    del viajes
+    cfg.PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    cambios.to_parquet(cfg.RUTA_P2_CAMBIOS, index=False)
+    logger.success(f"{cfg.RUTA_P2_CAMBIOS.name}: {len(cambios)} filas estación-bin")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -721,7 +736,7 @@ def p2_construir_caracteristicas(
     h_bins: int = cfg.P2_H_BINS,
     alfa: float = cfg.P2_ALFA,
 ) -> pd.DataFrame:
-    """Regresa la tabla estación-bin con las columnas de P2_FEATURES y la clase a predecir.
+    """Regresa la tabla estación-bin con las columnas de P2_FEATURES_SIN_HISTORICO y la clase a predecir.
     Limitación importante: por definición del planteamiento, los últimos h_bins registros por día
     no tendrán clase de riesgo a clasificar. Estos registros se filtran.
     """
@@ -743,7 +758,7 @@ def p2_construir_caracteristicas(
     cambios["es_fin_semana"] = (cambios["bin"].dt.dayofweek >= 5).astype(int)
 
     # Optimización de memoria
-    columnas_salida = cfg.P2_FEATURES + ["clase", "estacion", "dia", "hora_idx"]
+    columnas_salida = cfg.P2_FEATURES_SIN_HISTORICO + ["clase", "estacion", "dia", "hora_idx"]
     cambios = cambios[columnas_salida]
     for c in cambios.select_dtypes("integer").columns:
         cambios[c] = pd.to_numeric(cambios[c], downcast="integer")  # sin pérdida
@@ -753,9 +768,94 @@ def p2_construir_caracteristicas(
 
     logger.success(
         f"Features de P2 listas: {len(cambios)} filas estación-bin, "
-        f"{cambios['estacion'].nunique()} estaciones, {len(cfg.P2_FEATURES)} features"
+        f"{cambios['estacion'].nunique()} estaciones, {len(cfg.P2_FEATURES_SIN_HISTORICO)} features"
     )
     return cambios
+
+
+def p2_obtener_cortes_temporales(
+    cambios: pd.DataFrame, dias_test: int = cfg.P2_DIAS_TEST, dias_val: int = cfg.P2_DIAS_VAL
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Regresa (corte_val, corte_test): primer día de validación y primer día de test."""
+    corte_test = cambios["dia"].max() - pd.Timedelta(days=dias_test - 1)
+    corte_val = corte_test - pd.Timedelta(days=dias_val)
+    return corte_val, corte_test
+
+
+class P2HistoriaHastaAyer(BaseEstimator):
+    """Frecuencia de cada riesgo en los días previos de la misma estación, tipo de día y hora,
+    suavizada hacia la frecuencia global del periodo de fit. No usa el día actual ni el futuro.
+
+    fit() aprende solo la frecuencia global; transform() calcula la historia sobre la tabla que
+    reciba (necesita estacion, es_fin_semana, hora_idx, dia y clase).
+    """
+
+    def __init__(self, peso_historico: int = cfg.P2_PESO_HISTORICO):
+        self.peso_historico = peso_historico
+
+    def fit(self, X: pd.DataFrame, y=None) -> "P2HistoriaHastaAyer":
+        self.frec_global_ = {
+            "sin_bicis": float((X["clase"] == 1).mean()),
+            "sin_anclajes": float((X["clase"] == 2).mean()),
+        }
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        check_is_fitted(self, "frec_global_")
+        X = X.sort_values(["estacion", "es_fin_semana", "hora_idx", "dia"])
+        X["es_sin_bicis"] = (X["clase"] == 1).astype("int8")
+        X["es_sin_anclajes"] = (X["clase"] == 2).astype("int8")
+
+        # Días previos de cada estación x tipo de día x hora; la suma excluye el día actual y el
+        # peso_historico jala la frecuencia hacia la global cuando hay pocos días de historia
+        g = X.groupby(["estacion", "es_fin_semana", "hora_idx"], sort=False)
+        dias_previos = g.cumcount()
+        f = self.frec_global_
+        X["hist_sin_bicis"] = (
+            g["es_sin_bicis"].cumsum() - X["es_sin_bicis"] + self.peso_historico * f["sin_bicis"]
+        ) / (dias_previos + self.peso_historico)
+        X["hist_sin_anclajes"] = (
+            g["es_sin_anclajes"].cumsum()
+            - X["es_sin_anclajes"]
+            + self.peso_historico * f["sin_anclajes"]
+        ) / (dias_previos + self.peso_historico)
+        return X
+
+
+def p2_separar_fit_val_test(
+    cambios: pd.DataFrame, corte_val: pd.Timestamp, corte_test: pd.Timestamp
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Regresa (fit, val, test) según el día de servicio."""
+    fit = cambios[cambios["dia"] < corte_val]
+    val = cambios[(cambios["dia"] >= corte_val) & (cambios["dia"] < corte_test)]
+    test = cambios[cambios["dia"] >= corte_test]
+    return fit, val, test
+
+
+def p2_preparar_conjuntos(
+    cambios: pd.DataFrame,
+    dias_test: int = cfg.P2_DIAS_TEST,
+    dias_val: int = cfg.P2_DIAS_VAL,
+    peso_historico: int = cfg.P2_PESO_HISTORICO,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[pd.Timestamp, pd.Timestamp]]:
+    """Agrega la historia "hasta ayer" y regresa (fit, val, test, (corte_val, corte_test)).
+
+    La frecuencia global de la historia sale solo del periodo de fit.
+    """
+    corte_val, corte_test = p2_obtener_cortes_temporales(cambios, dias_test, dias_val)
+    historia = P2HistoriaHastaAyer(peso_historico).fit(cambios[cambios["dia"] < corte_val])
+    cambios = historia.transform(cambios)
+    fit, val, test = p2_separar_fit_val_test(cambios, corte_val, corte_test)
+
+    fin_val = (corte_test - pd.Timedelta(days=1)).date()
+    logger.info(
+        f"fit: antes de {corte_val.date()} | val: {corte_val.date()} a {fin_val} | "
+        f"test: desde {corte_test.date()}"
+    )
+    logger.info(f"Filas fit / val / test: {len(fit)} / {len(val)} / {len(test)}")
+    prevalencia = {cfg.P2_CLASES[k]: round(float((test["clase"] == k).mean()), 4) for k in (1, 2)}
+    logger.info(f"Prevalencia en test: {prevalencia}")
+    return fit, val, test, (corte_val, corte_test)
 
 
 if __name__ == "__main__":

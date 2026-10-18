@@ -1,0 +1,89 @@
+# P2 (riesgo de estación): prueba de memoria y tiempo de las features y del entrenamiento.
+#
+# Corre en cada push a feat/p2 que toque el módulo, el Makefile, las dependencias o este archivo.
+# NO registra nada en MLflow: no usa el secret MLFLOW_TRACKING_URI y fija P2_REGISTRAR_MLFLOW=false.
+# Cada etapa corre en su propio proceso (igual que `make features-p2` y `make train-p2`) y reporta
+# su memoria máxima en la línea `Maximum resident set size (kbytes)`; el resumen queda en la
+# página del job. workflow_dispatch solo aparece en Actions cuando el archivo ya está en main.
+name: P2 - memoria del entrenamiento
+
+on:
+  push:
+    branches: [feat/p2]
+    paths:
+      - "tc5061_proyecto_equipo07/**"
+      - "Makefile"
+      - "requirements.txt"
+      - ".github/workflows/p2_memoria.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Un push nuevo cancela la medición anterior de la misma rama
+concurrency:
+  group: p2-memoria-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MPLBACKEND: Agg
+  P2_REGISTRAR_MLFLOW: "false"
+
+jobs:
+  memoria:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Restaurar los CSV de data/raw
+        # Misma clave que p3.yml: se reutiliza la caché si otra acción ya descargó los datos
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: datos-raw-${{ hashFiles('references/fuentes-datos.csv') }}
+      - name: Datos (descarga lo que falte, construye y limpia)
+        run: python -m tc5061_proyecto_equipo07.dataset todo
+      - name: Features de P2 (con memoria máxima)
+        run: |
+          set -o pipefail
+          /usr/bin/time -v python -m tc5061_proyecto_equipo07.features p2-features 2>&1 | tee features.txt
+      - name: Entrenamiento de P2 sin registrar (con memoria máxima)
+        run: |
+          set -o pipefail
+          /usr/bin/time -v python -m tc5061_proyecto_equipo07.modeling.train p2-entrenar --no-registrar 2>&1 | tee entrenamiento.txt
+      - name: Resumen de memoria y tiempo
+        if: always()
+        run: |
+          {
+            echo "### P2: memoria y tiempo por etapa"
+            echo ""
+            echo "| etapa | memoria máxima (GB) | tiempo (h:mm:ss) | salida |"
+            echo "|---|---|---|---|"
+            for etapa in features entrenamiento; do
+              if [ -f "$etapa.txt" ] && grep -q "Maximum resident set size" "$etapa.txt"; then
+                kb=$(grep "Maximum resident set size" "$etapa.txt" | awk '{print $NF}')
+                gb=$(awk -v kb="$kb" 'BEGIN {printf "%.2f", kb / 1000000}')
+                tiempo=$(grep "Elapsed (wall clock)" "$etapa.txt" | awk '{print $NF}')
+                salida=$(grep "Exit status" "$etapa.txt" | awk '{print $NF}')
+                echo "| $etapa | $gb | $tiempo | $salida |"
+              else
+                echo "| $etapa | sin medición (no corrió o lo detuvo el sistema) | | |"
+              fi
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Subir figuras, tablas y salidas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-memoria
+          path: |
+            reports/figures/p2_*
+            features.txt
+            entrenamiento.txt
+          if-no-files-found: warn

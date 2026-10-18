@@ -4,13 +4,6 @@ Convención de nombres: `FASE.NUMERO-INICIALES-descripcion.ipynb`
 
 Ejemplo: `0.01-dsm-exploracion-inicial.ipynb`
 
-Fases:
-- 0: Exploración de datos (EDA)
-- 1: Limpieza de datos y creación de features
-- 2: Visualizaciones
-- 3: Modelado
-- 4: Publicación y reportes
-
 ## Notebooks de P3 (clustering de estaciones)
 
 Se ejecutan en este orden, desde esta carpeta. Cada uno **llama** al módulo `tc5061_proyecto_equipo07` y documenta los hallazgos; la lógica reutilizable no vive en los notebooks.

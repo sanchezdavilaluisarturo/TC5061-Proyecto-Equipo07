@@ -108,34 +108,6 @@ BERMELLON = "#D55E00"
 GRIS = "#999999"
 
 # ---------------------------------------------------------------------------------------------
-# P2 (clasificacion de riesgos)
-# ---------------------------------------------------------------------------------------------
-
-# Horas del día (0-23) en las que MiBici no ofrece servicio.
-P2_HORAS_SIN_SERVICIO = (1, 2, 3, 4)
-
-
-# Los viajes que terminan en esta fecha/hora o después quedan fuera del rango
-# de análisis (enero 2020 a septiembre 2026).
-P2_FECHA_LIMITE_FIN_VIAJE = "2026-10-01 00:00:00"
-
-
-# Ventana futura que se evalúa y tamaño de cada intervalo, en minutos
-P2_HORIZONTE_MIN = 120
-P2_BIN_MIN = 30
-P2_H_BINS = P2_HORIZONTE_MIN // P2_BIN_MIN
-# Un cambio mayor a esta fracción de la capacidad se considera riesgo
-P2_ALFA = 0.5
-
-
-P2_FEATURES = (
-    [f"neto_{k}_relativo" for k in (1, 2, 4, 8)]
-    + [f"{c}_{k}" for c in ("salidas", "entradas") for k in (2, 4)]
-    + ["cumsum_dia_relativo", "dpcapacity", "latitude", "longitude", "hora_sin", "hora_cos"]
-    + ["es_fin_semana"]
-)
-
-# ---------------------------------------------------------------------------------------------
 # P3 (clustering de estaciones)
 # Los parámetros se leen del entorno para que el mismo comando corra en la terminal, en los
 # notebooks y en GitHub Actions (variables del repositorio). Si la variable no existe valen los
@@ -207,6 +179,7 @@ RUTA_VIAJES_MODELADO = PROCESSED_DATA_DIR / f"viajes_modelado_{MES_INICIO}_{MES_
 RUTA_ESTACIONES_TRAIN = PROCESSED_DATA_DIR / "estaciones_train.parquet"
 RUTA_DEMANDA_ESTACION_HORA = PROCESSED_DATA_DIR / "demanda_estacion_hora.parquet"
 
+
 # P1 (regresión): viajes que inician en cada estación por hora de servicio, un día adelante.
 # Los rezagos se miden en días completos (>= 1) para no usar información del día que se predice.
 P1_REZAGOS_DIAS = [1, 7]
@@ -254,6 +227,61 @@ P1_PARAMETROS_XGB = {
 }
 # Filas que se muestrean para los diagnósticos caros (curva de aprendizaje e importancia)
 P1_MUESTRA_DIAGNOSTICO = 200_000
+
+# ---------------------------------------------------------------------------------------------
+# P2 (clasificacion de riesgos)
+# ---------------------------------------------------------------------------------------------
+
+# Horas del día (0-23) en las que MiBici no ofrece servicio.
+P2_HORAS_SIN_SERVICIO = (1, 2, 3, 4)
+
+
+# Los viajes que terminan en esta fecha/hora o después quedan fuera del rango
+# de análisis (enero 2020 a septiembre 2026).
+P2_FECHA_LIMITE_FIN_VIAJE = "2026-10-01 00:00:00"
+
+# Ventana futura que se evalúa y tamaño de cada intervalo, en minutos
+P2_HORIZONTE_MIN = 120
+P2_BIN_MIN = 30
+P2_H_BINS = P2_HORIZONTE_MIN // P2_BIN_MIN
+# Un cambio mayor a esta fracción de la capacidad se considera riesgo
+P2_ALFA = 0.5
+
+# P2: partición y modelo (cada uno se puede cambiar con la variable de entorno del mismo nombre)
+P2_DIAS_TEST = p3_leer_entero("P2_DIAS_TEST", 28)  # últimos días de servicio: test
+P2_DIAS_VAL = p3_leer_entero("P2_DIAS_VAL", 14)  # días anteriores: solo para elegir umbrales
+P2_PESO_HISTORICO = p3_leer_entero(
+    "P2_PESO_HISTORICO", 20
+)  # peso (en días) de la frecuencia global
+P2_MIN_SAMPLES_LEAF = p3_leer_entero("P2_MIN_SAMPLES_LEAF", 500)
+P2_REGISTRAR_MLFLOW = p3_leer_bool("P2_REGISTRAR_MLFLOW")
+
+P2_PARAMETROS_HGB = {"max_iter": 150, "learning_rate": 0.05, "early_stopping": False}
+P2_CLASES = ["sin_riesgo", "sin_bicis", "sin_anclajes"]
+# Nombre base del run, etapa y familia (etiquetas `stage` y `model_family` en MLflow)
+P2_MODELOS = {
+    "baseline": ("baseline-historico", "baseline", "frecuencia_historica"),
+    "hgb": ("hgb", "candidato", "hist_gradient_boosting"),
+}
+P2_DESCRIPCIONES = {  # caja "Description" de cada run
+    "baseline": "Frecuencia de cada riesgo en los días previos de la misma estación, tipo de día "
+    "y hora, suavizada hacia la frecuencia global. Referencia que el candidato debe superar.",
+    "hgb": "HistGradientBoostingClassifier con las features de flujo, hora y estación más la "
+    "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h.",
+}
+
+
+P2_FEATURES_SIN_HISTORICO = (
+    [f"neto_{k}_relativo" for k in (1, 2, 4, 8)]
+    + [f"{c}_{k}" for c in ("salidas", "entradas") for k in (2, 4)]
+    + ["cumsum_dia_relativo", "dpcapacity", "latitude", "longitude", "hora_sin", "hora_cos"]
+    + ["es_fin_semana"]
+)
+
+P2_FEATURES_CON_HISTORICO = P2_FEATURES_SIN_HISTORICO + ["hist_sin_bicis", "hist_sin_anclajes"]
+
+# Tabla estación-bin con la etiqueta y las variables de P2 (`features p2-features`)
+RUTA_P2_CAMBIOS = PROCESSED_DATA_DIR / "p2_cambios_estacion_bin.parquet"
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

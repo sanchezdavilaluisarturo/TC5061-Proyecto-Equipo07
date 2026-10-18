@@ -1,0 +1,3 @@
+,test_ap_sin_bicis,test_ap_sin_anclajes,test_ap_riesgo,test_log_loss,test_precision_sin_bicis,test_recall_sin_bicis,test_f1_sin_bicis,test_precision_sin_anclajes,test_recall_sin_anclajes,test_f1_sin_anclajes,segundos_entrenamiento
+baseline-historico,0.2817,0.384,0.3419,0.0615,0.3153,0.2841,0.2989,0.4576,0.3667,0.4071,0.0
+hgb,0.3277,0.4137,0.3842,0.0564,0.3412,0.3559,0.3484,0.4393,0.407,0.4225,290.4
