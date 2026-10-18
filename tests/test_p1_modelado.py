@@ -7,7 +7,8 @@ import pytest
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07.features import P1NivelEstacion
 from tc5061_proyecto_equipo07.modeling import train
-from tc5061_proyecto_equipo07.modeling.p1_modelos import P1BaselinePromedio, p1_construir_modelo
+from tc5061_proyecto_equipo07.modeling.predict import p1_predecir_por_zona
+from tc5061_proyecto_equipo07.modeling.train import P1BaselinePromedio, p1_construir_modelo
 
 PROMEDIO = f"viajes_promedio_{cfg.P1_SEMANAS_PROMEDIO}sem"
 
@@ -104,3 +105,21 @@ def test_p1_modelos_entrenan_y_predicen_conteos(clave):
 def test_p1_modelo_desconocido_falla_con_mensaje_claro():
     with pytest.raises(ValueError, match="desconocido"):
         p1_construir_modelo("random_forest")
+
+
+def test_p1_prediccion_por_zona_suma_lo_de_cada_estacion():
+    datos = pd.DataFrame(
+        {
+            "hora_inicio": pd.to_datetime(
+                ["2025-10-01 08:00", "2025-10-01 18:00", "2025-10-01 08:00", "2025-10-02 08:00"]
+            ),
+            "zona": pd.Categorical(["GDL", "GDL", "ZPN", "GDL"]),
+            "viajes": [3, 1, 2, 5],
+        }
+    )
+    por_zona = p1_predecir_por_zona(datos, np.array([2.0, 1.5, 1.0, 4.0]))
+    gdl_dia1 = por_zona[(por_zona["zona"] == "GDL") & (por_zona["dia"] == "2025-10-01")]
+    assert gdl_dia1["prediccion"].item() == pytest.approx(3.5)
+    assert gdl_dia1["real"].item() == 4
+    assert len(por_zona) == 3
+    assert por_zona["prediccion"].sum() == pytest.approx(8.5)  # no se pierde ni duplica nada

@@ -1,4 +1,4 @@
-# MLOps-ProyectoMiBici-Equipo7
+# TC5061-Proyecto-Equipo07
 
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
@@ -10,12 +10,15 @@ Proyecto integrador de **Operaciones de Aprendizaje Automático (MLOps, TC5061)*
 Requiere Python 3.11 y [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/sanchezdavilaluisarturo/MLOps-ProyectoMiBici-Equipo7.git
-cd MLOps-ProyectoMiBici-Equipo7
+git clone https://github.com/sanchezdavilaluisarturo/TC5061-Proyecto-Equipo07.git
+cd TC5061-Proyecto-Equipo07
 uv venv --python 3.11 .venv
 source .venv/bin/activate
-make requirements        # uv pip install -r requirements.txt
+make requirements        # uv pip install -r requirements.txt (incluye el paquete con -e .)
+cp .env.example .env     # URL de MLflow; el .env no se versiona
 ```
+
+El `.env` apunta al servidor MLflow del equipo (https://mlflow.equipo7mlops.com), que no pide credenciales: con él se pueden registrar y consultar los runs. Si no responde, `make mlflow-local` levanta un MLflow local de respaldo (SQLite + `mlartifacts/`) y en el `.env` se usa `MLFLOW_TRACKING_URI=http://127.0.0.1:5000`.
 
 ## Ejecución
 
@@ -23,14 +26,17 @@ make requirements        # uv pip install -r requirements.txt
 # Datos: descarga, normaliza, valida contra el manifiesto y limpia
 make data
 
-# P3: partición temporal, tablas de estaciones y demanda por estación-hora
+# Features de P1, P2 y P3 (o una sola pregunta: make features-p1, features-p2, features-p3)
 make features
 
-# P3: modelo base y modelo alternativo (con P3_REGISTRAR_MLFLOW=true registra los runs en MLflow)
+# Entrenamiento y evaluación de P1, P2 y P3, sin registrar en MLflow (o make train-p1, train-p2, train-p3)
 make train
 
-mlflow ui                                                # http://127.0.0.1:5000
+# Mismo entrenamiento, registrando los runs en MLflow (una variable por pregunta)
+P1_REGISTRAR_MLFLOW=true P2_REGISTRAR_MLFLOW=true P3_REGISTRAR_MLFLOW=true make train
 ```
+
+`make help` lista todos los comandos. `train-p1` depende de `features-p1`, así que siempre entrena con las features al día.
 
 ### Datos, features y entrenamiento de P3
 
@@ -40,24 +46,27 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07` y tiene su noteb
 |---|---|---|---|
 | 1 | `make data` (`dataset todo`) | `0.02-dsh-exploracion-carga`, `0.01-lasd-exploracion-carga` | CSV en `data/raw/`, Parquet normalizado en `data/interim/` y datos limpios en `data/processed/` |
 | 2 | — | `0.02-lasd-eda-p3` | EDA de P3: calidad, tiempo y estaciones (solo hallazgos) |
-| 3 | `make features` | `0.03-lasd-limpieza-p3` | `viajes_modelado_*.parquet` (con partición temporal), `estaciones_train.parquet` y `demanda_estacion_hora.parquet` |
-| 4 | `make train` | `0.04-lasd-baseline-p3`, `0.05-lasd-mejoramodelo-p3` | Modelo base y modelo alternativo de P3, con artefactos en `reports/figures/p3_*` y, si se pide, runs en MLflow |
-**Convención:** toda función que se agrega al módulo para P3 se llama `p3_<nombre>` (por ejemplo, `p3_perfil_de_estaciones`). Las funciones de `dataset.py` anteriores a P3 no se renombran: lo que subió el equipo solo se amplía.
+| 3 | `make features-p3` | `0.03-lasd-limpieza-p3` | `viajes_modelado_*.parquet` (con partición temporal), `estaciones_train.parquet` y `demanda_estacion_hora.parquet` |
+| 4 | `make train-p3` | `0.04-lasd-baseline-p3`, `0.05-lasd-mejoramodelo-p3` | Modelo base y modelo alternativo de P3, con artefactos en `reports/figures/p3_*` y, si se pide, runs en MLflow |
+**Convención:** cada pregunta prefija lo que agrega al módulo (`p1_`, `p2_`, `p3_`; por ejemplo, `p3_perfil_de_estaciones`) y el código de una pregunta no depende del de otra. Lo común usa nombres genéricos (`FRONTERA_VALID`, `FRONTERA_TEST`, `BRECHA_HORAS`).
 
 **Variables de entorno.** El mismo comando corre en la terminal, en los notebooks y en GitHub Actions (`.github/workflows/p3.yml`); cada parámetro tiene también su opción de línea de comandos:
 
 | Variable | Qué controla | Por defecto |
 |---|---|---|
 | `MLFLOW_TRACKING_URI` | URL del servidor MLflow (en CI, el secret del repositorio `secrets.MLFLOW_TRACKING_URI`) | `.env` |
-| `MLFLOW_RUN_NAME` | Prefijo del nombre de los runs: `<valor>-baseline` y `<valor>-pca_kmeans` (en CI lo fija el workflow: `mibici-equipo07-pN` si la pregunta corre sola y `mibici-equipo07-todas-pN` si corre desde la acción de las 3; se puede forzar con el campo `nombre_run` de *Run workflow*, en la pregunta o en la acción de las 3) | `baseline` y `pca_kmeans` |
-| `P3_REGISTRAR_MLFLOW` | Escribir en MLflow | `false` |
+| `MLFLOW_RUN_NAME` | P2 y P3. Prefijo del nombre de los runs: `<valor>-baseline` y `<valor>-pca_kmeans` (en CI lo fija el workflow: `mibici-equipo07-pN` si la pregunta corre sola y `mibici-equipo07-todas-pN` si corre desde la acción de las 3; se puede forzar con el campo `nombre_run` de *Run workflow*, en la pregunta o en la acción de las 3) | `baseline` y `pca_kmeans` |
+| `P1_REGISTRAR_MLFLOW` | Escribir en MLflow los runs de P1 (nombres fijos: `p1-baseline-promedio-4sem`, `p1-hgb-poisson`, `p1-xgb-poisson`) | `false` |
+| `P2_REGISTRAR_MLFLOW` | Escribir en MLflow los runs de P2 | `false` |
+| `P2_PESO_HISTORICO`, `P2_MIN_SAMPLES_LEAF` | Parámetros del modelo de P2 | `20`, `500` |
+| `P3_REGISTRAR_MLFLOW` | Escribir en MLflow los runs de P3 | `false` |
 | `P3_REGISTRAR_DE_NUEVO` | Crear un run nuevo aunque ya exista uno terminado con ese nombre | `false` |
 | `P3_EXIGIR_ACEPTACION` | Salir con error si el modelo alternativo no cumple los criterios de aceptación | `false` |
 | `P3_EXPERIMENTO` | Experimento de MLflow | `mibici-equipo07` (el de `config.py`) |
 | `P3_SEMILLA`, `P3_K_MINIMO`, `P3_K_MAXIMO`, `P3_MIN_SALIDAS_TRAIN`, `P3_MIN_SALIDAS_VALID`, `P3_COMPONENTES`, `P3_SEMILLAS_BUSQUEDA` | Parámetros del modelo | `42`, `2`, `10`, `1000`, `300`, `3,4,5,6,8,10`, `5` |
 **Pruebas:** `pytest tests`.
 
-**GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre `ruff` y `pytest` en los PR que tocan el módulo y, a mano (*Run workflow*), corre la calidad y llama a la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`); cada una también se corre sola. Hoy solo `p3.yml` está completa (P1 y P2 avisan y terminan bien). El entrenamiento de P3 descarga los datos con caché por el hash del manifiesto y solo registra en MLflow si se marca `registrar`.
+**GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre `ruff` y `pytest` en los PR que tocan el módulo y, a mano (*Run workflow*), corre la calidad y llama a la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`); cada una también se corre sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
 **MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la primera entrega (`baseline` y `pca_kmeans`) están en el experimento `p3`; desde ahora los comandos usan `mibici-equipo07`.
 
@@ -92,23 +101,21 @@ Detalle de cada pregunta (qué se predice, relevancia y decisión que habilita):
 | Concepto | Valor |
 |---|---|
 | Rango acordado por el equipo | enero 2020 a septiembre 2026 |
-| Viajes | **26,389,162** en 79 archivos mensuales |
+| Viajes | **27,086,557** en 81 archivos mensuales |
 | Primer y último inicio de viaje | 2020-01-01 06:02:20 a 2026-09-30 23:59:48 |
-| Usuarios distintos | 81,115 |
+| Usuarios distintos | 81,245 |
 | Estaciones en los viajes | 475 (de 484 en la nomenclatura) |
 | Mes con menos viajes | 2020-04 (129,276), inicio de la pandemia de COVID-19 |
 | Mes con más viajes | 2026-09 (490,056) |
-| Tamaño | 2.1 GB en CSV, 0.6 GB en Parquet |
+| Tamaño | 2.3 GB en CSV, 0.6 GB en Parquet |
 
-> **Meses faltantes:** 2023-04 y 2023-05 ya no están publicados en el portal (se publicaban el 13-oct-2026 y desaparecieron sin aviso). El análisis trabaja con 79 de los 81 meses del rango y el hueco se tratará en la limpieza.
+> **Meses 2023-04 y 2023-05:** desaparecieron del portal sin aviso después del 13-oct-2026 y luego se volvieron a publicar; hoy el rango está completo (81 de 81 meses). El manifiesto `references/fuentes-datos.csv` fija el número de registros y el SHA-256 de cada archivo, así que un archivo distinto se detecta en la ingesta.
 
 Viajes por año (2026 llega solo hasta septiembre):
 
-| 2020 | 2021 | 2022 | 2023* | 2024 | 2025 | 2026 |
+| 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
 |---:|---:|---:|---:|---:|---:|---:|
-| 2,866,072 | 3,184,410 | 4,202,942 | 3,595,720 | 4,645,921 | 4,532,032 | 3,362,065 |
-
-\* 2023 no incluye abril ni mayo.
+| 2,866,072 | 3,184,410 | 4,202,942 | 4,293,115 | 4,645,921 | 4,532,032 | 3,362,065 |
 
 ### Esquema de viajes
 
@@ -211,7 +218,101 @@ Reglas aplicadas por `dataset.limpiar` y documentadas en `0.03-lasd-limpieza-p3`
 
 Etapas por pregunta (limpieza, agregaciones, features, entrenamiento y evaluación): [Diseño del pipeline de ML](references/pipeline-ml.md).
 
-## Modelo base de P3 (clustering de estaciones)
+## P1: demanda de viajes por estación-hora (regresión)
+
+Notebooks `0.02-dsh-exploracion-carga` (ingesta) y `0.04-dsh-eda-p1` (EDA de P1). Código: funciones `p1_*` y transformer `P1NivelEstacion` en `features.py`, sección P1 de `modeling/train.py`, `p1_predecir` y `p1_predecir_por_zona` en `modeling/predict.py` y gráficas `p1_*` en `plots.py`; pruebas en `tests/test_p1_*.py`.
+
+| Elemento | Decisión |
+|---|---|
+| **Qué se predice** | Viajes que inician en cada estación por hora de servicio (5:00 a 0:59; de 1:00 a 4:59 el sistema no opera) |
+| **Horizonte** | Día siguiente: al cierre del día D se predicen las 20 horas de D+1, así que todas las variables usan datos de 1 día o más atrás |
+| **Zona** | Municipio (GDL, ZPN o TLQ, del código en el nombre de la estación). La predicción por zona es la suma de sus estaciones, así las dos vistas son consistentes |
+| **Tabla** | 16,103,922 estación-horas con 27,026,452 viajes (los 193 viajes en horas sin servicio quedan fuera) |
+| **Partición** | La común del proyecto: train 10,531,227 filas, valid 2,673,888 y test 2,884,207 |
+| **Métricas** | MAE como principal (error en viajes por estación-hora, directo para el operador) y RMSE como complementaria (castiga más los errores en las horas pico). Sin MAPE: 44 % de las estación-horas no tienen viajes |
+
+**Variables (14):** `origen_id` (solo para aprender el nivel de cada estación), viajes de la misma hora 1 y 7 días antes, promedio de la misma hora en las 4 semanas anteriores, hora, día de la semana, fin de semana, mes, festivo (LFT art. 74), capacidad, latitud, longitud, zona y días desde la apertura de la estación.
+
+**Modelos** (los tres en un `Pipeline` de scikit-learn, con la misma interfaz `fit`/`predict`):
+
+| Rol | Modelo | Por qué |
+|---|---|---|
+| Baseline | Promedio de la misma hora en las 4 semanas anteriores; si la estación no tiene historia, su nivel de train o el del sistema | Es lo que haría un operador sin modelo; los candidatos deben superarlo |
+| Candidato | HistGradientBoosting con pérdida Poisson | El target es un conteo con 44 % de ceros: la pérdida Poisson modela conteos y nunca predice viajes negativos. Usa histogramas (16M de filas en minutos) y maneja los rezagos vacíos sin imputar |
+| Candidato | XGBoost con pérdida Poisson | Las mismas ventajas; sirve para comparar dos implementaciones de boosting |
+
+Los candidatos reciben además el nivel histórico de cada estación (`P1NivelEstacion`: promedio de train por estación, día de la semana y hora, y el del sistema para las estaciones nuevas), aprendido solo con train.
+
+### Resultados
+
+Se elige por `valid_mae`; test solo se reporta.
+
+| Modelo | valid_mae | valid_rmse | test_mae | test_rmse | Segundos de entrenamiento |
+|---|---:|---:|---:|---:|---:|
+| **XGBoost Poisson (elegido)** | **0.9761** | 1.5639 | **0.9952** | 1.6781 | 67.2 |
+| HGB Poisson | 0.9928 | 1.6157 | 1.0082 | 1.7138 | 72.5 |
+| Baseline promedio 4 semanas | 1.0189 | 1.6539 | 1.0146 | 1.7500 | 1.6 |
+
+XGBoost reduce el MAE del baseline 4.2 % en valid y 1.9 % en test, y entrena en un tiempo similar al de HGB. Por zona (suma diaria de las estaciones, XGBoost en test):
+
+| Zona | MAE diario | Viajes diarios promedio | Error relativo |
+|---|---:|---:|---:|
+| GDL | 1348.2 | 11012.2 | 12 % |
+| ZPN | 156.0 | 1144.6 | 14 % |
+| TLQ | 23.4 | 142.6 | 16 % |
+
+**Hallazgos de la validación** (prueba en seco con los datos reales, antes de registrar):
+
+1. HGB Poisson divergía: el valor crudo llegó a 2574 en la iteración 287 y las predicciones salieron infinitas. Se corrigió con `l2_regularization=1.0` y `min_samples_leaf=100`; XGBoost ya trae ese freno (`max_delta_step=0.7` por defecto con `count:poisson`).
+2. Las estaciones nuevas (109 estaciones y 8.93 % de las filas de test; 9 y 1.80 % en valid) recibían un nivel vacío y XGBoost se disparaba en test (1.164). El transformer ahora les asigna el nivel del sistema. Se detectó al revisar test y se corrigió un error de manejo de datos, sin ajustar hiperparámetros.
+
+### Registro en MLflow
+
+- **Comando:** `P1_REGISTRAR_MLFLOW=true make train-p1` (o `python -m tc5061_proyecto_equipo07.modeling.train p1-entrenar --registrar`).
+- **Experimento:** `mibici-equipo07`, un run por modelo: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson`.
+- **Etiquetas:** equipo, pregunta (`P1`), commit, autor, `stage` (baseline o candidato) y `model_family`, más la descripción del run.
+- **Parámetros:** rango de datos, `data_version`, semilla, granularidad, horizonte, fronteras de la partición, brecha, número de variables y de filas de train, y los hiperparámetros de cada modelo.
+- **Métricas:** `valid_mae`, `valid_rmse`, `test_mae`, `test_rmse`, `segundos_entrenamiento` y, en los candidatos, el MAE de train y valid por iteración.
+- **Artefactos (`p1/`):** MAE por hora y por zona, peores estaciones en test, real contra predicción, serie diaria y, en los candidatos, curva de aprendizaje e importancia por permutación. Copia en `reports/figures/p1_*`.
+- **Modelo:** el `Pipeline` completo con firma e `input_example`.
+
+Runs de la entrega (commit `59df230`):
+
+| Run | Run ID |
+|---|---|
+| `p1-baseline-promedio-4sem` | `b31814333aea4a9984401276c1caf850` |
+| `p1-hgb-poisson` | `758a7fb096f9497a8d5dc2ed1224c575` |
+| `p1-xgb-poisson` | `0cd6ae8976a54e77b71d48f94afaa60d` |
+
+## P2: riesgo de estación (clasificación)
+
+Notebooks `0.01-fat-exploracion-inicial-p2`, `0.02-fat-exploracion-y-limpieza-p2`, `0.03-fat-feature-engineering-p2` y `0.04-fat-model-training-registration-p2`. Código: funciones `p2_*` y `P2HistoriaHastaAyer` en `features.py`, sección P2 de `modeling/train.py` y `p2_decidir_clase` en `modeling/predict.py`.
+
+| Elemento | Decisión |
+|---|---|
+| **Qué se predice** | Para cada estación y bloque de 30 minutos, si en las próximas 2 horas estará en riesgo de quedarse **sin bicis**, **sin anclajes** o **sin riesgo** (3 clases) |
+| **Aproximación del riesgo** | Los datos no traen inventario. Se usa el balance neto de viajes (salidas − llegadas) acumulado en la ventana futura frente a la capacidad: si supera el 50 % de la capacidad (`P2_ALFA`) hay riesgo; si hay los dos eventos, gana el de mayor estrés relativo |
+| **Partición** | La común del proyecto; validación solo para elegir los umbrales de decisión, test solo se reporta |
+| **Variables** | Balance neto relativo de los últimos 1, 2, 4 y 8 bloques, salidas y entradas recientes, acumulado del día, capacidad, ubicación, hora cíclica, fin de semana y la frecuencia histórica de cada riesgo "hasta ayer" en la misma estación, tipo de día y hora |
+| **Métricas** | Average precision (PR-AUC) por clase de riesgo y de riesgo en general, log-loss, y precisión, recall y F1 por clase con los umbrales de validación. Se privilegia recall: no anticipar un faltante cuesta más que un viaje de rebalanceo de más |
+
+| Rol | Modelo |
+|---|---|
+| Baseline | Frecuencia histórica de cada riesgo en los días previos de la misma estación, tipo de día y hora, suavizada hacia la frecuencia global |
+| Candidato | HistGradientBoostingClassifier con las variables anteriores |
+
+Resultados en test:
+
+| Modelo | AP sin bicis | AP sin anclajes | AP riesgo | Recall sin bicis | Recall sin anclajes | F1 sin bicis | F1 sin anclajes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Baseline histórico | 0.2453 | 0.3982 | 0.3329 | 0.4257 | 0.4371 | 0.2419 | 0.4125 |
+| HistGradientBoosting | 0.2318 | 0.4029 | 0.3326 | 0.4436 | 0.4467 | 0.2782 | 0.4151 |
+
+Comando: `make train-p2` (con `P2_REGISTRAR_MLFLOW=true` registra los runs `baseline-historico` y `hgb`). Figuras y comparación en `reports/figures/p2_*`.
+
+## P3: clustering de estaciones
+
+### Modelo base
 
 Notebook `0.04-lasd-baseline-p3` (código en `modeling/train.py`). K-Means sobre variables estandarizadas, ajustado solo con el conjunto de entrenamiento.
 
@@ -259,18 +360,21 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 │   ├── raw/           <- CSV originales del portal (viajes/ y estaciones/)
 │   ├── external/      <- Parquet mensuales por viaje
 │   ├── interim/       <- viajes_2020-01_2026-09.parquet (normalizado, sin limpiar)
-│   └── processed/     <- viajes_limpios_*, viajes_modelado_*, estaciones_train y demanda_estacion_hora (.parquet)
+│   └── processed/     <- viajes_limpios_*, viajes_modelado_*, tablas de P1 (p1_demanda_estacion_hora), P2 (p2_cambios_estacion_bin) y P3 (.parquet)
 ├── docs/              <- Documentación (mkdocs)
 ├── models/            <- Modelos serializados (ignorado por Git)
 ├── notebooks/         <- Convención FASE.NUMERO-INICIALES-descripcion.ipynb
-│   ├── 0.01-fat-exploracion-inicial.ipynb    <- EDA sobre Parquet: nulos, años de nacimiento, duración y conteo de entradas/salidas por estación
-│   ├── 0.01-lasd-exploracion-carga.ipynb     <- P3, Paso 1: carga y descripción del dataset con dataset.py
-│   ├── 0.02-dsh-exploracion-carga.ipynb      <- Descarga del portal, inventario por archivo (codificación, esquema, fechas), unión y Parquet
-│   ├── 0.02-lasd-eda-p3.ipynb                <- P3, Paso 2: EDA (calidad, tiempo y estaciones)
-│   ├── 0.03-lasd-limpieza-p3.ipynb           <- P3, Paso 3: limpieza, partición temporal y preprocesamiento
-│   ├── 0.04-dsh-eda-p1.ipynb                 <- EDA de P1
-│   ├── 0.04-lasd-baseline-p3.ipynb           <- P3, Paso 4: modelo base y registro en MLflow
-│   └── 0.05-lasd-mejoramodelo-p3.ipynb       <- P3, Paso 4: modelo alternativo, comparación y registro en MLflow
+│   ├── 0.01-fat-exploracion-inicial-p2.ipynb           <- EDA sobre Parquet: nulos, años de nacimiento, duración y entradas/salidas por estación
+│   ├── 0.01-lasd-exploracion-carga.ipynb               <- P3: carga y descripción del dataset con dataset.py
+│   ├── 0.02-dsh-exploracion-carga.ipynb                <- Descarga del portal, inventario por archivo (codificación, esquema, fechas), unión y Parquet
+│   ├── 0.02-fat-exploracion-y-limpieza-p2.ipynb        <- P2: exploración y limpieza
+│   ├── 0.02-lasd-eda-p3.ipynb                          <- P3: EDA (calidad, tiempo y estaciones)
+│   ├── 0.03-fat-feature-engineering-p2.ipynb           <- P2: etiqueta de riesgo y variables
+│   ├── 0.03-lasd-limpieza-p3.ipynb                     <- P3: limpieza, partición temporal y preprocesamiento
+│   ├── 0.04-dsh-eda-p1.ipynb                           <- P1: EDA y formulación
+│   ├── 0.04-fat-model-training-registration-p2.ipynb   <- P2: exploración del modelado (el entrenamiento oficial corre desde el módulo)
+│   ├── 0.04-lasd-baseline-p3.ipynb                     <- P3: modelo base y registro en MLflow
+│   └── 0.05-lasd-mejoramodelo-p3.ipynb                 <- P3: modelo alternativo, comparación y registro en MLflow
 ├── references/        <- Documentos de diseño
 │   ├── ml-canvas.md          <- ML Canvas y descripción de P1, P2 y P3
 │   ├── definicion-datos.md   <- Rango, fuente, variables, objetivos, condiciones de uso y partición
@@ -278,13 +382,13 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 │   ├── pipeline-ml.png       <- Diagrama del pipeline por pregunta (fuente editable: pipeline-ml.svg)
 │   ├── fuentes-datos.csv     <- URLs, registros y SHA-256 de los archivos del portal
 │   └── arquitectura.png      <- Diagrama de arquitectura
-├── reports/figures/   <- Gráficas y tablas generadas (p3_asignacion_grupos.csv, p3_resumen_grupos.csv, p3_variables.json, p3_mapa_grupos.png, p3_silueta_por_k.png)
+├── reports/figures/   <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*); copia de los artefactos de MLflow
 ├── tc5061_proyecto_equipo07/   <- Módulo: config.py, dataset.py, features.py, modeling/ (train.py, predict.py), plots.py
-├── tests/             <- Pruebas (pytest) de las funciones p3_*
+├── tests/             <- Pruebas (pytest) del módulo
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
-│   ├── p1.yml                         <- Acción de P1 (pendiente)
-│   ├── p2.yml                         <- Acción de P2 (pendiente)
+│   ├── p1.yml                         <- Acción de P1: entrenamiento y registro en MLflow
+│   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
 │   └── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
 ├── Makefile
 ├── pyproject.toml
@@ -292,18 +396,35 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 ```
 ## Flujo de trabajo con Git (GitHub Flow)
 
-- `main` está protegida: todo cambio entra por Pull Request con al menos una revisión.
-- Ramas desde `main`: `feat/<tema>`, `fix/<tema>`, `docs/<tema>`, `chore/<tema>`.
-- Commits con [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `config:`, `refactor:`.
+- `main` está protegida: todo cambio entra por Pull Request con al menos una revisión aprobada.
+- `EDA` es la rama de integración del equipo. Cada integrante trabaja en su rama (`feat/<tema>`, `fix/<tema>`, `docs/<tema>`) creada desde `EDA`, abre un PR hacia `EDA` y, al cerrar cada entrega, se abre un PR `EDA → main`.
+- Commits con [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/) en español, sin alcance entre paréntesis y mencionando la pregunta: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `build:`, `ci:`, `style:`, `chore:`.
 - Cada integrante abre al menos un PR y revisa al menos uno de otro integrante.
+- En cada PR, GitHub Actions corre `ruff` y `pytest` (`TC5061-Proyecto-Equipo07.yml`).
+
+## Buenas prácticas
+
+| Práctica | Cómo se aplica |
+|---|---|
+| Un experimento por proyecto y runs con nombre descriptivo | Experimento `mibici-equipo07` (`EXPERIMENTO_MLFLOW` en `config.py`); cada run lleva el nombre del enfoque (por ejemplo, `p1-xgb-poisson`), nunca el nombre aleatorio |
+| Registrar lo necesario para reproducir el run | Parámetros con el rango de fechas, `data_version` (hash del manifiesto), semilla, partición e hiperparámetros del modelo |
+| Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run |
+| Métricas con el conjunto en el nombre | `valid_mae`, `test_mae`, `test_ap_riesgo`, etc. |
+| Sin credenciales ni datos personales en MLflow | La URL del servidor vive en `.env` (no versionado) o en el secret de GitHub; `usuario_id`, género y año de nacimiento se descartan antes del modelado |
+| Elegir el modelo sin usar test | La selección se hace con el conjunto de validación; test solo se reporta |
+| Notebooks solo para exploración | Nombrados `FASE.NUMERO-INICIALES-descripcion.ipynb`; la lógica final vive en el módulo y los runs se ejecutan con `make` o `python -m` |
+| Configuración en un solo lugar | Rutas, rango de fechas, fronteras de la partición, semilla y parámetros en `config.py` |
+| Dependencias fijas y entorno reproducible | `requirements.txt` con versiones fijadas; instalación desde un clon limpio en *Instalación* |
+| Ningún dato, modelo, carpeta de MLflow ni credencial en Git | `.gitignore` excluye `data/`, `models/*`, `*.pkl`, `*.joblib`, `mlruns/`, `mlartifacts/`, `mlflow.db` y `.env` |
+| Todo cambio entra a `main` por PR revisado | Rama protegida (ver *Flujo de trabajo con Git*) |
 
 ## Equipo
 
 | Integrante | Matrícula | Rol |
 |---|---|---|
-| Daniel Sánchez Hernández | A01840324 | *por definir* |
-| Luis Arturo Sánchez Davila | A01840576 | *por definir* |
-| Fernando Arreola Treviño | A01840331 | *por definir* |
+| Daniel Sánchez Hernández | A01840324 | P1 (regresión de demanda); ingesta y exploración de carga |
+| Fernando Arreola Treviño | A01840331 | P2 (riesgo de estación); EDA inicial de calidad de datos |
+| Luis Arturo Sánchez Davila | A01840576 | P3 (clustering de estaciones); estructura del repositorio y CI |
 
 ## Referencias
 
@@ -315,3 +436,7 @@ Se usó **Claude** (Anthropic; Claude Code con el modelo Claude Sonnet 5.5) como
 - Redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks.
 
 Las decisiones de diseño, los criterios de aceptación del modelo, la ejecución con los datos reales, la revisión de los resultados y los commits, push y Pull Requests son del integrante, que revisó y es responsable del contenido. Por acuerdo del equipo, esta declaración vive aquí y no en los mensajes de commit.
+
+Anthropic. (2026). *Claude* (Claude Opus 5.5) [Modelo de lenguaje grande], utilizado para revisión, refactorización y depuración del código de P1, elaboración de pruebas y del workflow de P1, y redacción y corrección de la documentación. https://claude.ai/
+
+En P1 (Daniel Sánchez Hernández), la formulación del problema, la elección de variables, modelos y métricas, la ejecución con los datos reales, la validación de los resultados y los commits y Pull Requests son del integrante, que revisó y es responsable del contenido.

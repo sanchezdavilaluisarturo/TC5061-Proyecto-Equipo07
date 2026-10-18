@@ -44,41 +44,43 @@ El flujo sigue la convención de datos de CCDS (`raw` → `interim` → `process
 
 ## 3. P1: demanda de viajes (regresión)
 
+Se predicen los viajes que inician en cada estación por hora de servicio (5:00 a 0:59) **para el día siguiente**: al cierre del día D se predicen las 20 horas de D+1. La zona (municipio: GDL, ZPN o TLQ) es la suma de sus estaciones. Código: `features.py` (funciones `p1_*` y `P1NivelEstacion`), `modeling/train.py` (sección P1) y `modeling/predict.py` (`p1_predecir`, `p1_predecir_por_zona`).
+
 ### Etapas
 
 | Etapa | Descripción |
 |---|---|
-| **Agregación** | Contar viajes por `origen_id` y hora de `inicio_del_viaje`. Completar con 0 las horas sin viajes **desde la primera hora activa de cada estación**, para no inventar demanda antes de que existiera |
-| **Features** | Ver tabla siguiente |
-| **Partición** | Temporal (entrenamiento / validación / prueba) con una brecha de 24 h entre conjuntos |
-| **Entrenamiento** | Baseline → regresión lineal con regularización → modelo de árboles con objetivo de conteo (Poisson) |
-| **Evaluación** | MAE y RMSE por conjunto, error por estación y por hora del día, y comparación contra el baseline |
+| **Limpieza** | La común del proyecto (`dataset.limpiar`); se descartan los 193 viajes en horas sin servicio (1:00 a 4:59) |
+| **Agregación** | Contar viajes por `origen_id` y hora de `inicio_del_viaje`. Las horas sin viajes valen 0 **solo dentro del periodo en que la estación operó** (de su primer a su último viaje); antes y después quedan vacías, para no inventar demanda. Resultado: 16,103,922 estación-horas |
+| **Features** | Ver tabla siguiente (`make features-p1`) |
+| **Partición** | La común del proyecto, con una brecha de 24 h antes de cada frontera: train 10,531,227 filas, valid 2,673,888 y test 2,884,207 |
+| **Entrenamiento** | Baseline, HistGradientBoosting Poisson y XGBoost Poisson, cada uno en un `Pipeline` (`make train-p1`) |
+| **Evaluación** | MAE y RMSE en valid y test, MAE por hora, por zona y por estación, real contra predicción y serie diaria; se elige con valid |
 
 ### Variables
 
 | Variable | Tipo | Por qué es pertinente |
 |---|---|---|
-| `hora`, `dia_semana`, `mes`, `es_fin_de_semana` | Calendario | El uso tiene ciclos diarios y semanales fuertes (commuting) |
-| `hora_sin`, `hora_cos` | Calendario cíclico | Evita que las 23:00 y las 00:00 parezcan lejanas |
-| `es_festivo` | Calendario | La demanda cae o cambia de perfil en feriados |
-| `demanda_lag_24h`, `lag_48h`, `lag_168h` | Rezago | La misma hora de ayer y de la semana pasada es el mejor predictor de la demanda |
-| `demanda_media_7d_misma_hora` | Ventana (cerrada a la izquierda) | Suaviza el ruido sin usar el futuro |
-| `capacidad`, `latitud`, `longitud` | Estación | Estaciones más grandes y céntricas concentran más viajes |
-| `demanda_media_estacion` | Estación (solo entrenamiento) | Nivel base de cada estación |
-| `periodo_pandemia` | Indicador | Separa el choque de 2020, cuando el volumen cayó a 129,276 viajes en abril |
+| `hora`, `dia_semana`, `es_fin_de_semana`, `mes` | Calendario | El uso tiene ciclos diarios (picos de 8:00 y 18:00), semanales y estacionales |
+| `es_festivo` | Calendario | La demanda cae o cambia de perfil en los días de descanso obligatorio (LFT art. 74) |
+| `viajes_rezago_1d`, `viajes_rezago_7d` | Rezago | La misma hora de ayer y de la semana pasada es el mejor predictor de la demanda |
+| `viajes_promedio_4sem` | Ventana (solo días anteriores) | Promedio de la misma hora en las 4 semanas previas: suaviza el ruido sin usar el futuro |
+| `capacidad`, `latitud`, `longitud`, `zona` | Estación | Ubicación y tamaño explican parte del nivel de demanda |
+| `dias_desde_apertura` | Estación | Una estación recién abierta todavía no alcanza su demanda estable |
+| `origen_id` | Estación | Solo para aprender el nivel de cada estación (`P1NivelEstacion`, con train); no entra como variable al modelo |
 
-**Restricción de horizonte:** todos los rezagos son de **24 horas o más**, porque se predice un día adelante.
+**Restricción de horizonte:** todos los rezagos son de **1 día o más**, porque se predice el día siguiente.
 
 ### Modelos y métricas
 
 | Rol | Modelo | Nota |
 |---|---|---|
-| Baseline | Media histórica por estación, hora y día de la semana | Es el piso que se debe superar |
-| Candidato 1 | Regresión lineal con regularización (Ridge) | Interpretable |
-| Candidato 2 | XGBoost o LightGBM con objetivo Poisson | Captura no linealidades e interacciones |
+| Baseline | Promedio de la misma hora en las 4 semanas anteriores (si no hay historia, el nivel de la estación en train o el del sistema) | Es el piso que se debe superar |
+| Candidato 1 | HistGradientBoosting con pérdida Poisson | Conteo con 44 % de ceros; nunca predice negativos; usa histogramas y maneja rezagos vacíos sin imputar |
+| Candidato 2 | XGBoost con pérdida Poisson | Las mismas ventajas; compara dos implementaciones de boosting |
 
-- **Métricas:** MAE (principal, en viajes), RMSE (penaliza picos). Se evita MAPE porque hay muchas horas con 0 viajes.
-- **Ajuste de hiperparámetros:** Optuna con validación temporal expansiva.
+- **Métricas:** MAE (principal, en viajes por estación-hora), RMSE (penaliza los errores en los picos). Se evita MAPE porque el 44 % de las estación-horas tiene 0 viajes.
+- **Hiperparámetros:** fijos en `config.py` para esta entrega (sin búsqueda); el modelo se elige con `valid_mae` y test solo se reporta. Resultado: XGBoost (`valid_mae` 0.9761, `test_mae` 0.9952), 4.2 % mejor que el baseline en valid.
 
 ## 4. P2: riesgo de quedarse sin bicis o sin anclajes (clasificación)
 

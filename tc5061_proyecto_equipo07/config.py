@@ -227,6 +227,22 @@ P1_PARAMETROS_XGB = {
 }
 # Filas que se muestrean para los diagnósticos caros (curva de aprendizaje e importancia)
 P1_MUESTRA_DIAGNOSTICO = 200_000
+# Nombre del run, etapa y familia de cada modelo (etiquetas `stage` y `model_family` en MLflow)
+P1_MODELOS = {
+    "baseline": ("p1-baseline-promedio-4sem", "baseline", "promedio_historico"),
+    "hgb": ("p1-hgb-poisson", "candidato", "hist_gradient_boosting"),
+    "xgb": ("p1-xgb-poisson", "candidato", "xgboost"),
+}
+
+# Descripción de cada run en MLflow (caja "Description")
+P1_DESCRIPCIONES = {
+    "baseline": "Promedio de la misma hora en las 4 semanas anteriores; si la estación no tiene "
+    "historia, usa su nivel de train o el del sistema. Referencia que los candidatos deben superar.",
+    "hgb": "HistGradientBoosting con pérdida Poisson sobre el nivel histórico de cada estación "
+    "aprendido en train; predice los viajes del día siguiente por estación-hora.",
+    "xgb": "XGBoost con pérdida Poisson sobre el nivel histórico de cada estación aprendido en "
+    "train; predice los viajes del día siguiente por estación-hora.",
+}
 
 # ---------------------------------------------------------------------------------------------
 # P2 (clasificacion de riesgos)
