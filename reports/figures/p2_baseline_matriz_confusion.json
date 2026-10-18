@@ -1,0 +1,26 @@
+{
+ "clases": [
+  "sin_riesgo",
+  "sin_bicis",
+  "sin_anclajes"
+ ],
+ "filas": "clase real",
+ "columnas": "clase predicha",
+ "matriz": [
+  [
+   4919626,
+   78798,
+   35836
+  ],
+  [
+   21521,
+   16059,
+   144
+  ],
+  [
+   29491,
+   187,
+   23048
+  ]
+ ]
+}

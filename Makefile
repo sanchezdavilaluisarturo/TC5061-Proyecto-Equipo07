@@ -77,6 +77,18 @@ features-p1:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p1-features
 
 
+## Make P2 features (limpieza propia de P2, etiqueta de riesgo y variables por estación-bin)
+.PHONY: features-p2
+features-p2:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p2-features
+
+
+## Train P2 (baseline histórico y HGB; con P2_REGISTRAR_MLFLOW=true registra en MLflow)
+.PHONY: train-p2
+train-p2:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.train p2-entrenar
+
+
 ## Train P3 (modelo base y modelo alternativo; con P3_REGISTRAR_MLFLOW=true registra en MLflow)
 .PHONY: train
 train:

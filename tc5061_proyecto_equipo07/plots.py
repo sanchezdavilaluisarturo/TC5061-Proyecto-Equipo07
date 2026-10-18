@@ -1,4 +1,5 @@
-"""Gráficas de P3 (clustering de estaciones).
+"""Gráficas de P3 (clustering de estaciones) y P2 (riesgo de quedarse sin bicicletas o sin
+anclajes)
 
 Cada función recibe datos ya calculados y regresa la figura (matplotlib); guardarla es opcional
 con `p3_guardar_figura`. Usa la paleta Okabe-Ito de config.py, apta para daltonismo.
@@ -370,4 +371,39 @@ def p1_grafica_importancia(importancia: pd.Series, titulo: str):
     ax.barh(orden.index, orden.values, color=VERDE)
     ax.set_title(titulo)
     ax.set_xlabel("Aumento del MAE al permutar la variable")
+    return figura
+
+
+# ---------------------------------------------------------------------------------------------
+# P2: diagnósticos de los modelos de riesgo de estación
+# ---------------------------------------------------------------------------------------------
+
+
+def p2_grafica_matriz_confusion(matriz: np.ndarray, clases: list[str], titulo: str):
+    """Matriz de confusión: color y % por fila (recall de cada clase real), con el conteo debajo.
+
+    Normalizar por fila evita que sin_riesgo, que es ~98% de los casos, aplaste a las clases raras.
+    """
+    matriz = np.asarray(matriz)
+    por_fila = matriz / matriz.sum(axis=1, keepdims=True)
+    figura, ax = plt.subplots(figsize=(6.5, 5.5))
+    imagen = ax.imshow(por_fila, cmap="Blues", vmin=0, vmax=1)
+    for i in range(len(clases)):
+        for j in range(len(clases)):
+            color = "white" if por_fila[i, j] > 0.5 else "black"
+            ax.text(
+                j,
+                i,
+                f"{por_fila[i, j]:.1%}\n({matriz[i, j]:,})",
+                ha="center",
+                va="center",
+                color=color,
+            )
+    ax.set_xticks(range(len(clases)), labels=clases)
+    ax.set_yticks(range(len(clases)), labels=clases)
+    ax.set_xlabel("Clase predicha")
+    ax.set_ylabel("Clase real")
+    ax.set_title(titulo)
+    figura.colorbar(imagen, ax=ax, label="% de la clase real")
+    figura.tight_layout()
     return figura
