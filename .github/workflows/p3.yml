@@ -127,9 +127,9 @@ jobs:
         # Equivale a `make data` sin reinstalar dependencias
         run: python -m tc5061_proyecto_equipo07.dataset todo
       - name: Features de P3
-        run: make features
+        run: make features-p3
       - name: Entrenamiento de P3
-        run: make train
+        run: make train-p3
       - name: Subir figuras y tablas
         if: always()
         uses: actions/upload-artifact@v4
