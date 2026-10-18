@@ -773,13 +773,28 @@ def p2_construir_caracteristicas(
     return cambios
 
 
-def p2_obtener_cortes_temporales(
-    cambios: pd.DataFrame, dias_test: int = cfg.P2_DIAS_TEST, dias_val: int = cfg.P2_DIAS_VAL
-) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Regresa (corte_val, corte_test): primer día de validación y primer día de test."""
-    corte_test = cambios["dia"].max() - pd.Timedelta(days=dias_test - 1)
-    corte_val = corte_test - pd.Timedelta(days=dias_val)
-    return corte_val, corte_test
+def p2_asignar_particion(dia: pd.Series) -> pd.Series:
+    """Regresa train, valid, test o brecha de cada día de servicio según la partición del proyecto.
+
+    Se asigna por día de servicio (y no por bin) para no partir un día entre dos conjuntos: la
+    etiqueta y las ventanas de P2 nunca cruzan el día, así que el día previo a cada frontera
+    (BRECHA_HORAS) basta para que ningún conjunto use viajes del siguiente.
+    """
+    frontera_valid = pd.Timestamp(cfg.FRONTERA_VALID)
+    frontera_test = pd.Timestamp(cfg.FRONTERA_TEST)
+    brecha = pd.Timedelta(hours=cfg.BRECHA_HORAS)
+    conjunto = np.select(
+        [
+            dia < frontera_valid - brecha,
+            dia < frontera_valid,
+            dia < frontera_test - brecha,
+            dia < frontera_test,
+        ],
+        ["train", "brecha", "valid", "brecha"],
+        default="test",
+    )
+    categorias = ["train", "valid", "test", "brecha"]
+    return pd.Series(pd.Categorical(conjunto, categories=categorias), index=dia.index)
 
 
 class P2HistoriaHastaAyer(BaseEstimator):
@@ -823,39 +838,34 @@ class P2HistoriaHastaAyer(BaseEstimator):
 
 
 def p2_separar_fit_val_test(
-    cambios: pd.DataFrame, corte_val: pd.Timestamp, corte_test: pd.Timestamp
+    cambios: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Regresa (fit, val, test) según el día de servicio."""
-    fit = cambios[cambios["dia"] < corte_val]
-    val = cambios[(cambios["dia"] >= corte_val) & (cambios["dia"] < corte_test)]
-    test = cambios[cambios["dia"] >= corte_test]
-    return fit, val, test
+    """Regresa (fit, val, test) según la partición del proyecto; los días en `brecha` se descartan."""
+    particion = p2_asignar_particion(cambios["dia"])
+    return tuple(cambios[particion == conjunto] for conjunto in ["train", "valid", "test"])
 
 
 def p2_preparar_conjuntos(
-    cambios: pd.DataFrame,
-    dias_test: int = cfg.P2_DIAS_TEST,
-    dias_val: int = cfg.P2_DIAS_VAL,
-    peso_historico: int = cfg.P2_PESO_HISTORICO,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple[pd.Timestamp, pd.Timestamp]]:
-    """Agrega la historia "hasta ayer" y regresa (fit, val, test, (corte_val, corte_test)).
+    cambios: pd.DataFrame, peso_historico: int = cfg.P2_PESO_HISTORICO
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Agrega la historia "hasta ayer" y regresa (fit, val, test).
 
-    La frecuencia global de la historia sale solo del periodo de fit.
+    La frecuencia global de la historia sale solo del conjunto de entrenamiento. La historia de
+    validación y test usa las etiquetas de días anteriores, que ya se conocen al predecir.
     """
-    corte_val, corte_test = p2_obtener_cortes_temporales(cambios, dias_test, dias_val)
-    historia = P2HistoriaHastaAyer(peso_historico).fit(cambios[cambios["dia"] < corte_val])
+    en_train = p2_asignar_particion(cambios["dia"]) == "train"
+    historia = P2HistoriaHastaAyer(peso_historico).fit(cambios[en_train])
     cambios = historia.transform(cambios)
-    fit, val, test = p2_separar_fit_val_test(cambios, corte_val, corte_test)
+    fit, val, test = p2_separar_fit_val_test(cambios)
 
-    fin_val = (corte_test - pd.Timedelta(days=1)).date()
-    logger.info(
-        f"fit: antes de {corte_val.date()} | val: {corte_val.date()} a {fin_val} | "
-        f"test: desde {corte_test.date()}"
-    )
-    logger.info(f"Filas fit / val / test: {len(fit)} / {len(val)} / {len(test)}")
+    for nombre, conjunto in [("train", fit), ("valid", val), ("test", test)]:
+        logger.info(
+            f"{nombre}: {conjunto['dia'].min().date()} a {conjunto['dia'].max().date()} | "
+            f"{len(conjunto)} filas"
+        )
     prevalencia = {cfg.P2_CLASES[k]: round(float((test["clase"] == k).mean()), 4) for k in (1, 2)}
     logger.info(f"Prevalencia en test: {prevalencia}")
-    return fit, val, test, (corte_val, corte_test)
+    return fit, val, test
 
 
 if __name__ == "__main__":

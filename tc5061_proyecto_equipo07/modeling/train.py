@@ -7,9 +7,9 @@ HGB y XGBoost, deja los diagnósticos en reports/figures/p1_* y, con --registrar
 P1_REGISTRAR_MLFLOW=true), registra un run por modelo en el experimento del proyecto.
 
 P2: python -m tc5061_proyecto_equipo07.modeling.train p2-entrenar [--registrar]
-Entrada: data/processed/p2_cambios_estacion_bin.parquet (`make features-p2`). Separa test (últimos
-P2_DIAS_TEST días de servicio), validación (P2_DIAS_VAL días anteriores, solo para elegir umbrales)
-y fit; agrega la historia "hasta ayer" (P2_PESO_HISTORICO) y entrena el baseline histórico y
+Entrada: data/processed/p2_cambios_estacion_bin.parquet (`make features-p2`). Usa la partición común
+del proyecto por día de servicio (validación solo para elegir umbrales; test solo se reporta);
+agrega la historia "hasta ayer" (P2_PESO_HISTORICO) y entrena el baseline histórico y
 HistGradientBoosting (P2_MIN_SAMPLES_LEAF). Deja la matriz de confusión y la comparación en
 reports/figures/p2_* y, con --registrar (o P2_REGISTRAR_MLFLOW=true), registra un run por modelo en
 el experimento del proyecto. Cada parámetro tiene su opción de línea de comandos y su variable de
@@ -68,7 +68,11 @@ from tc5061_proyecto_equipo07.modeling.p1_modelos import (
     P1_MODELOS,
     p1_construir_modelo,
 )
-from tc5061_proyecto_equipo07.modeling.predict import p3_estabilidad_ari, p3_reasignar_grupos
+from tc5061_proyecto_equipo07.modeling.predict import (
+    p2_decidir_clase,
+    p3_estabilidad_ari,
+    p3_reasignar_grupos,
+)
 
 # numpy 2.2 con Accelerate (macOS) emite RuntimeWarning falsos en matmul con datos finitos;
 # la finitud se verifica con un assert en p3_ajustar_baseline
@@ -1260,15 +1264,6 @@ def p2_elegir_umbral(y_binaria: np.ndarray, p: np.ndarray) -> float:
     return umbrales[np.argmax(f1[:-1])]  # el último punto de la curva no tiene umbral asociado
 
 
-def p2_decidir_clase(p: np.ndarray, umbrales: dict[int, float]) -> np.ndarray:
-    """Clase predicha: el riesgo cuyo score relativo a su umbral sea mayor y al menos 1."""
-    score_bicis, score_anclajes = p[:, 1] / umbrales[1], p[:, 2] / umbrales[2]
-    pred = np.zeros(len(p), dtype=int)
-    pred[(score_bicis >= 1) & (score_bicis >= score_anclajes)] = 1
-    pred[(score_anclajes >= 1) & (score_anclajes > score_bicis)] = 2
-    return pred
-
-
 def p2_evaluar_modelo(modelo, val: pd.DataFrame, test: pd.DataFrame, variables: list[str]) -> dict:
     """Evalúa un modelo entrenado: los umbrales salen de validación y las métricas de test.
 
@@ -1334,16 +1329,9 @@ def p2_nombre_run(base: str) -> str:
 
 
 def p2_parametros_comunes(
-    fit: pd.DataFrame,
-    val: pd.DataFrame,
-    test: pd.DataFrame,
-    cortes: tuple[pd.Timestamp, pd.Timestamp],
-    dias_test: int,
-    dias_val: int,
-    peso_historico: int,
+    fit: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame, peso_historico: int
 ) -> dict:
     """Parámetros que comparten los runs de P2: datos, etiqueta, partición e historia."""
-    corte_val, corte_test = cortes
     return {
         "rango_datos": f"{cfg.MES_INICIO} a {cfg.MES_FIN}",
         "data_version": dataset.version_datos(),
@@ -1351,15 +1339,14 @@ def p2_parametros_comunes(
         "bin_min": cfg.P2_BIN_MIN,
         "h_bins": cfg.P2_H_BINS,
         "alfa": cfg.P2_ALFA,
-        "dias_test": dias_test,
-        "dias_val": dias_val,
+        "frontera_valid": cfg.FRONTERA_VALID,
+        "frontera_test": cfg.FRONTERA_TEST,
+        "brecha_horas": cfg.BRECHA_HORAS,
         "peso_historico": peso_historico,
         "n_variables": len(cfg.P2_FEATURES_CON_HISTORICO),
         "variables": ",".join(cfg.P2_FEATURES_CON_HISTORICO),
         "datos_desde": str(fit["dia"].min().date()),
         "datos_hasta": str(test["dia"].max().date()),
-        "corte_val": str(corte_val.date()),
-        "corte_test": str(corte_test.date()),
         "filas_fit": len(fit),
         "filas_val": len(val),
         "filas_test": len(test),
@@ -1437,8 +1424,6 @@ def p2_cargar_cambios(ruta: Path = cfg.RUTA_P2_CAMBIOS) -> pd.DataFrame:
 
 @app.command()
 def p2_entrenar(
-    dias_test: int = typer.Option(cfg.P2_DIAS_TEST, envvar="P2_DIAS_TEST"),
-    dias_val: int = typer.Option(cfg.P2_DIAS_VAL, envvar="P2_DIAS_VAL"),
     peso_historico: int = typer.Option(cfg.P2_PESO_HISTORICO, envvar="P2_PESO_HISTORICO"),
     min_samples_leaf: int = typer.Option(cfg.P2_MIN_SAMPLES_LEAF, envvar="P2_MIN_SAMPLES_LEAF"),
     registrar: bool = typer.Option(cfg.P2_REGISTRAR_MLFLOW, envvar="P2_REGISTRAR_MLFLOW"),
@@ -1448,12 +1433,12 @@ def p2_entrenar(
     Los umbrales de decisión salen de validación; test solo se reporta.
     """
     cambios = p2_cargar_cambios()
-    fit, val, test, cortes = p2_preparar_conjuntos(cambios, dias_test, dias_val, peso_historico)
+    fit, val, test = p2_preparar_conjuntos(cambios, peso_historico)
     del cambios
 
     variables = cfg.P2_FEATURES_CON_HISTORICO
     x_fit, y_test = fit[variables], test["clase"].to_numpy()
-    comunes = p2_parametros_comunes(fit, val, test, cortes, dias_test, dias_val, peso_historico)
+    comunes = p2_parametros_comunes(fit, val, test, peso_historico)
     resumen = {}
     for clave, (base, _, _) in cfg.P2_MODELOS.items():
         modelo = p2_construir_modelo(clave, min_samples_leaf)

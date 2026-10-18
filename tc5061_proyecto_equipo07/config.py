@@ -232,13 +232,13 @@ P1_MUESTRA_DIAGNOSTICO = 200_000
 # P2 (clasificacion de riesgos)
 # ---------------------------------------------------------------------------------------------
 
-# Horas del día (0-23) en las que MiBici no ofrece servicio.
-P2_HORAS_SIN_SERVICIO = (1, 2, 3, 4)
+# Horas del día (0-23) en las que MiBici no ofrece servicio (las mismas que HORAS_SIN_SERVICIO)
+P2_HORAS_SIN_SERVICIO = HORAS_SIN_SERVICIO
 
-
-# Los viajes que terminan en esta fecha/hora o después quedan fuera del rango
-# de análisis (enero 2020 a septiembre 2026).
-P2_FECHA_LIMITE_FIN_VIAJE = "2026-10-01 00:00:00"
+# Los viajes que terminan en esta fecha/hora o después quedan fuera del rango de análisis: es el
+# primer instante del mes siguiente a MES_FIN (con MES_FIN = "2026-09", "2026-10-01 00:00:00")
+_anio_fin, _mes_fin = map(int, MES_FIN.split("-"))
+P2_FECHA_LIMITE_FIN_VIAJE = f"{_anio_fin + _mes_fin // 12}-{_mes_fin % 12 + 1:02d}-01 00:00:00"
 
 # Ventana futura que se evalúa y tamaño de cada intervalo, en minutos
 P2_HORIZONTE_MIN = 120
@@ -247,12 +247,10 @@ P2_H_BINS = P2_HORIZONTE_MIN // P2_BIN_MIN
 # Un cambio mayor a esta fracción de la capacidad se considera riesgo
 P2_ALFA = 0.5
 
-# P2: partición y modelo (cada uno se puede cambiar con la variable de entorno del mismo nombre)
-P2_DIAS_TEST = p3_leer_entero("P2_DIAS_TEST", 28)  # últimos días de servicio: test
-P2_DIAS_VAL = p3_leer_entero("P2_DIAS_VAL", 14)  # días anteriores: solo para elegir umbrales
-P2_PESO_HISTORICO = p3_leer_entero(
-    "P2_PESO_HISTORICO", 20
-)  # peso (en días) de la frecuencia global
+# P2: historia y modelo (cada uno se puede cambiar con la variable de entorno del mismo nombre).
+# La partición es la común del proyecto (FRONTERA_VALID, FRONTERA_TEST y BRECHA_HORAS).
+# Peso (en días) de la frecuencia global en la historia "hasta ayer"
+P2_PESO_HISTORICO = p3_leer_entero("P2_PESO_HISTORICO", 20)
 P2_MIN_SAMPLES_LEAF = p3_leer_entero("P2_MIN_SAMPLES_LEAF", 500)
 P2_REGISTRAR_MLFLOW = p3_leer_bool("P2_REGISTRAR_MLFLOW")
 
