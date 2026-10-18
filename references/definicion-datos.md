@@ -57,7 +57,7 @@
 | Pregunta | Objetivo | Construcción |
 |---|---|---|
 | **P1** (regresión) | `viajes` por estación y hora de servicio del día siguiente | Contar viajes por `origen_id` y hora de `inicio_del_viaje` (5:00 a 0:59). Las horas sin viajes valen 0 solo dentro del periodo en que la estación operó; antes de su primer viaje y después del último quedan vacías. La zona (municipio) es la suma de sus estaciones |
-| **P2** (clasificación) | `riesgo(estación, ventana)` | `neto = llegadas − salidas` acumulado desde el inicio del día (llegadas por `destino_id` y `fin_del_viaje`; salidas por `origen_id` y `inicio_del_viaje`). Riesgo de *sin bicis* o *sin anclajes* si el cambio en las próximas 2 horas supera `P2_ALFA` = 0.5 de `dpcapacity` (si ocurren los dos, gana el de mayor estrés relativo) |
+| **P2** (clasificación) | `riesgo(estación, bin)` | Los viajes se agrupan por estación en bins de tiempo de 30 minutos y en cada bin se calcula `neto = llegadas − salidas` (llegadas por `destino_id` y `fin_del_viaje`; salidas por `origen_id` y `inicio_del_viaje`). Riesgo de *sin bicis* o *sin anclajes* si el cambio en las próximas 2 horas supera `P2_ALFA = 0.5` de `dpcapacity` (si ocurren los dos, gana el de mayor estrés relativo) |
 | **P3** (clustering) | Sin objetivo | Vector por estación: perfil horario (laboral y fin de semana), volumen, balance neto promedio y ubicación, calculado **solo con el periodo de entrenamiento** |
 
 **Limitación de P2:** no hay inventario de bicicletas, así que el objetivo es un proxy. El acumulado parte de un nivel desconocido y no ve el rebalanceo que hizo la operación. Se excluyen las 4 estaciones con `dpcapacity = 0`.

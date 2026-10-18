@@ -432,6 +432,8 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 
 ## Referencias
 
+Anthropic. (2026). *Claude* (Claude Opus 5.5 y Claude Sonnet 5.5) [Modelo de lenguaje grande], utilizado como asistente de programación, depuración y redacción de la documentación. https://claude.ai/
+
 Dorard, L. (2018, 9 de marzo). *From data to AI with the Machine Learning Canvas (Part I)*. Own Machine Learning (Medium). https://medium.com/louis-dorard/from-data-to-ai-with-the-machine-learning-canvas-part-i-d171b867b047
 
 Huyen, C. (2022). *Designing machine learning systems: An iterative process for production-ready applications*. O'Reilly Media.
@@ -446,13 +448,12 @@ Wilson, B. (2022). *Machine learning engineering in action*. Manning Publication
 
 ### Uso de herramientas de inteligencia artificial
 
-Se usó **Claude** (Anthropic; Claude Code con el modelo Claude Sonnet 5.5) como asistente de programación y revisión en el trabajo de P3 de Luis Arturo Sánchez Davila:
+Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programación y de redacción. La tabla resume, por integrante, la herramienta y el apoyo que se recibió.
 
-- Reorganización de la lógica de los notebooks 0.03 y 0.05 a 0.08 en el módulo `tc5061_proyecto_equipo07` (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions.
-- Redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks.
+| Integrante | Herramienta | Para qué se usó |
+|---|---|---|
+| Daniel Sánchez Hernández (P1) | Claude Code, con el modelo Claude Opus 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte |
+| Fernando Arreola Treviño (P2) | Claude Code, con el modelo Claude Sonnet 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks |
+| Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks |
 
-Las decisiones de diseño, los criterios de aceptación del modelo, la ejecución con los datos reales, la revisión de los resultados y los commits, push y Pull Requests son del integrante, que revisó y es responsable del contenido. Por acuerdo del equipo, esta declaración vive aquí y no en los mensajes de commit.
-
-Anthropic. (2026). *Claude* (Claude Opus 5.5) [Modelo de lenguaje grande], utilizado para revisión, refactorización y depuración del código de P1, elaboración de pruebas y del workflow de P1, y redacción y corrección de la documentación. https://claude.ai/
-
-En P1 (Daniel Sánchez Hernández), la formulación del problema, la elección de variables, modelos y métricas, la ejecución con los datos reales, la validación de los resultados y los commits y Pull Requests son del integrante, que revisó y es responsable del contenido.
+En las tres preguntas, la formulación del problema, la elección de variables, modelos y métricas, los criterios de aceptación, la ejecución con los datos reales, la validación de los resultados y los commits y Pull Requests son de cada integrante, que revisó y es responsable del contenido. Por acuerdo del equipo, esta declaración vive aquí y no en los mensajes de commit.
