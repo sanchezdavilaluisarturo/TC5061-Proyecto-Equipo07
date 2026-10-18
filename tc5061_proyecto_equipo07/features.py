@@ -7,7 +7,7 @@ data/processed/p2_cambios_estacion_bin.parquet
 P3: lee data/processed/viajes_modelado_AAAA-MM_AAAA-MM.parquet (`dataset p3-particionar`) y deja
 estaciones_train.parquet y demanda_estacion_hora.parquet en data/processed/.
 
-Uso: python -m tc5061_proyecto_equipo07.features p1-features | p3-features
+Uso: python -m tc5061_proyecto_equipo07.features p1-features | p2-features | p3-features
 """
 
 from loguru import logger

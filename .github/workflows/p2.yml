@@ -7,14 +7,6 @@
 # Secret del repositorio (Settings > Secrets and variables > Actions > Secrets):
 #   MLFLOW_TRACKING_URI  URL del servidor MLflow (solo se usa si se marca `registrar`)
 # Nombre de los runs (lo fija el workflow):
-#   sola (Run workflow en p2)                  -> `mibici-equipo07-p2-baseline-historico` y `mibici-equipo07-p2-hgb`
-#   desde TC5061-Proyecto-Equipo07.yml (todas) -> `mibici-equipo07-todas-p2-baseline-historico` y `...-hgb`
-# Para forzar el nombre al correrla sola, se llena el campo `nombre_run`: quedan
-# `<nombre_run>-baseline-historico` y `<nombre_run>-hgb`.
-# `peso_historico` y `min_samples_leaf` vacíos usan los valores de config.py.
-# `de_nuevo` se acepta porque la acción de las tres lo pasa, pero P2 no lo usa: cada registro
-# crea runs nuevos.
-# Recursos medidos en ubuntu-latest: features ~11.8 GB y 1 min; entrenamiento ~12.8 GB y 11 min.
 # Tarea: clasificar si una estación se quedará sin bicicletas o sin anclajes
 name: P2 - riesgo de estación
 

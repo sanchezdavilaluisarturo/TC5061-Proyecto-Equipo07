@@ -1274,9 +1274,9 @@ def p1_entrenar(
 # ---------------------------------------------------------------------------------------------
 # P2: riesgo de estación (baseline histórico y HistGradientBoosting)
 # Uso: python -m tc5061_proyecto_equipo07.modeling.train p2-entrenar [--registrar]
-# Recalcula la limpieza y las features en memoria (no lee ni escribe parquets intermedios), deja
-# la matriz de confusión y la comparación en reports/figures/p2_* y, con --registrar (o
-# P2_REGISTRAR_MLFLOW=true), registra un run por modelo en el experimento del proyecto.
+# Lee data/processed/p2_cambios_estacion_bin.parquet (`make features-p2`), agrega la historia
+# "hasta ayer", deja la matriz de confusión y la comparación en reports/figures/p2_* y, con
+# --registrar (o P2_REGISTRAR_MLFLOW=true), registra un run por modelo.
 # ---------------------------------------------------------------------------------------------
 
 
