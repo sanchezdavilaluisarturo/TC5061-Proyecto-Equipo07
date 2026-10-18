@@ -2,7 +2,7 @@
 
 Formulación del problema del proyecto integrador de **Operaciones de Aprendizaje Automático (TC5061)**. Para cada pregunta se describe: 1) qué se predice o se agrupa, con qué granularidad y horizonte; 2) por qué es relevante para la operación de MiBici; 3) quién usaría el resultado y qué decisión tomaría con él.
 
-> **Estado:** formulación de la primera entrega. Lo que se marca como *propuesta* sigue abierto; el resto quedó decidido (ver *Decisiones tomadas* al final).
+> **Estado:** formulación de la primera entrega; las decisiones del equipo están en *Decisiones tomadas*, al final.
 
 ## ML Canvas del proyecto
 
@@ -14,9 +14,9 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 | **Fuentes de datos** | Viajes mensuales (`datos_abiertos_AAAA_MM`, 27,086,557 viajes de ene-2020 a sep-2026) y nomenclatura de estaciones (484 estaciones con coordenadas y capacidad). Ver la sección *Datos* del README |
 | **Recolección de datos** | Descarga mensual del portal de datos abiertos de MiBici. El archivo del mes tarda en publicarse y el portal puede retirar meses (2023-04 y 2023-05) |
 | **Predicciones** | Por lotes (por ejemplo, una vez al día), no en tiempo real |
-| **Construcción de modelos** | Baselines (media histórica por hora y estación), después scikit-learn y XGBoost; K-Means o HDBSCAN para P3 |
+| **Construcción de modelos** | Un baseline sencillo por pregunta y al menos un candidato: HGB y XGBoost Poisson (P1), HistGradientBoosting (P2), K-Means y PCA + K-Means (P3) |
 | **Features** | Estación, hora, día de la semana, mes, festivos, rezagos de demanda, balance neto acumulado, capacidad y ubicación |
-| **Evaluación offline** | Partición **temporal** (entrenar con el pasado, probar con el futuro): MAE y RMSE para P1; recall, precisión y F1 para P2; silueta e interpretación para P3 |
+| **Evaluación offline** | Partición **temporal** común (entrenar con el pasado, probar con el futuro): MAE y RMSE para P1; PR-AUC, recall y F1 para P2; silueta, estabilidad e interpretación para P3 |
 | **Evaluación y monitoreo en vivo** | Error semanal contra lo observado, deriva de la demanda y alerta si un mes llega incompleto |
 
 ## P1: demanda de viajes (regresión)
@@ -38,9 +38,9 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 
 **1) Qué se predice**
 - **Variable:** si una estación llegará a faltante de bicis o de anclajes.
-- **Granularidad:** estación × ventana de 1 a 2 horas. *Propuesta.*
-- **Horizonte:** las próximas 1 a 2 horas. *Propuesta.*
-- **Objetivo:** etiqueta binaria o de tres clases (`normal`, `sin bicis`, `sin anclajes`) derivada del **balance neto** (salidas − llegadas) acumulado frente a `dpcapacity`. El umbral de riesgo está por definir.
+- **Granularidad:** estación × bloque de 30 minutos.
+- **Horizonte:** las próximas 2 horas (4 bloques).
+- **Objetivo:** tres clases (`sin riesgo`, `sin bicis`, `sin anclajes`): hay riesgo si el cambio neto (llegadas − salidas) en la ventana alcanza el 50 % de `dpcapacity` (`P2_ALFA`); si ocurren los dos, gana el de mayor estrés relativo.
 
 **2) Por qué es relevante**
 - Una estación vacía pierde un viaje y una llena impide terminarlo; ambas dañan la percepción del servicio.
@@ -51,14 +51,14 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 
 **Limitaciones**
 - Los datos **no traen inventario**, por lo que la etiqueta es un proxy: el balance acumulado necesita un punto de partida desconocido y no registra los movimientos de rebalanceo que ya hizo la operación.
-- 4 estaciones tienen `dpcapacity = 0` y deberán excluirse o tratarse aparte.
+- Las 4 estaciones con `dpcapacity = 0` se excluyen.
 
 ## P3: grupos de estaciones con patrones de uso (clustering)
 
 **1) Qué se agrupa**
-- **Entidad:** estaciones (475 con viajes).
-- **Variables:** perfil horario laboral y de fin de semana, volumen, balance neto promedio y ubicación.
-- **Horizonte:** no es predictivo; se recalcula cada trimestre o cada año. *Propuesta.*
+- **Entidad:** estaciones con al menos 1,000 salidas en entrenamiento (362 de 475 con viajes).
+- **Variables:** perfil horario laboral y de fin de semana, volumen, balance neto, viajes circulares y duración mediana; la ubicación no entra al clustering y se usa para describir los grupos.
+- **Horizonte:** no es predictivo; se recalcula por periodo y se mide su estabilidad con el año de validación.
 - **Salida:** etiqueta de grupo por estación.
 
 **2) Por qué es relevante**
@@ -73,10 +73,10 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 | | P1 | P2 | P3 |
 |---|---|---|---|
 | **Tarea** | Regresión | Clasificación | Clustering |
-| **Entidad** | Estación-hora | Estación-ventana | Estación |
-| **Horizonte** | Día siguiente | 1 a 2 h | Trimestral |
+| **Entidad** | Estación-hora | Estación-bloque de 30 min | Estación |
+| **Horizonte** | Día siguiente | 2 h | Por periodo |
 | **Usuario** | Planeación de flota | Rebalanceo | Planeación urbana |
-| **Métrica** | MAE, RMSE | Recall, F1 | Silueta |
+| **Métrica** | MAE, RMSE | PR-AUC, recall, F1 | Silueta, ARI |
 
 ## Decisiones tomadas
 

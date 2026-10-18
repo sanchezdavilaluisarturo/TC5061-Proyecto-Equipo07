@@ -1,6 +1,6 @@
 # Definición de los datos — Proyecto MiBici (Equipo 7)
 
-> **Estado:** borrador para acordar en el equipo. Las cifras se midieron sobre los archivos descargados el 13-oct-2026. Lo marcado como *propuesta* es una decisión pendiente.
+> **Estado:** definición de la primera entrega. Las cifras corresponden a los 81 archivos del manifiesto `fuentes-datos.csv`.
 
 ## 0. Rango de fechas
 
