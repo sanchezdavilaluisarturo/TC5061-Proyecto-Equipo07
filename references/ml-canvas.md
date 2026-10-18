@@ -15,7 +15,7 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 | **Recolección de datos** | Descarga mensual del portal de datos abiertos de MiBici. El archivo del mes tarda en publicarse y el portal puede retirar meses (2023-04 y 2023-05) |
 | **Predicciones** | Por lotes (por ejemplo, una vez al día), no en tiempo real |
 | **Construcción de modelos** | Un baseline sencillo por pregunta y al menos un candidato: HGB y XGBoost Poisson (P1), HistGradientBoosting (P2), K-Means y PCA + K-Means (P3) |
-| **Features** | Estación, hora, día de la semana, mes, festivos, rezagos de demanda, balance neto acumulado, capacidad y ubicación |
+| **Features** | Estación, hora, día de la semana, mes, festivos, rezagos de demanda, balance neto, capacidad y ubicación |
 | **Evaluación offline** | Partición **temporal** común (entrenar con el pasado, probar con el futuro): MAE y RMSE para P1; PR-AUC, recall y F1 para P2; silueta, estabilidad e interpretación para P3 |
 | **Evaluación y monitoreo en vivo** | Error semanal contra lo observado, deriva de la demanda y alerta si un mes llega incompleto |
 
@@ -52,6 +52,7 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 **Limitaciones**
 - Los datos **no traen inventario**, por lo que la etiqueta es un proxy: el balance acumulado necesita un punto de partida desconocido y no registra los movimientos de rebalanceo que ya hizo la operación.
 - Las 4 estaciones con `dpcapacity = 0` se excluyen.
+- Dado que se evalúa el riesgo por estación con una ventana de 2 horas en el futuro, no es posible clasificar el riesgo de estaciones en las últimas 2 horas hábiles diarias.
 
 ## P3: grupos de estaciones con patrones de uso (clustering)
 
@@ -81,6 +82,6 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 ## Decisiones tomadas
 
 - Horizonte de P1: el día siguiente, con rezagos de 1 día o más.
-- Riesgo de P2: el balance neto acumulado en las próximas 2 horas supera el 50 % de la capacidad (`P2_ALFA`).
+- Riesgo de P2: el cambio neto (llegadas − salidas) en las próximas 2 horas supera el 50 % de la capacidad (`P2_ALFA`).
 - 2023-04 y 2023-05: el portal los volvió a publicar; el rango de 81 meses está completo.
 - Una pregunta por integrante: P1 Daniel Sánchez Hernández, P2 Fernando Arreola Treviño y P3 Luis Arturo Sánchez Davila.

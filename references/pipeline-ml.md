@@ -34,12 +34,12 @@ Los notebooks son solo de exploración: la lógica final vive en el módulo y lo
 | Regla | Cifra | Tratamiento |
 |---|---|---|
 | Viajes duplicados | 758 filas repetidas completas | Eliminar, conservando una |
-| Estaciones sin nomenclatura | 3 ids (124, 405, 407), 3,961 viajes | Excluir: sin capacidad ni ubicación no se pueden usar en P2 ni P3 |
+| Estaciones sin nomenclatura | 3 ids (124, 405, 407), 3,961 viajes | Excluir: sin capacidad ni ubicación no sirven a ninguna pregunta |
 | Duración cero | 55,034 viajes | Excluir (probable desbloqueo fallido) |
 | Duración extrema | 159 viajes de más de 24 h (máximo 469 h) | Excluir |
 | Estaciones con capacidad 0 | 4 estaciones | Excluir de P2 |
 | Meses sin datos | Ninguno: 2023-04 y 2023-05 se republicaron | Si un mes faltara, no se imputa |
-| Datos personales | `usuario_id`, `genero`, `anio_de_nacimiento` | Descartar antes del modelado (minimización) |
+| Datos personales | `usuario_id`, `genero`, `anio_de_nacimiento` | No entran a ninguna tabla de modelado (minimización) |
 
 **Resultado:** 59,912 registros retirados (0.221 %); quedan 27,026,645 viajes.
 
@@ -63,7 +63,7 @@ Se predicen los viajes que inician en cada estación por hora de servicio (5:00 
 | Variable | Tipo | Por qué es pertinente |
 |---|---|---|
 | `hora`, `dia_semana`, `es_fin_de_semana`, `mes` | Calendario | El uso tiene ciclos diarios (picos de 8:00 y 18:00), semanales y estacionales |
-| `es_festivo` | Calendario | La demanda cae o cambia de perfil en los días de descanso obligatorio (LFT art. 74) |
+| `es_festivo` | Calendario | La demanda cae o cambia de perfil en los días de descanso obligatorio |
 | `viajes_rezago_1d`, `viajes_rezago_7d` | Rezago | La misma hora de ayer y de la semana pasada es el mejor predictor de la demanda |
 | `viajes_promedio_4sem` | Ventana (solo días anteriores) | Promedio de la misma hora en las 4 semanas previas: suaviza el ruido sin usar el futuro |
 | `capacidad`, `latitud`, `longitud`, `zona` | Estación | Ubicación y tamaño explican parte del nivel de demanda |
@@ -123,6 +123,8 @@ Para cada estación y bloque de 30 minutos se predice si en las **próximas 2 ho
 ### Limitación declarada
 
 No hay inventario de bicicletas, por lo que la etiqueta es un **proxy**: no conoce el nivel inicial de la estación ni ve el rebalanceo realizado. El modelo detecta **presión de desbalance**, no el inventario real, y debe validarse con el equipo de operación antes de usarse.
+
+Dado que se evalúa el riesgo por estación con una ventana de 2 horas en el futuro, no es posible clasificar el riesgo de estaciones en las últimas 2 horas hábiles diarias.
 
 ## 5. P3: grupos de estaciones (clustering)
 

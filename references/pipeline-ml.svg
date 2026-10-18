@@ -61,9 +61,9 @@
 <line x1="1300" y1="379" x2="1320" y2="379" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1322" y="304" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="1336" y="330" font-size="14.5" font-weight="700">Baseline → candidato</text>
-<text x="1336" y="356" font-size="12.5" fill="#1f2933">Frecuencia histórica</text>
-<text x="1336" y="377" font-size="12.5" fill="#1f2933">HistGradientBoosting</text>
-<text x="1336" y="398" font-size="12.5" fill="#1f2933">3 clases: ok, bicis, anclajes</text>
+<text x="1336" y="356" font-size="12.5" fill="#1f2933">Frecuencia histórica → HGB</text>
+<text x="1336" y="377" font-size="12.5" fill="#1f2933">Clases: sin_riesgo, sin_bicis</text>
+<text x="1336" y="398" font-size="12.5" fill="#1f2933">y sin_anclajes</text>
 <line x1="1554" y1="379" x2="1574" y2="379" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1576" y="304" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="1590" y="330" font-size="14.5" font-weight="700">PR-AUC y recall</text>

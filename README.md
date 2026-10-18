@@ -5,6 +5,7 @@
 </a>
 
 Proyecto integrador de **Operaciones de Aprendizaje Automático (MLOps, TC5061)** del Equipo 7. Propone y construye una solución de Machine Learning sobre los datos abiertos de **MiBici**, el sistema de bicicleta pública del Área Metropolitana de Guadalajara.
+
 ## Instalación
 
 Requiere Python 3.11 y [uv](https://docs.astral.sh/uv/).
@@ -38,37 +39,37 @@ P1_REGISTRAR_MLFLOW=true P2_REGISTRAR_MLFLOW=true P3_REGISTRAR_MLFLOW=true make 
 
 `make help` lista todos los comandos. `train-p1` depende de `features-p1`, así que siempre entrena con las features al día.
 
-### Datos, features y entrenamiento de P3
+### Comandos por pregunta
 
-Cada etapa es un comando del módulo `tc5061_proyecto_equipo07` y tiene su notebook, que la llama y documenta los hallazgos (los notebooks se corren desde `notebooks/`):
+Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks solo exploran y documentan los hallazgos (se corren desde `notebooks/`).
 
-| Orden | Comando | Notebook | Qué deja listo |
-|---|---|---|---|
-| 1 | `make data` (`dataset todo`) | `0.02-dsh-exploracion-carga`, `0.01-lasd-exploracion-carga` | CSV en `data/raw/`, Parquet normalizado en `data/interim/` y datos limpios en `data/processed/` |
-| 2 | — | `0.02-lasd-eda-p3` | EDA de P3: calidad, tiempo y estaciones (solo hallazgos) |
-| 3 | `make features-p3` | `0.03-lasd-limpieza-p3` | `viajes_modelado_*.parquet` (con partición temporal), `estaciones_train.parquet` y `demanda_estacion_hora.parquet` |
-| 4 | `make train-p3` | `0.04-lasd-baseline-p3`, `0.05-lasd-mejoramodelo-p3` | Modelo base y modelo alternativo de P3, con artefactos en `reports/figures/p3_*` y, si se pide, runs en MLflow |
+| Etapa | P1 | P2 | P3 | Qué deja listo |
+|---|---|---|---|---|
+| Datos (común) | `make data` | `make data` | `make data` | CSV en `data/raw/`, Parquet normalizado en `data/interim/` y viajes limpios en `data/processed/` |
+| Features | `make features-p1` | `make features-p2` | `make features-p3` | La tabla de cada pregunta en `data/processed/`, con la partición común |
+| Entrenamiento y evaluación | `make train-p1` | `make train-p2` | `make train-p3` | Métricas, figuras en `reports/figures/pN_*` y, si se pide, runs en MLflow |
+| Workflow de GitHub Actions | `p1.yml` | `p2.yml` | `p3.yml` | Lo mismo en un runner de GitHub |
+
 **Convención:** cada pregunta prefija lo que agrega al módulo (`p1_`, `p2_`, `p3_`; por ejemplo, `p3_perfil_de_estaciones`) y el código de una pregunta no depende del de otra. Lo común usa nombres genéricos (`FRONTERA_VALID`, `FRONTERA_TEST`, `BRECHA_HORAS`).
 
-**Variables de entorno.** El mismo comando corre en la terminal, en los notebooks y en GitHub Actions (`.github/workflows/p3.yml`); cada parámetro tiene también su opción de línea de comandos:
+**Variables de entorno.** El mismo comando corre en la terminal, en los notebooks y en GitHub Actions; cada parámetro tiene también su opción de línea de comandos:
 
 | Variable | Qué controla | Por defecto |
 |---|---|---|
-| `MLFLOW_TRACKING_URI` | URL del servidor MLflow (en CI, el secret del repositorio `secrets.MLFLOW_TRACKING_URI`) | `.env` |
-| `MLFLOW_RUN_NAME` | P2 y P3. Prefijo del nombre de los runs: `<valor>-baseline` y `<valor>-pca_kmeans` (en CI lo fija el workflow: `mibici-equipo07-pN` si la pregunta corre sola y `mibici-equipo07-todas-pN` si corre desde la acción de las 3; se puede forzar con el campo `nombre_run` de *Run workflow*, en la pregunta o en la acción de las 3) | `baseline` y `pca_kmeans` |
-| `P1_REGISTRAR_MLFLOW` | Escribir en MLflow los runs de P1 (nombres fijos: `p1-baseline-promedio-4sem`, `p1-hgb-poisson`, `p1-xgb-poisson`) | `false` |
-| `P2_REGISTRAR_MLFLOW` | Escribir en MLflow los runs de P2 | `false` |
+| `MLFLOW_TRACKING_URI` | URL del servidor MLflow (en CI, el secret del repositorio `MLFLOW_TRACKING_URI`) | `.env` |
+| `P1_REGISTRAR_MLFLOW`, `P2_REGISTRAR_MLFLOW`, `P3_REGISTRAR_MLFLOW` | Escribir en MLflow los runs de cada pregunta | `false` |
+| `MLFLOW_RUN_NAME` | P2 y P3: prefijo del nombre de los runs (en CI lo fija el workflow). P1 usa nombres fijos | P2: `baseline-historico` y `hgb`; P3: `baseline` y `pca_kmeans` |
 | `P2_PESO_HISTORICO`, `P2_MIN_SAMPLES_LEAF` | Parámetros del modelo de P2 | `20`, `500` |
-| `P3_REGISTRAR_MLFLOW` | Escribir en MLflow los runs de P3 | `false` |
-| `P3_REGISTRAR_DE_NUEVO` | Crear un run nuevo aunque ya exista uno terminado con ese nombre | `false` |
-| `P3_EXIGIR_ACEPTACION` | Salir con error si el modelo alternativo no cumple los criterios de aceptación | `false` |
-| `P3_EXPERIMENTO` | Experimento de MLflow | `mibici-equipo07` (el de `config.py`) |
-| `P3_SEMILLA`, `P3_K_MINIMO`, `P3_K_MAXIMO`, `P3_MIN_SALIDAS_TRAIN`, `P3_MIN_SALIDAS_VALID`, `P3_COMPONENTES`, `P3_SEMILLAS_BUSQUEDA` | Parámetros del modelo | `42`, `2`, `10`, `1000`, `300`, `3,4,5,6,8,10`, `5` |
+| `P3_REGISTRAR_DE_NUEVO` | P3: crear un run nuevo aunque ya exista uno terminado con ese nombre | `false` |
+| `P3_EXIGIR_ACEPTACION` | P3: salir con error si el modelo alternativo no cumple los criterios de aceptación | `false` |
+| `P3_EXPERIMENTO` | P3: experimento de MLflow | `mibici-equipo07` (el de `config.py`) |
+| `P3_SEMILLA`, `P3_K_MINIMO`, `P3_K_MAXIMO`, `P3_MIN_SALIDAS_TRAIN`, `P3_MIN_SALIDAS_VALID`, `P3_COMPONENTES`, `P3_SEMILLAS_BUSQUEDA` | Parámetros del modelo de P3 | `42`, `2`, `10`, `1000`, `300`, `3,4,5,6,8,10`, `5` |
+
 **Pruebas:** `pytest tests`.
 
-**GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre `ruff` y `pytest` en los PR que tocan el módulo y, a mano (*Run workflow*), corre la calidad y llama a la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`); cada una también se corre sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
+**GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff` y `pytest`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
-**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la primera entrega (`baseline` y `pca_kmeans`) están en el experimento `p3`; desde ahora los comandos usan `mibici-equipo07`.
+**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3).
 
 ## Propósito
 
@@ -82,9 +83,10 @@ Responder con ML tres preguntas operativas de MiBici, sobre una base reproducibl
 | P2 | ¿Una estación estará en riesgo de quedarse sin bicicletas o sin anclajes? | Clasificación | Equipo de rebalanceo |
 | P3 | ¿Qué grupos de estaciones comparten patrones de uso y dónde se ubican? | Clustering | Planeación urbana y expansión |
 
-> Los datos no incluyen inventario de bicicletas por estación; para P2 el riesgo se aproxima con el balance neto de viajes (salidas − llegadas) acumulado frente a la capacidad de la estación.
+> Los datos no incluyen inventario de bicicletas por estación; para P2 el riesgo se aproxima con el cambio neto de viajes (llegadas − salidas) en las próximas 2 horas frente a la capacidad de la estación.
 
 Detalle de cada pregunta (qué se predice, relevancia y decisión que habilita): [ML Canvas](references/ml-canvas.md).
+
 ## Datos
 
 ### Fuente
@@ -152,16 +154,17 @@ Detectados en el EDA. El tratamiento aplicado a cada uno se documenta en *Limpie
 | **Formatos de fecha mezclados** | 78 archivos `AAAA-MM-DD hh:mm:ss`; 2023-11, 2024-09 y 2024-10 usan `DD/MM/AAAA hh:mm` | 0.02-dsh |
 | **Viajes duplicados** | 758 filas completamente repetidas (1,516 filas comparten un `viaje_id` repetido) | 0.02-dsh, 0.02-lasd |
 | **Años de nacimiento imposibles** | 1,255 anteriores a 1900 (mínimo 1) y 2,101 posteriores a 2010 (máximo 2023) | 0.01-fat |
-| **Duración cero** | 55,035 viajes con inicio igual a fin | 0.02-lasd |
+| **Duración cero** | 55,035 viajes con inicio igual a fin (55,034 después de quitar duplicados) | 0.02-lasd |
 | **Duración extrema** | 159 viajes de más de 24 horas (máximo 469 horas, cerca de 20 días); la mediana es 9.4 min y el percentil 99, 32.8 min | 0.01-fat, 0.02-lasd |
 | **Estaciones sin nomenclatura** | 3 ids (124, 405 y 407) aparecen en viajes y no en la nomenclatura: afecta a 3,961 viajes | 0.01-fat, 0.02-lasd |
 | **Estaciones sin capacidad** | 4 estaciones con `dpcapacity = 0`, que afecta el cálculo de riesgo de P2 | 0.02-lasd |
 | **Nomenclatura única** | Solo existe la versión 2026-09; estaciones retiradas o reubicadas no se pueden reconstruir para años anteriores | 0.02-dsh |
-| **Sin servicio de madrugada** | Solo 194 viajes entre la 1:00 y las 4:59 (0.0007 %); la hora 0 tiene 145,857 (0.5 %) | 0.02-lasd |
+| **Sin servicio de madrugada** | Solo 194 viajes entre la 1:00 y las 4:59 (193 después de la limpieza); la hora 0 tiene 145,857 (0.5 %) | 0.02-lasd |
 | **Estaciones nuevas** | 109 estaciones no tienen viajes en entrenamiento y aparecen en prueba (3.8 % de sus viajes); 12 de la nomenclatura no registran ninguno | 0.03-lasd |
 | **Capacidad sin relación con la demanda** | Correlación de Spearman entre salidas y capacidad de −0.02 | 0.02-lasd |
 | **Demanda concentrada** | El 10 % de las estaciones (48) concentra el 37.8 % de los viajes; 74 tienen menos de 1,000 salidas | 0.02-lasd |
 | **Sin inventario de bicicletas** | Los datos no registran bicis por estación (ver nota en Preguntas) | — |
+
 ### Privacidad
 
 Los viajes incluyen `usuario_id`, género y año de nacimiento. Son datos personales aunque estén anonimizados; no se publican valores individuales en los notebooks ni en este README, solo agregados.
@@ -177,7 +180,8 @@ Rango de fechas y su justificación, variables y construcción de cada objetivo,
 | **Días laborales** | Dos picos: 8:00 (8.3 % de los viajes) y 18:00 (10.5 %) |
 | **Fin de semana** | Un solo pico amplio entre 11:00 y 14:00; sábado y domingo concentran el 20.4 % de los viajes |
 | **Desbalance** | Acumulan bicicletas estaciones del centro (GDL-049, +148,627) y pierden las de Av. Vallarta (GDL-127, −98,030) |
-| **Pendiente** | 2026-09 (490,056) es el máximo de la serie y +30 % contra 2025-09; falta verificar que no sea una carga atípica |
+| **Máximo reciente** | 2026-09 (490,056) es el máximo de la serie y +30 % contra 2025-09; cae en prueba, así que se vigila al interpretar el error |
+
 ### Limpieza y partición
 
 Reglas aplicadas por `dataset.limpiar` y documentadas en `0.03-lasd-limpieza-p3`, cada una con su justificación en el notebook:
@@ -186,12 +190,12 @@ Reglas aplicadas por `dataset.limpiar` y documentadas en `0.03-lasd-limpieza-p3`
 |---|---|---:|
 | Viajes con `viaje_id` repetido (filas idénticas) | Eliminar | 758 |
 | Origen o destino sin nomenclatura | Excluir | 3,961 |
-| Duración cero | Excluir (sensibilidad por probar en el modelado) | 55,034 |
+| Duración cero | Excluir | 55,034 |
 | Duración mayor a 24 h | Excluir | 159 |
-| `usuario_id`, `genero`, `anio_de_nacimiento` | Descartar (minimización de datos personales) | — |
+| `usuario_id`, `genero`, `anio_de_nacimiento` | No entran a ninguna tabla de modelado (minimización): P1 y P2 leen solo las columnas que usan y P3 parte de `viajes_modelado`, que no los incluye | — |
 | Meses sin datos (hoy ninguno: el portal volvió a publicar 2023-04 y 2023-05); horas 1:00 a 4:59 | No imputar; excluir de la tabla de demanda | — |
 
-**Resultado:** 59,912 registros retirados (0.221 %); quedan **27,026,645 viajes** en `data/processed/viajes_limpios_2020-01_2026-09.parquet`. Para el modelado, `dataset p3-particionar` deja `data/processed/viajes_modelado_2020-01_2026-09.parquet` solo con las columnas que usan las preguntas (sin `usuario_id`, género ni año de nacimiento) y con la partición.
+**Resultado:** 59,912 registros retirados (0.221 %); quedan **27,026,645 viajes** en `data/processed/viajes_limpios_2020-01_2026-09.parquet`. Para P3, `dataset p3-particionar` deja `data/processed/viajes_modelado_2020-01_2026-09.parquet` solo con las columnas que usan las preguntas (sin `usuario_id`, género ni año de nacimiento) y con la partición.
 
 **Partición temporal** con una brecha de 24 horas antes de cada frontera, para que ninguna etiqueta use datos del conjunto siguiente:
 
@@ -202,7 +206,8 @@ Reglas aplicadas por `dataset.limpiar` y documentadas en `0.03-lasd-limpieza-p3`
 | test | 2025-10-01 a 2026-09-30 | 4,489,362 | 16.6 |
 | brecha | 24 h antes de cada frontera | 29,462 | 0.1 |
 
-**Preprocesamiento:** `data/processed/estaciones_train.parquet` (484 estaciones, calculada solo con entrenamiento) y `data/processed/demanda_estacion_hora.parquet` (16,179,853 filas para 472 estaciones; 44.2 % de las estación-horas sin viajes), generadas por `features p3-features`.
+**Preprocesamiento de P3:** `data/processed/estaciones_train.parquet` (484 estaciones, calculada solo con entrenamiento) y `data/processed/demanda_estacion_hora.parquet` (16,179,853 filas para 472 estaciones; 44.2 % de las estación-horas sin viajes), generadas por `features p3-features`.
+
 ## Arquitectura
 
 ![Arquitectura del sistema](references/arquitectura.png)
@@ -234,7 +239,7 @@ Notebooks `0.02-dsh-exploracion-carga` (ingesta) y `0.04-dsh-eda-p1` (EDA de P1)
 | **Partición** | La común del proyecto: train 10,531,227 filas, valid 2,673,888 y test 2,884,207 |
 | **Métricas** | MAE como principal (error en viajes por estación-hora, directo para el operador) y RMSE como complementaria (castiga más los errores en las horas pico). Sin MAPE: 44 % de las estación-horas no tienen viajes |
 
-**Variables (14):** `origen_id` (solo para aprender el nivel de cada estación), viajes de la misma hora 1 y 7 días antes, promedio de la misma hora en las 4 semanas anteriores, hora, día de la semana, fin de semana, mes, festivo (LFT art. 74), capacidad, latitud, longitud, zona y días desde la apertura de la estación.
+**Variables (14):** `origen_id` (solo para aprender el nivel de cada estación), viajes de la misma hora 1 y 7 días antes, promedio de la misma hora en las 4 semanas anteriores, hora, día de la semana, fin de semana, mes, festivo, capacidad, latitud, longitud, zona y días desde la apertura de la estación.
 
 **Modelos** (los tres en un `Pipeline` de scikit-learn, con la misma interfaz `fit`/`predict`):
 
@@ -294,7 +299,7 @@ Notebooks `0.01-fat-exploracion-inicial-p2`, `0.02-fat-exploracion-y-limpieza-p2
 | Elemento | Decisión |
 |---|---|
 | **Qué se predice** | Para cada estación y bloque de 30 minutos, si en las próximas 2 horas estará en riesgo de quedarse **sin bicis**, **sin anclajes** o **sin riesgo** (3 clases) |
-| **Aproximación del riesgo** | Los datos no traen inventario. Se usa el balance neto de viajes (salidas − llegadas) acumulado en la ventana futura frente a la capacidad: si supera el 50 % de la capacidad (`P2_ALFA`) hay riesgo; si hay los dos eventos, gana el de mayor estrés relativo |
+| **Aproximación del riesgo** | Los datos no traen inventario. Se usa el cambio neto de viajes (llegadas − salidas) en la ventana futura frente a la capacidad: si supera el 50 % de la capacidad (`P2_ALFA`) hay riesgo; si hay los dos eventos, gana el de mayor estrés relativo |
 | **Partición** | La común del proyecto; validación solo para elegir los umbrales de decisión, test solo se reporta |
 | **Variables** | Balance neto relativo de los últimos 1, 2, 4 y 8 bloques, salidas y entradas recientes, acumulado del día, capacidad, ubicación, hora cíclica, fin de semana y la frecuencia histórica de cada riesgo "hasta ayer" en la misma estación, tipo de día y hora |
 | **Métricas** | Average precision (PR-AUC) por clase de riesgo y de riesgo en general, log-loss, y precisión, recall y F1 por clase con el umbral de cada clase que maximiza el F1 en validación |
@@ -311,7 +316,7 @@ Resultados en test:
 | Baseline histórico | 0.2453 | 0.3982 | 0.3329 | 0.4257 | 0.4371 | 0.2419 | 0.4125 |
 | HistGradientBoosting | 0.2318 | 0.4029 | 0.3326 | 0.4436 | 0.4467 | 0.2782 | 0.4151 |
 
-Comando: `make train-p2` (con `P2_REGISTRAR_MLFLOW=true` registra los runs `baseline-historico` y `hgb`). Figuras y comparación en `reports/figures/p2_*`.
+Comando: `make train-p2` (con `P2_REGISTRAR_MLFLOW=true` registra los runs `p2-baseline-historico` y `p2-hgb`). Figuras y comparación en `reports/figures/p2_*`.
 
 ## P3: clustering de estaciones
 
@@ -349,35 +354,36 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 
 ### Registro en MLflow
 
-- **Servidor:** la URL de `MLFLOW_TRACKING_URI` (https://mlflow.equipo7mlops.com/) · **Experimento:** `mibici-equipo07` (el de `config.py`) · **Runs:** `baseline` y `pca_kmeans`, o `<MLFLOW_RUN_NAME>-baseline` y `<MLFLOW_RUN_NAME>-pca_kmeans`.
+- **Servidor:** la URL de `MLFLOW_TRACKING_URI` (https://mlflow.equipo7mlops.com/) · **Experimento:** `mibici-equipo07` (el de `config.py`) · **Runs:** `<MLFLOW_RUN_NAME>-baseline` y `<MLFLOW_RUN_NAME>-pca_kmeans`; los de la entrega son `p3-baseline` y `p3-pca_kmeans`.
 - **Cuándo se registra:** solo con `P3_REGISTRAR_MLFLOW=true`; es idempotente (un run terminado con el mismo nombre no se duplica, y uno que quedó a medias no cuenta).
 - **Registrado:** 14 parámetros, 11 métricas, etiquetas (equipo, pregunta, commit, autor), artefactos (asignación por estación, resumen de grupos, mapa y silueta por `k`) y el modelo (`StandardScaler` + `KMeans`).
 - **Trazabilidad:** el parámetro `data_version` es `dataset.version_datos()` (hash de los SHA-256 de `references/fuentes-datos.csv`); en CI las etiquetas incluyen `github_run_id`, `github_actor`, `github_ref_name` y el commit.
 - **Copia local:** los mismos artefactos se guardan en `reports/figures/p3_*` y sí se versionan en Git.
 
 > **Al crear un experimento nuevo en este servidor, usar `artifact_location="mlflow-artifacts:/<nombre>"`.** Sin esa opción el servidor asigna una ruta local suya (`/home/ec2-user/mlflow/artifacts/...`) y la subida de artefactos falla con `Errno 45`. El servidor es MLflow 3.1.4 y el `requirements.txt` fija el cliente en 3.16.0: conviene alinearlos.
+
 ## Estructura de carpetas
 
 ```
 ├── data/              <- (ignorado por Git)
 │   ├── raw/           <- CSV originales del portal (viajes/ y estaciones/)
-│   ├── external/      <- Parquet mensuales por viaje
+│   ├── external/      <- Reservada para datos de terceros (hoy vacía)
 │   ├── interim/       <- viajes_2020-01_2026-09.parquet (normalizado, sin limpiar)
-│   └── processed/     <- viajes_limpios_*, viajes_modelado_*, tablas de P1 (p1_demanda_estacion_hora), P2 (p2_cambios_estacion_bin) y P3 (.parquet)
+│   └── processed/     <- Viajes limpios y tablas de features de P1, P2 y P3 (.parquet)
 ├── docs/              <- Documentación (mkdocs)
 ├── models/            <- Modelos serializados (ignorado por Git)
 ├── notebooks/         <- Convención FASE.NUMERO-INICIALES-descripcion.ipynb
-│   ├── 0.01-fat-exploracion-inicial-p2.ipynb           <- EDA sobre Parquet: nulos, años de nacimiento, duración y entradas/salidas por estación
+│   ├── 0.01-fat-exploracion-inicial-p2.ipynb           <- P2: EDA inicial (nulos, años de nacimiento, duración)
 │   ├── 0.01-lasd-exploracion-carga.ipynb               <- P3: carga y descripción del dataset con dataset.py
-│   ├── 0.02-dsh-exploracion-carga.ipynb                <- Descarga del portal, inventario por archivo (codificación, esquema, fechas), unión y Parquet
+│   ├── 0.02-dsh-exploracion-carga.ipynb                <- Ingesta: inventario por archivo, unión y Parquet
 │   ├── 0.02-fat-exploracion-y-limpieza-p2.ipynb        <- P2: exploración y limpieza
 │   ├── 0.02-lasd-eda-p3.ipynb                          <- P3: EDA (calidad, tiempo y estaciones)
 │   ├── 0.03-fat-feature-engineering-p2.ipynb           <- P2: etiqueta de riesgo y variables
 │   ├── 0.03-lasd-limpieza-p3.ipynb                     <- P3: limpieza, partición temporal y preprocesamiento
 │   ├── 0.04-dsh-eda-p1.ipynb                           <- P1: EDA y formulación
-│   ├── 0.04-fat-model-training-registration-p2.ipynb   <- P2: exploración del modelado (el entrenamiento oficial corre desde el módulo)
+│   ├── 0.04-fat-model-training-registration-p2.ipynb   <- P2: exploración del modelado
 │   ├── 0.04-lasd-baseline-p3.ipynb                     <- P3: modelo base y registro en MLflow
-│   └── 0.05-lasd-mejoramodelo-p3.ipynb                 <- P3: modelo alternativo, comparación y registro en MLflow
+│   └── 0.05-lasd-mejoramodelo-p3.ipynb                 <- P3: modelo alternativo y comparación
 ├── references/        <- Documentos de diseño
 │   ├── ml-canvas.md          <- ML Canvas y descripción de P1, P2 y P3
 │   ├── definicion-datos.md   <- Rango, fuente, variables, objetivos, condiciones de uso y partición
@@ -385,18 +391,20 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 │   ├── pipeline-ml.png       <- Diagrama del pipeline por pregunta (fuente editable: pipeline-ml.svg)
 │   ├── fuentes-datos.csv     <- URLs, registros y SHA-256 de los archivos del portal
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
-├── reports/figures/   <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*); copia de los artefactos de MLflow
-├── tc5061_proyecto_equipo07/   <- Módulo: config.py, dataset.py, features.py, modeling/ (train.py, predict.py), plots.py
+├── reports/figures/   <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict), plots
 ├── tests/             <- Pruebas (pytest) del módulo
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
 │   ├── p1.yml                         <- Acción de P1: entrenamiento y registro en MLflow
 │   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
 │   └── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
-├── Makefile
+├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
+├── Makefile           <- Comandos del proyecto (make help)
 ├── pyproject.toml
 └── requirements.txt   <- Dependencias con versiones fijadas
 ```
+
 ## Flujo de trabajo con Git (GitHub Flow)
 
 - `main` está protegida: todo cambio entra por Pull Request con al menos una revisión aprobada.
@@ -414,7 +422,7 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 | Registrar lo necesario para reproducir el run | Parámetros con el rango de fechas, `data_version` (hash del manifiesto), semilla, partición e hiperparámetros del modelo |
 | Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run |
 | Métricas con el conjunto en el nombre | `valid_mae`, `test_mae`, `test_ap_riesgo`, etc. |
-| Sin credenciales ni datos personales en MLflow | La URL del servidor vive en `.env` (no versionado) o en el secret de GitHub; `usuario_id`, género y año de nacimiento se descartan antes del modelado |
+| Sin credenciales ni datos personales en MLflow | La URL del servidor vive en `.env` (no versionado) o en el secret de GitHub; `usuario_id`, género y año de nacimiento no entran a ninguna tabla de modelado |
 | Elegir el modelo sin usar test | La selección se hace con el conjunto de validación; test solo se reporta |
 | Notebooks solo para exploración | Nombrados `FASE.NUMERO-INICIALES-descripcion.ipynb`; la lógica final vive en el módulo y los runs se ejecutan con `make` o `python -m` |
 | Configuración en un solo lugar | Rutas, rango de fechas, fronteras de la partición, semilla y parámetros en `config.py` |

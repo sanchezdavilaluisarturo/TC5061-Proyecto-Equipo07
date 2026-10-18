@@ -44,11 +44,11 @@
 | Variable | Origen | Uso |
 |---|---|---|
 | `inicio_del_viaje` | Viajes | Hora, día, mes y rezagos (P1, P2, P3) |
-| `fin_del_viaje` | Viajes | Hora de llegada (P2) |
+| `fin_del_viaje` | Viajes | Hora de llegada (P2) y duración del viaje (P3) |
 | `origen_id` | Viajes | Estación de salida (P1, P2, P3) |
 | `destino_id` | Viajes | Estación de llegada (P2, P3) |
 | `viaje_id` | Viajes | Solo para eliminar duplicados; no es feature |
-| `id`, `latitude`, `longitude`, `dpcapacity` | Nomenclatura | Capacidad (P2) y ubicación (P3) |
+| `id`, `name`, `latitude`, `longitude`, `dpcapacity` | Nomenclatura | Zona a partir del código del nombre (P1); capacidad y ubicación como variables (P1 y P2); ubicación para describir los grupos (P3) |
 
 **No se usarán** `usuario_id`, `genero` ni `anio_de_nacimiento`: ninguna de las tres preguntas es sobre personas y son datos personales (ver sección 4). Además tienen problemas de calidad (años de nacimiento imposibles, nulos).
 
@@ -58,9 +58,9 @@
 |---|---|---|
 | **P1** (regresión) | `viajes` por estación y hora de servicio del día siguiente | Contar viajes por `origen_id` y hora de `inicio_del_viaje` (5:00 a 0:59). Las horas sin viajes valen 0 solo dentro del periodo en que la estación operó; antes de su primer viaje y después del último quedan vacías. La zona (municipio) es la suma de sus estaciones |
 | **P2** (clasificación) | `riesgo(estación, bin)` | Los viajes se agrupan por estación en bins de tiempo de 30 minutos y en cada bin se calcula `neto = llegadas − salidas` (llegadas por `destino_id` y `fin_del_viaje`; salidas por `origen_id` y `inicio_del_viaje`). Riesgo de *sin bicis* o *sin anclajes* si el cambio en las próximas 2 horas supera `P2_ALFA = 0.5` de `dpcapacity` (si ocurren los dos, gana el de mayor estrés relativo) |
-| **P3** (clustering) | Sin objetivo | Vector por estación: perfil horario (laboral y fin de semana), volumen, balance neto promedio y ubicación, calculado **solo con el periodo de entrenamiento** |
+| **P3** (clustering) | Sin objetivo (no supervisado) | Vector por estación: perfil horario (laboral y fin de semana), volumen, balance neto, viajes circulares y duración mediana, calculado **solo con el periodo de entrenamiento**; la ubicación no entra al clustering |
 
-**Limitación de P2:** no hay inventario de bicicletas, así que el objetivo es un proxy. El acumulado parte de un nivel desconocido y no ve el rebalanceo que hizo la operación. Se excluyen las 4 estaciones con `dpcapacity = 0`.
+**Limitación de P2:** no hay inventario de bicicletas, así que el objetivo es un proxy. El acumulado parte de un nivel desconocido y no ve el rebalanceo que hizo la operación. Se excluyen las 4 estaciones con `dpcapacity = 0`. Dado que se evalúa el riesgo por estación con una ventana de 2 horas en el futuro, no es posible clasificar el riesgo de estaciones en las últimas 2 horas hábiles diarias.
 
 ## 4. Condiciones de uso y datos personales
 
@@ -80,7 +80,7 @@
 
 | Medida | Cómo |
 |---|---|
-| **Minimización** | No se cargan al conjunto de modelado; se descartan al pasar de `interim` a `processed` |
+| **Minimización** | No entran a ninguna tabla de modelado: P1 y P2 leen solo las columnas que usan y P3 parte de `viajes_modelado`, que no los incluye. Solo quedan en los archivos locales de `data/`, que no se versionan |
 | **Agregación** | Todos los objetivos y features son por estación, nunca por persona |
 | **Sin valores individuales** | Notebooks y reportes muestran solo agregados; no se imprimen filas con `usuario_id` |
 | **Sin redistribución** | Los datos no se versionan en Git ni se comparten fuera del equipo |
@@ -108,11 +108,11 @@ Viajes limpios (27,026,645); 29,462 caen en la brecha de 24 h antes de cada fron
 4. **Ajuste solo con entrenamiento:** escaladores, codificadores, imputaciones y agrupamientos de P3 se calculan con el conjunto de entrenamiento y se aplican a los demás.
 5. **Selección con validación:** el modelo se elige con el conjunto de validación. En esta entrega los hiperparámetros quedan fijos en `config.py`; si se ajustan, será con ventanas expansivas (`TimeSeriesSplit`) dentro de entrenamiento.
 6. **Prueba una sola vez:** el conjunto de prueba se evalúa al final, con el modelo elegido, y no se usa para decidir nada.
-7. **Contraste con un baseline:** todo modelo debe superar la media histórica por hora y estación calculada con el entrenamiento.
+7. **Contraste con un baseline:** cada pregunta tiene un baseline sencillo (ver `pipeline-ml.md`) que el candidato debe superar.
 
 ### Riesgos conocidos de fuga o sesgo
 
 - **La nomenclatura es de 2026-09:** capacidad y ubicación de periodos anteriores son las de hoy. Es un atributo estático, pero una estación reubicada o retirada no se refleja en los años previos. Se documenta como limitación.
 - **2023-04 y 2023-05:** el portal los retiró y los volvió a publicar; el manifiesto (registros y SHA-256) detecta si un archivo cambia. Si un mes faltara, sus horas quedan vacías en P1 y no se imputan.
-- **Septiembre de 2026** (490,056 viajes) es el máximo del periodo y cae en prueba; verificar que sea un valor real y no una carga atípica antes de interpretar el error.
+- **Septiembre de 2026** (490,056 viajes) es el máximo del periodo y cae en prueba; se vigila al interpretar el error.
 - **Cambio de régimen:** el entrenamiento incluye la pandemia y la prueba no; el error en prueba puede ser mejor o peor por esa diferencia, no por el modelo.
