@@ -2,7 +2,7 @@
 
 Formulación del problema del proyecto integrador de **Operaciones de Aprendizaje Automático (TC5061)**. Para cada pregunta se describe: 1) qué se predice o se agrupa, con qué granularidad y horizonte; 2) por qué es relevante para la operación de MiBici; 3) quién usaría el resultado y qué decisión tomaría con él.
 
-> **Estado:** borrador. La granularidad, los horizontes y la definición de riesgo de P2 están marcados como *propuesta* y deben acordarse en el equipo.
+> **Estado:** formulación de la primera entrega. Lo que se marca como *propuesta* sigue abierto; el resto quedó decidido (ver *Decisiones tomadas* al final).
 
 ## ML Canvas del proyecto
 
@@ -11,7 +11,7 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 | **Propuesta de valor** | Pasar de operar MiBici de forma reactiva a anticipar la demanda, los faltantes y los patrones de uso por estación |
 | **Decisiones** | Cuántas bicis y camiones de rebalanceo asignar, qué estaciones atender primero y dónde ampliar o reubicar |
 | **Tarea de ML** | P1 regresión, P2 clasificación y P3 clustering (no supervisado) |
-| **Fuentes de datos** | Viajes mensuales (`datos_abiertos_AAAA_MM`, 26,389,162 viajes de ene-2020 a sep-2026) y nomenclatura de estaciones (484 estaciones con coordenadas y capacidad). Ver la sección *Datos* del README |
+| **Fuentes de datos** | Viajes mensuales (`datos_abiertos_AAAA_MM`, 27,086,557 viajes de ene-2020 a sep-2026) y nomenclatura de estaciones (484 estaciones con coordenadas y capacidad). Ver la sección *Datos* del README |
 | **Recolección de datos** | Descarga mensual del portal de datos abiertos de MiBici. El archivo del mes tarda en publicarse y el portal puede retirar meses (2023-04 y 2023-05) |
 | **Predicciones** | Por lotes (por ejemplo, una vez al día), no en tiempo real |
 | **Construcción de modelos** | Baselines (media histórica por hora y estación), después scikit-learn y XGBoost; K-Means o HDBSCAN para P3 |
@@ -23,8 +23,8 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 
 **1) Qué se predice**
 - **Variable:** número de viajes que **inician** en una estación.
-- **Granularidad:** estación × hora (la zona como agregación opcional). *Propuesta.*
-- **Horizonte:** las próximas 24 horas; como extensión, la semana siguiente. *Propuesta.*
+- **Granularidad:** estación × hora de servicio (5:00 a 0:59). La zona (municipio: GDL, ZPN o TLQ) es la suma de sus estaciones.
+- **Horizonte:** el día siguiente: al cierre del día D se predicen las 20 horas de D+1.
 - **Objetivo:** `COUNT(viaje_id)` agrupado por `origen_id` y hora de `inicio_del_viaje`.
 
 **2) Por qué es relevante**
@@ -74,13 +74,13 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 |---|---|---|---|
 | **Tarea** | Regresión | Clasificación | Clustering |
 | **Entidad** | Estación-hora | Estación-ventana | Estación |
-| **Horizonte** | 24 h | 1 a 2 h | Trimestral |
+| **Horizonte** | Día siguiente | 1 a 2 h | Trimestral |
 | **Usuario** | Planeación de flota | Rebalanceo | Planeación urbana |
 | **Métrica** | MAE, RMSE | Recall, F1 | Silueta |
 
-## Decisiones pendientes del equipo
+## Decisiones tomadas
 
-- Horizonte de P1 (24 h o 7 días).
-- Definición de "riesgo" en P2 (umbral sobre la capacidad).
-- Tratamiento de 2023-04 y 2023-05, que rompen los rezagos de las series de P1.
-- Asignación de una pregunta por integrante.
+- Horizonte de P1: el día siguiente, con rezagos de 1 día o más.
+- Riesgo de P2: el balance neto acumulado en las próximas 2 horas supera el 50 % de la capacidad (`P2_ALFA`).
+- 2023-04 y 2023-05: el portal los volvió a publicar; el rango de 81 meses está completo.
+- Una pregunta por integrante: P1 Daniel Sánchez Hernández, P2 Fernando Arreola Treviño y P3 Luis Arturo Sánchez Davila.
