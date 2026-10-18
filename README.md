@@ -384,7 +384,7 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 │   ├── pipeline-ml.md        <- Pipeline por pregunta: limpieza, features, entrenamiento y evaluación
 │   ├── pipeline-ml.png       <- Diagrama del pipeline por pregunta (fuente editable: pipeline-ml.svg)
 │   ├── fuentes-datos.csv     <- URLs, registros y SHA-256 de los archivos del portal
-│   └── arquitectura.png      <- Diagrama de arquitectura
+│   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/figures/   <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*); copia de los artefactos de MLflow
 ├── tc5061_proyecto_equipo07/   <- Módulo: config.py, dataset.py, features.py, modeling/ (train.py, predict.py), plots.py
 ├── tests/             <- Pruebas (pytest) del módulo

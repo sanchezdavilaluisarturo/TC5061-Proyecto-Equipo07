@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2080 760" width="2080" height="760" role="img" aria-label="Arquitectura del sistema del Proyecto MiBici: fuentes, ingesta, almacenamiento, procesamiento, modelos de P1, P2 y P3, MLflow del equipo y automatización con Makefile y GitHub Actions">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7b8794"/></marker><marker id="av" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2e8b6e"/></marker></defs>
+<rect width="2080" height="760" fill="#ffffff"/>
+<g font-family="Helvetica, Arial, sans-serif">
+<text x="30" y="40" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">FUENTES</text>
+<text x="290" y="40" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">INGESTA</text>
+<text x="610" y="40" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">ALMACENAMIENTO</text>
+<text x="920" y="40" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">PROCESAMIENTO</text>
+<text x="1240" y="40" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">MODELOS</text>
+<text x="1580" y="40" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">EXPERIMENTOS</text>
+<rect x="30" y="110" width="210" height="110" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="46" y="138" font-size="16" font-weight="700" fill="#1f2933">Viajes por mes</text>
+<text x="46" y="160" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">datos_abiertos_*.csv</text>
+<text x="46" y="181" font-size="13" font-weight="400" fill="#3e4c59">81 meses (2020-01 a 2026-09)</text>
+<text x="46" y="202" font-size="13" font-weight="400" fill="#3e4c59">27.1 M de viajes</text>
+<rect x="30" y="260" width="210" height="110" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="46" y="288" font-size="16" font-weight="700" fill="#1f2933">Estaciones</text>
+<text x="46" y="310" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">nomenclatura_2026_09</text>
+<text x="46" y="331" font-size="13" font-weight="400" fill="#3e4c59">484 estaciones con</text>
+<text x="46" y="352" font-size="13" font-weight="400" fill="#3e4c59">ubicación y capacidad</text>
+<rect x="290" y="80" width="260" height="320" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="306" y="108" font-size="16" font-weight="700" fill="#1f2933">dataset.py</text>
+<text x="306" y="130" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">CLI, sin pasos manuales</text>
+<text x="306" y="151" font-size="13" font-weight="400" fill="#3e4c59">1. Descarga los meses y la</text>
+<text x="306" y="172" font-size="13" font-weight="400" fill="#3e4c59">   nomenclatura del portal</text>
+<text x="306" y="193" font-size="13" font-weight="400" fill="#3e4c59">2. Normaliza columnas,</text>
+<text x="306" y="214" font-size="13" font-weight="400" fill="#3e4c59">   codificación y fechas</text>
+<text x="306" y="235" font-size="13" font-weight="400" fill="#3e4c59">3. Valida registros y SHA-256</text>
+<text x="306" y="256" font-size="13" font-weight="400" fill="#3e4c59">   contra el manifiesto</text>
+<text x="306" y="277" font-size="13" font-weight="400" fill="#3e4c59">4. Limpia (duplicados, duración,</text>
+<text x="306" y="298" font-size="13" font-weight="400" fill="#3e4c59">   estaciones sin nomenclatura)</text>
+<text x="306" y="319" font-size="13" font-weight="400" fill="#3e4c59">5. Escribe Parquet</text>
+<text x="306" y="340" font-size="13" font-weight="700" fill="#2e8b6e">make data</text>
+<rect x="610" y="80" width="250" height="80" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="626" y="108" font-size="16" font-weight="700" fill="#1f2933">data/raw</text>
+<text x="626" y="130" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">CSV originales</text>
+<rect x="610" y="190" width="250" height="80" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="626" y="218" font-size="16" font-weight="700" fill="#1f2933">data/interim</text>
+<text x="626" y="240" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">Parquet normalizado</text>
+<rect x="610" y="300" width="250" height="100" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="626" y="328" font-size="16" font-weight="700" fill="#1f2933">data/processed</text>
+<text x="626" y="350" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">Parquet</text>
+<text x="626" y="371" font-size="13" font-weight="400" fill="#3e4c59">viajes limpios y tablas</text>
+<text x="626" y="392" font-size="13" font-weight="400" fill="#3e4c59">de features por pregunta</text>
+<rect x="610" y="430" width="250" height="90" rx="6" fill="#e3f1ec" stroke="#2e8b6e" stroke-width="1.5"/>
+<text x="626" y="458" font-size="16" font-weight="700" fill="#2e8b6e">fuentes-datos.csv</text>
+<text x="626" y="480" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">manifiesto versionado en Git</text>
+<text x="626" y="501" font-size="13" font-weight="400" fill="#3e4c59">registros y SHA-256 por archivo</text>
+<rect x="920" y="80" width="260" height="320" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="936" y="108" font-size="16" font-weight="700" fill="#1f2933">features.py</text>
+<text x="936" y="130" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">funciones p1_, p2_, p3_</text>
+<text x="936" y="151" font-size="13" font-weight="400" fill="#3e4c59">P1: estación-hora, rezagos de</text>
+<text x="936" y="172" font-size="13" font-weight="400" fill="#3e4c59">   1 y 7 d, promedio 4 semanas</text>
+<text x="936" y="193" font-size="13" font-weight="400" fill="#3e4c59">P2: cambio neto por bloque de</text>
+<text x="936" y="214" font-size="13" font-weight="400" fill="#3e4c59">   30 min, historia hasta ayer</text>
+<text x="936" y="235" font-size="13" font-weight="400" fill="#3e4c59">P3: perfil de uso por estación</text>
+<text x="936" y="256" font-size="13" font-weight="700" fill="#2e8b6e">Partición común con brecha</text>
+<text x="936" y="277" font-size="13" font-weight="700" fill="#2e8b6e">de 24 h; ajuste solo con train</text>
+<text x="936" y="298" font-size="13" font-weight="700" fill="#2e8b6e">make features</text>
+<rect x="1240" y="80" width="280" height="100" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="1256" y="108" font-size="16" font-weight="700" fill="#1f2933">P1 Regresión</text>
+<text x="1256" y="130" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">viajes por estación-hora</text>
+<text x="1256" y="151" font-size="13" font-weight="400" fill="#3e4c59">baseline 4 semanas,</text>
+<text x="1256" y="172" font-size="13" font-weight="400" fill="#3e4c59">HGB y XGBoost (Poisson)</text>
+<rect x="1240" y="200" width="280" height="100" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="1256" y="228" font-size="16" font-weight="700" fill="#1f2933">P2 Clasificación</text>
+<text x="1256" y="250" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">riesgo en las próximas 2 h</text>
+<text x="1256" y="271" font-size="13" font-weight="400" fill="#3e4c59">baseline histórico y</text>
+<text x="1256" y="292" font-size="13" font-weight="400" fill="#3e4c59">HistGradientBoosting</text>
+<rect x="1240" y="320" width="280" height="100" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="1256" y="348" font-size="16" font-weight="700" fill="#1f2933">P3 Clustering</text>
+<text x="1256" y="370" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">grupos de estaciones</text>
+<text x="1256" y="391" font-size="13" font-weight="400" fill="#3e4c59">K-Means (base) y</text>
+<text x="1256" y="412" font-size="13" font-weight="400" fill="#3e4c59">PCA + K-Means (alternativo)</text>
+<text x="1240" y="445" font-size="12" font-family="Menlo, Consolas, monospace" fill="#3e4c59">modeling/train.py · predict.py</text>
+<text x="1240" y="463" font-size="12" font-weight="700" fill="#2e8b6e">make train</text>
+<rect x="1580" y="80" width="300" height="440" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="1596" y="108" font-size="16" font-weight="700" fill="#1f2933">MLflow Tracking</text>
+<text x="1596" y="130" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">mlflow.equipo7mlops.com</text>
+<text x="1596" y="151" font-size="13" font-weight="400" fill="#3e4c59">Servidor del equipo; respaldo</text>
+<text x="1596" y="172" font-size="13" font-weight="400" fill="#3e4c59">local con make mlflow-local</text>
+<text x="1596" y="193" font-size="13" font-weight="400" fill="#3e4c59"></text>
+<text x="1596" y="214" font-size="13" font-weight="400" fill="#3e4c59">Experimento mibici-equipo07,</text>
+<text x="1596" y="235" font-size="13" font-weight="400" fill="#3e4c59">un run por modelo</text>
+<text x="1596" y="256" font-size="13" font-weight="400" fill="#3e4c59">params: rango, semilla,</text>
+<text x="1596" y="277" font-size="13" font-weight="400" fill="#3e4c59">   partición, hiperparámetros</text>
+<text x="1596" y="298" font-size="13" font-weight="400" fill="#3e4c59">métricas: valid_*, test_*</text>
+<text x="1596" y="319" font-size="13" font-weight="400" fill="#3e4c59">tags: equipo, pregunta, commit</text>
+<text x="1596" y="340" font-size="13" font-weight="400" fill="#3e4c59">artefactos: gráficas, tablas</text>
+<text x="1596" y="361" font-size="13" font-weight="400" fill="#3e4c59">   y modelo con firma</text>
+<rect x="1600" y="400" width="260" height="90" rx="6" fill="#e3f1ec" stroke="#2e8b6e" stroke-width="1.5"/>
+<text x="1616" y="428" font-size="16" font-weight="700" fill="#2e8b6e">data_version</text>
+<text x="1616" y="450" font-size="13" font-family="Menlo, Consolas, monospace" fill="#3e4c59">hash del manifiesto</text>
+<text x="1616" y="471" font-size="13" font-weight="400" fill="#3e4c59">mismos datos, mismo hash</text>
+<path d="M240,165 L288,165" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M240,315 L288,315" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M550,120 L608,120" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="556" y="112" font-size="12" font-family="Menlo, Consolas, monospace" fill="#3e4c59">CSV</text>
+<path d="M550,230 L608,230" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="553" y="222" font-size="12" font-family="Menlo, Consolas, monospace" fill="#3e4c59">Parquet</text>
+<path d="M550,350 L608,350" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M550,385 L580,385 L580,475 L608,475" fill="none" stroke="#2e8b6e" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#av)"/>
+<text x="556" y="430" font-size="12" font-family="Menlo, Consolas, monospace" fill="#2e8b6e">hash</text>
+<path d="M860,230 L918,230" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="872" y="222" font-size="12" font-family="Menlo, Consolas, monospace" fill="#3e4c59">lee</text>
+<path d="M918,360 L862,360" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="866" y="380" font-size="12" font-family="Menlo, Consolas, monospace" fill="#3e4c59">escribe</text>
+<path d="M1180,240 L1210,240 L1210,130 L1238,130" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M1210,240 L1238,250" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M1210,240 L1210,370 L1238,370" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M1520,130 L1578,130" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M1520,250 L1578,250" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M1520,370 L1578,370" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="1530" y="122" font-size="12" font-family="Menlo, Consolas, monospace" fill="#3e4c59">log_*</text>
+<path d="M735,520 L735,545 L1730,545 L1730,492" fill="none" stroke="#2e8b6e" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#av)"/>
+<text x="900" y="538" font-size="12" font-family="Menlo, Consolas, monospace" fill="#2e8b6e">data_version: la misma versión de datos queda en cada run</text>
+<text x="30" y="40" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770"></text>
+<text x="30" y="590" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">CÓDIGO Y AUTOMATIZACIÓN</text>
+<rect x="30" y="605" width="420" height="120" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="46" y="633" font-size="16" font-weight="700" fill="#1f2933">GitHub (Cookiecutter Data Science)</text>
+<text x="46" y="654" font-size="13" font-weight="400" fill="#3e4c59">rama propia → PR revisado → EDA → main</text>
+<text x="46" y="675" font-size="13" font-weight="400" fill="#3e4c59">main protegida; Conventional Commits</text>
+<text x="46" y="696" font-size="13" font-weight="400" fill="#3e4c59">config.py: rutas, fechas, semilla y partición</text>
+<rect x="480" y="605" width="340" height="120" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="496" y="633" font-size="16" font-weight="700" fill="#1f2933">Makefile</text>
+<text x="496" y="654" font-size="13" font-weight="400" fill="#3e4c59">make data · features · train</text>
+<text x="496" y="675" font-size="13" font-weight="400" fill="#3e4c59">un target por pregunta (-p1, -p2, -p3)</text>
+<text x="496" y="696" font-size="13" font-weight="400" fill="#3e4c59">train-p1 depende de features-p1</text>
+<rect x="850" y="605" width="520" height="120" rx="6" fill="#f4f6f8" stroke="#5b6770" stroke-width="1.5"/>
+<text x="866" y="633" font-size="16" font-weight="700" fill="#1f2933">GitHub Actions</text>
+<text x="866" y="654" font-size="13" font-weight="400" fill="#3e4c59">En cada PR: ruff y pytest</text>
+<text x="866" y="675" font-size="13" font-weight="400" fill="#3e4c59">A mano: entrenamiento por pregunta (p1.yml, p2.yml, p3.yml)</text>
+<text x="866" y="696" font-size="13" font-weight="400" fill="#3e4c59">y registro en MLflow con el secret MLFLOW_TRACKING_URI</text>
+<path d="M450,665 L478,665" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M820,665 L848,665" fill="none" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
+<path d="M1370,665 L1940,665 L1940,300 L1882,300" fill="none" stroke="#7b8794" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#ar)"/>
+<text x="1600" y="657" font-size="12" font-family="Menlo, Consolas, monospace" fill="#3e4c59">registra runs</text>
+</g></svg>
