@@ -66,8 +66,9 @@ def p3_funciones_de(ruta: Path) -> list[str]:
 @pytest.mark.parametrize(
     "archivo", ["features.py", "plots.py", "modeling/train.py", "modeling/predict.py", "config.py"]
 )
-def test_toda_funcion_nueva_lleva_el_prefijo_p3(archivo):
-    sin_prefijo = [f for f in p3_funciones_de(PAQUETE / archivo) if not f.startswith("p3_")]
+def test_toda_funcion_nueva_lleva_el_prefijo_de_su_pregunta(archivo):
+    prefijos = ("p1_", "p2_", "p3_")
+    sin_prefijo = [f for f in p3_funciones_de(PAQUETE / archivo) if not f.startswith(prefijos)]
     assert sin_prefijo == []
 
 

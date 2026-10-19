@@ -240,7 +240,7 @@ def limpiar(mes_inicio: str = MES_INICIO, mes_fin: str = MES_FIN):
     se aplican en features.py o en el notebook de esa pregunta.
     """
     viajes = pd.read_parquet(INTERIM_DATA_DIR / f"viajes_{mes_inicio}_{mes_fin}.parquet")
-    ruta_nomenclatura = sorted(RUTA_ESTACIONES_CRUDAS.glob("nomenclatura_*.csv"))[-1]
+    ruta_nomenclatura = max(RUTA_ESTACIONES_CRUDAS.glob("nomenclatura_*.csv"))
     contenido = ruta_nomenclatura.read_bytes()
     estaciones = pd.read_csv(ruta_nomenclatura, encoding=detectar_codificacion(contenido))
 

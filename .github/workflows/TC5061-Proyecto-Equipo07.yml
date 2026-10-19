@@ -4,8 +4,7 @@
 # - A mano (Run workflow) corre la calidad una vez y luego llama, en paralelo, a la acción de
 #   cada pregunta: p1.yml, p2.yml y p3.yml. Cada una también se puede correr sola.
 #
-# Estado: P3 completa. P1 y P2 son placeholders (avisan y terminan bien) hasta que sus
-# responsables completen su acción; ver las instrucciones al inicio de p1.yml y p2.yml.
+# Estado: las tres preguntas entrenan desde su acción (p1.yml, p2.yml y p3.yml).
 #
 # Responsables según la autoría de los notebooks (confirmar en el equipo):
 #   P1 Daniel Sánchez Hernández (*-dsh-*)   P2 Fernando Arreola Treviño (*-fat-*)
@@ -13,9 +12,10 @@
 #
 # Secret del repositorio (Settings > Secrets and variables > Actions > Secrets):
 #   MLFLOW_TRACKING_URI  URL del servidor MLflow (se hereda a las acciones de cada pregunta)
-# Nombre de los runs: desde aquí quedan `mibici-equipo07-todas-p1`, `-todas-p2` y `-todas-p3` (p. ej.
+# Nombre de los runs (P2 y P3): desde aquí quedan `mibici-equipo07-todas-p2` y `-todas-p3` (p. ej.
 # `mibici-equipo07-todas-p3-baseline`). Cada acción por pregunta corrida sola usa `mibici-equipo07-pN`.
-# Para forzarlo, se llena el campo `nombre_run` de Run workflow: quedan `<nombre_run>-p1`, `-p2` y `-p3`.
+# Para forzarlo, se llena el campo `nombre_run` de Run workflow: quedan `<nombre_run>-p2` y `-p3`.
+# P1 usa siempre sus nombres fijos (p1-baseline-promedio-4sem, p1-hgb-poisson, p1-xgb-poisson).
 # Ya no hay variable del repositorio.
 name: TC5061 - Las 3 preguntas
 
@@ -72,10 +72,8 @@ jobs:
         run: |
           ruff format --check tc5061_proyecto_equipo07
           ruff check tc5061_proyecto_equipo07/features.py tc5061_proyecto_equipo07/plots.py tc5061_proyecto_equipo07/modeling
-          # AGREGAR (P1, P2): sus módulos nuevos en la línea `ruff check` de arriba (estricta: bloquea
-          # el PR) cuando ya pasen el lint. Hoy el chequeo estricto cubre solo lo de P3.
       - name: Lint de todo el paquete (informativo)
-        # dataset.py trae un aviso anterior a P3 (FURB192); no bloquea hasta que el equipo lo corrija
+        # Informativo: el aviso FURB192 de dataset.py ya se corrigió y hoy pasa limpio
         continue-on-error: true
         run: ruff check tc5061_proyecto_equipo07
       - name: Pruebas
@@ -89,9 +87,7 @@ jobs:
     uses: ./.github/workflows/p1.yml
     secrets: inherit
     with:
-      prefijo_run: ${{ format('{0}-p1', inputs.nombre_run || 'mibici-equipo07-todas') }}
       registrar: ${{ inputs.registrar }}
-      de_nuevo: ${{ inputs.de_nuevo }}
 
   p2:
     if: ${{ github.event_name == 'workflow_dispatch' }}

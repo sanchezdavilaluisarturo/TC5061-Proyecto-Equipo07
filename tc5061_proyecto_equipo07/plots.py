@@ -1,4 +1,5 @@
-"""Gráficas de P3 (clustering de estaciones).
+"""Gráficas de P3 (clustering de estaciones) y P2 (riesgo de quedarse sin bicicletas o sin
+anclajes)
 
 Cada función recibe datos ya calculados y regresa la figura (matplotlib); guardarla es opcional
 con `p3_guardar_figura`. Usa la paleta Okabe-Ito de config.py, apta para daltonismo.
@@ -294,3 +295,115 @@ def p3_grafica_perfiles_y_mapa(
     ejes[2].grid(alpha=0.3)
     fig.tight_layout()
     return fig
+
+
+# ---------------------------------------------------------------------------------------------
+# P1: diagnósticos de los modelos de demanda por estación-hora
+# ---------------------------------------------------------------------------------------------
+
+
+def p1_guardar_figura(figura, ruta: Path, dpi: int = 150) -> Path:
+    """Guarda la figura en `ruta` (crea la carpeta), la cierra y regresa la ruta."""
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    figura.tight_layout()
+    figura.savefig(ruta, dpi=dpi)
+    plt.close(figura)
+    return ruta
+
+
+def p1_grafica_mae_por_hora(mae_valid: pd.Series, mae_test: pd.Series, titulo: str):
+    """MAE por hora del día en valid y test: muestra si el error se concentra en los picos."""
+    figura, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(mae_valid.index, mae_valid.values, color=AZUL, marker="o", label="valid")
+    ax.plot(mae_test.index, mae_test.values, color=NARANJA, marker="o", label="test")
+    ax.set_title(titulo)
+    ax.set_xlabel("Hora de inicio")
+    ax.set_ylabel("MAE (viajes por estación-hora)")
+    ax.set_xticks(mae_valid.index)
+    ax.legend()
+    return figura
+
+
+def p1_grafica_real_vs_prediccion(real: np.ndarray, prediccion: np.ndarray, titulo: str):
+    """Densidad de real contra predicción (hexbin, escala log); la diagonal es el acierto perfecto."""
+    figura, ax = plt.subplots(figsize=(6, 6))
+    limite = float(np.percentile(np.concatenate([real, prediccion]), 99.9))
+    puntos = ax.hexbin(
+        real, prediccion, gridsize=40, extent=(0, limite, 0, limite), bins="log", cmap="cividis"
+    )
+    ax.plot([0, limite], [0, limite], color=GRIS, linestyle="--", linewidth=1)
+    figura.colorbar(puntos, ax=ax, label="Estación-horas (escala log)")
+    ax.set_title(titulo)
+    ax.set_xlabel("Viajes reales")
+    ax.set_ylabel("Viajes predichos")
+    return figura
+
+
+def p1_grafica_serie_diaria(diaria: pd.DataFrame, titulo: str):
+    """Viajes diarios de todo el sistema: real contra predicción (lo que planea el operador)."""
+    figura, ax = plt.subplots(figsize=(12, 4))
+    ax.plot(diaria.index, diaria["real"], color=AZUL, linewidth=1, label="Real")
+    ax.plot(diaria.index, diaria["prediccion"], color=NARANJA, linewidth=1, label="Predicción")
+    ax.set_title(titulo)
+    ax.set_xlabel("Fecha")
+    ax.set_ylabel("Viajes por día")
+    ax.legend()
+    return figura
+
+
+def p1_grafica_curva_aprendizaje(curva: pd.DataFrame, titulo: str):
+    """MAE de train y valid por iteración del boosting: si valid sube mientras train baja, hay
+    overfitting."""
+    figura, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(curva["iteracion"], curva["train_mae"], color=AZUL, label="train")
+    ax.plot(curva["iteracion"], curva["valid_mae"], color=NARANJA, label="valid")
+    ax.set_title(titulo)
+    ax.set_xlabel("Iteración (árboles)")
+    ax.set_ylabel("MAE")
+    ax.legend()
+    return figura
+
+
+def p1_grafica_importancia(importancia: pd.Series, titulo: str):
+    """Importancia por permutación: cuánto empeora el MAE de valid al desordenar cada variable."""
+    figura, ax = plt.subplots(figsize=(8, 5))
+    orden = importancia.sort_values()
+    ax.barh(orden.index, orden.values, color=VERDE)
+    ax.set_title(titulo)
+    ax.set_xlabel("Aumento del MAE al permutar la variable")
+    return figura
+
+
+# ---------------------------------------------------------------------------------------------
+# P2: diagnósticos de los modelos de riesgo de estación
+# ---------------------------------------------------------------------------------------------
+
+
+def p2_grafica_matriz_confusion(matriz: np.ndarray, clases: list[str], titulo: str):
+    """Matriz de confusión: color y % por fila (recall de cada clase real), con el conteo debajo.
+
+    Normalizar por fila evita que sin_riesgo, que es ~98% de los casos, aplaste a las clases raras.
+    """
+    matriz = np.asarray(matriz)
+    por_fila = matriz / matriz.sum(axis=1, keepdims=True)
+    figura, ax = plt.subplots(figsize=(6.5, 5.5))
+    imagen = ax.imshow(por_fila, cmap="Blues", vmin=0, vmax=1)
+    for i in range(len(clases)):
+        for j in range(len(clases)):
+            color = "white" if por_fila[i, j] > 0.5 else "black"
+            ax.text(
+                j,
+                i,
+                f"{por_fila[i, j]:.1%}\n({matriz[i, j]:,})",
+                ha="center",
+                va="center",
+                color=color,
+            )
+    ax.set_xticks(range(len(clases)), labels=clases)
+    ax.set_yticks(range(len(clases)), labels=clases)
+    ax.set_xlabel("Clase predicha")
+    ax.set_ylabel("Clase real")
+    ax.set_title(titulo)
+    figura.colorbar(imagen, ax=ax, label="% de la clase real")
+    figura.tight_layout()
+    return figura

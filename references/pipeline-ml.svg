@@ -10,18 +10,18 @@
 <text x="1322" y="34" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">ENTRENAMIENTO</text>
 <text x="1576" y="34" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">EVALUACIÓN</text>
 <text x="1850" y="34" font-size="12" font-weight="700" letter-spacing="1.2" fill="#5b6770">REGISTRO</text>
-<text x="560" y="84" font-size="14" font-weight="700">P1 · Regresión: viajes que inician en una estación, por hora (próximas 24 h)</text>
+<text x="560" y="84" font-size="14" font-weight="700">P1 · Regresión: viajes que inician por estación y hora de servicio (día siguiente)</text>
 <rect x="560" y="96" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="574" y="122" font-size="14.5" font-weight="700">Viajes por estación-hora</text>
 <text x="574" y="148" font-size="12.5" fill="#1f2933">Cuenta por origen_id y hora</text>
-<text x="574" y="169" font-size="12.5" fill="#0b7a6b" font-weight="600">Ceros desde la 1ª hora activa</text>
-<text x="574" y="190" font-size="12.5" fill="#1f2933">de cada estación</text>
+<text x="574" y="169" font-size="12.5" fill="#0b7a6b" font-weight="600">Ceros solo mientras operó</text>
+<text x="574" y="190" font-size="12.5" fill="#1f2933">la estación (5:00 a 0:59)</text>
 <line x1="792" y1="171" x2="812" y2="171" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="814" y="96" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="828" y="122" font-size="14.5" font-weight="700">Calendario y rezagos</text>
-<text x="828" y="148" font-size="12.5" fill="#1f2933">hora (sen/cos), día, festivo</text>
-<text x="828" y="169" font-size="12.5" fill="#0b7a6b" font-weight="600">rezagos ≥ 24 h, media 7 d</text>
-<text x="828" y="190" font-size="12.5" fill="#1f2933">capacidad, ubicación, pandemia</text>
+<text x="828" y="148" font-size="12.5" fill="#1f2933">hora, día, mes, festivo</text>
+<text x="828" y="169" font-size="12.5" fill="#0b7a6b" font-weight="600">rezagos 1 y 7 d, media 4 sem</text>
+<text x="828" y="190" font-size="12.5" fill="#1f2933">capacidad, ubicación, zona</text>
 <line x1="1046" y1="171" x2="1066" y2="171" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1068" y="96" width="230" height="150" rx="6" fill="#e2f2ef" stroke="#0b7a6b" stroke-width="1.6"/>
 <text x="1082" y="122" font-size="14.5" font-weight="700">Temporal, sin mezclar</text>
@@ -31,51 +31,51 @@
 <line x1="1300" y1="171" x2="1320" y2="171" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1322" y="96" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="1336" y="122" font-size="14.5" font-weight="700">Baseline → candidatos</text>
-<text x="1336" y="148" font-size="12.5" fill="#1f2933">Media por estación-hora-día</text>
-<text x="1336" y="169" font-size="12.5" fill="#1f2933">Ridge</text>
-<text x="1336" y="190" font-size="12.5" fill="#1f2933">XGBoost (objetivo Poisson)</text>
+<text x="1336" y="148" font-size="12.5" fill="#1f2933">Promedio de 4 semanas</text>
+<text x="1336" y="169" font-size="12.5" fill="#1f2933">HGB (pérdida Poisson)</text>
+<text x="1336" y="190" font-size="12.5" fill="#1f2933">XGBoost (pérdida Poisson)</text>
 <line x1="1554" y1="171" x2="1574" y2="171" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1576" y="96" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="1590" y="122" font-size="14.5" font-weight="700">MAE y RMSE</text>
 <text x="1590" y="148" font-size="12.5" fill="#1f2933">Contra el baseline</text>
-<text x="1590" y="169" font-size="12.5" fill="#1f2933">Error por estación y hora</text>
+<text x="1590" y="169" font-size="12.5" fill="#1f2933">Error por hora, zona, estación</text>
 <text x="1590" y="190" font-size="12.5" fill="#1f2933">Test se usa una sola vez</text>
 <text x="560" y="292" font-size="14" font-weight="700">P2 · Clasificación: riesgo de quedarse sin bicis o sin anclajes (próximas 2 h)</text>
 <rect x="560" y="304" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
-<text x="574" y="330" font-size="14.5" font-weight="700">Neto acumulado del día</text>
-<text x="574" y="356" font-size="12.5" fill="#1f2933">llegadas − salidas por hora</text>
+<text x="574" y="330" font-size="14.5" font-weight="700">Cambio neto por bloque</text>
+<text x="574" y="356" font-size="12.5" fill="#1f2933">llegadas − salidas, 30 min</text>
 <text x="574" y="377" font-size="12.5" fill="#1f2933">Etiqueta: riesgo en (t, t+2 h)</text>
-<text x="574" y="398" font-size="12.5" fill="#1f2933">si |neto| ≥ u · capacidad</text>
+<text x="574" y="398" font-size="12.5" fill="#1f2933">si cambio ≥ 0.5 · capacidad</text>
 <line x1="792" y1="379" x2="812" y2="379" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="814" y="304" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="828" y="330" font-size="14.5" font-weight="700">Presión de desbalance</text>
-<text x="828" y="356" font-size="12.5" fill="#1f2933">neto 1 h, 2 h, 3 h</text>
-<text x="828" y="377" font-size="12.5" fill="#1f2933">neto / capacidad</text>
+<text x="828" y="356" font-size="12.5" fill="#1f2933">neto de 30 min a 4 h</text>
+<text x="828" y="377" font-size="12.5" fill="#1f2933">historia hasta ayer</text>
 <text x="828" y="398" font-size="12.5" fill="#0b7a6b" font-weight="600">solo datos hasta t</text>
 <line x1="1046" y1="379" x2="1066" y2="379" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1068" y="304" width="230" height="150" rx="6" fill="#e2f2ef" stroke="#0b7a6b" stroke-width="1.6"/>
 <text x="1082" y="330" font-size="14.5" font-weight="700">Temporal, sin mezclar</text>
 <text x="1082" y="356" font-size="12.5" fill="#1f2933">Mismos bloques que P1</text>
 <text x="1082" y="377" font-size="12.5" fill="#1f2933">Sin 4 est. con capacidad 0</text>
-<text x="1082" y="398" font-size="12.5" fill="#0b7a6b" font-weight="600">Brecha de 2 h entre bloques</text>
+<text x="1082" y="398" font-size="12.5" fill="#0b7a6b" font-weight="600">Brecha de 24 h entre bloques</text>
 <line x1="1300" y1="379" x2="1320" y2="379" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1322" y="304" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
-<text x="1336" y="330" font-size="14.5" font-weight="700">Regla → candidatos</text>
-<text x="1336" y="356" font-size="12.5" fill="#1f2933">Regla por umbral (operador)</text>
-<text x="1336" y="377" font-size="12.5" fill="#1f2933">Regresión logística</text>
-<text x="1336" y="398" font-size="12.5" fill="#1f2933">XGBoost con pesos de clase</text>
+<text x="1336" y="330" font-size="14.5" font-weight="700">Baseline → candidato</text>
+<text x="1336" y="356" font-size="12.5" fill="#1f2933">Frecuencia histórica → HGB</text>
+<text x="1336" y="377" font-size="12.5" fill="#1f2933">Clases: sin_riesgo, sin_bicis</text>
+<text x="1336" y="398" font-size="12.5" fill="#1f2933">y sin_anclajes</text>
 <line x1="1554" y1="379" x2="1574" y2="379" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1576" y="304" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="1590" y="330" font-size="14.5" font-weight="700">PR-AUC y recall</text>
-<text x="1590" y="356" font-size="12.5" fill="#1f2933">Precisión mínima acordada</text>
+<text x="1590" y="356" font-size="12.5" fill="#1f2933">AP por clase y log-loss</text>
 <text x="1590" y="377" font-size="12.5" fill="#1f2933">Umbral elegido en valid</text>
-<text x="1590" y="398" font-size="12.5" fill="#1f2933">por costo de la alerta</text>
+<text x="1590" y="398" font-size="12.5" fill="#1f2933">recall, precisión y F1</text>
 <text x="560" y="500" font-size="14" font-weight="700">P3 · Clustering: grupos de estaciones con patrones de uso (sin horizonte)</text>
 <rect x="560" y="512" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="574" y="538" font-size="14.5" font-weight="700">Una fila por estación</text>
-<text x="574" y="564" font-size="12.5" fill="#1f2933">Perfil horario: 24 laboral</text>
-<text x="574" y="585" font-size="12.5" fill="#1f2933">+ 24 fin de semana</text>
-<text x="574" y="606" font-size="12.5" fill="#1f2933">volumen, razón salidas/llegadas</text>
+<text x="574" y="564" font-size="12.5" fill="#1f2933">Perfil horario: 20 laboral</text>
+<text x="574" y="585" font-size="12.5" fill="#1f2933">+ 20 fin de semana</text>
+<text x="574" y="606" font-size="12.5" fill="#1f2933">volumen y balance neto</text>
 <line x1="792" y1="587" x2="812" y2="587" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="814" y="512" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="828" y="538" font-size="14.5" font-weight="700">Perfil de uso</text>
@@ -85,15 +85,15 @@
 <line x1="1046" y1="587" x2="1066" y2="587" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1068" y="512" width="230" height="150" rx="6" fill="#e2f2ef" stroke="#0b7a6b" stroke-width="1.6"/>
 <text x="1082" y="538" font-size="14.5" font-weight="700">Ajuste solo con train</text>
-<text x="1082" y="564" font-size="12.5" fill="#0b7a6b" font-weight="600">Todo se calcula con 2020-2024</text>
+<text x="1082" y="564" font-size="12.5" fill="#0b7a6b" font-weight="600">Todo con train (hasta 2024-09)</text>
 <text x="1082" y="585" font-size="12.5" fill="#1f2933">Se revalida con el año</text>
 <text x="1082" y="606" font-size="12.5" fill="#1f2933">de validación</text>
 <line x1="1300" y1="587" x2="1320" y2="587" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1322" y="512" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
-<text x="1336" y="538" font-size="14.5" font-weight="700">K-Means → HDBSCAN</text>
+<text x="1336" y="538" font-size="14.5" font-weight="700">K-Means → PCA + K-Means</text>
 <text x="1336" y="564" font-size="12.5" fill="#1f2933">Elegir k por silueta</text>
-<text x="1336" y="585" font-size="12.5" fill="#1f2933">PCA opcional</text>
-<text x="1336" y="606" font-size="12.5" fill="#1f2933">Interpretar cada grupo</text>
+<text x="1336" y="585" font-size="12.5" fill="#1f2933">Criterios fijados antes</text>
+<text x="1336" y="606" font-size="12.5" fill="#1f2933">Alternativo: no aceptado</text>
 <line x1="1554" y1="587" x2="1574" y2="587" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1576" y="512" width="230" height="150" rx="6" fill="#f6f7f8" stroke="#5b6770" stroke-width="1.2"/>
 <text x="1590" y="538" font-size="14.5" font-weight="700">Silueta y estabilidad</text>
@@ -103,7 +103,7 @@
 <rect x="30" y="268" width="200" height="80" rx="6" fill="#ffffff" stroke="#5b6770" stroke-width="1.2"/>
 <text x="44" y="294" font-size="14.5" font-weight="700">Viajes mensuales</text>
 <text x="44" y="320" font-size="12.5" fill="#1f2933">datos_abiertos_AAAA_MM.csv</text>
-<text x="44" y="341" font-size="12.5" fill="#1f2933">79 meses · 26.4 M</text>
+<text x="44" y="341" font-size="12.5" fill="#1f2933">81 meses · 27.1 M</text>
 <rect x="30" y="364" width="200" height="80" rx="6" fill="#ffffff" stroke="#5b6770" stroke-width="1.2"/>
 <text x="44" y="390" font-size="14.5" font-weight="700">Estaciones</text>
 <text x="44" y="416" font-size="12.5" fill="#1f2933">nomenclatura_2026_09.csv</text>
@@ -115,14 +115,14 @@
 <text x="284" y="242" font-size="12.5" fill="#1f2933">Se eliminan:</text>
 <text x="284" y="263" font-size="12.5" fill="#1f2933">  758 viajes duplicados</text>
 <text x="284" y="284" font-size="12.5" fill="#1f2933">  3 estaciones sin nomenclatura</text>
-<text x="284" y="305" font-size="12.5" fill="#1f2933">  53,581 viajes de duración 0</text>
-<text x="284" y="326" font-size="12.5" fill="#1f2933">  (sensibilidad por probar)</text>
+<text x="284" y="305" font-size="12.5" fill="#1f2933">  55,034 viajes de duración 0</text>
+<text x="284" y="326" font-size="12.5" fill="#1f2933">  159 viajes de más de 24 h</text>
 <text x="284" y="347" font-size="12.5" fill="#1f2933"></text>
 <text x="284" y="368" font-size="12.5" fill="#1f2933">Se descartan (privacidad):</text>
 <text x="284" y="389" font-size="12.5" fill="#1f2933">  usuario_id, género, año nac.</text>
 <text x="284" y="410" font-size="12.5" fill="#1f2933"></text>
-<text x="284" y="431" font-size="12.5" fill="#1f2933">Se conserva el hueco de</text>
-<text x="284" y="452" font-size="12.5" fill="#1f2933">2023-04 y 2023-05 (sin imputar)</text>
+<text x="284" y="431" font-size="12.5" fill="#1f2933">81 de 81 meses</text>
+<text x="284" y="452" font-size="12.5" fill="#1f2933">(2023-04 y 05 republicados)</text>
 <text x="284" y="473" font-size="12.5" fill="#1f2933"></text>
 <text x="284" y="494" font-size="12.5" fill="#0b7a6b" font-weight="600">→ Parquet en data/interim</text>
 <line x1="502" y1="380" x2="532" y2="380" stroke="#7b8794" stroke-width="1.6"/>
@@ -132,10 +132,10 @@
 <line x1="532" y1="587" x2="558" y2="587" stroke="#7b8794" stroke-width="1.6" marker-end="url(#ar)"/>
 <rect x="1850" y="96" width="200" height="566" rx="6" fill="#ffffff" stroke="#5b6770" stroke-width="1.2"/>
 <text x="1864" y="122" font-size="14.5" font-weight="700">MLflow Tracking</text>
-<text x="1864" y="148" font-size="12.5" fill="#1f2933">Un run por pregunta</text>
+<text x="1864" y="148" font-size="12.5" fill="#1f2933">Un run por modelo</text>
 <text x="1864" y="169" font-size="12.5" fill="#1f2933"></text>
 <text x="1864" y="190" font-size="12.5" fill="#1f2933">params: rango, semilla,</text>
-<text x="1864" y="211" font-size="12.5" fill="#1f2933">  horizonte, umbral u</text>
+<text x="1864" y="211" font-size="12.5" fill="#1f2933">  fronteras, horizonte</text>
 <text x="1864" y="232" font-size="12.5" fill="#1f2933">métricas por conjunto</text>
 <text x="1864" y="253" font-size="12.5" fill="#1f2933">tags: equipo, P1-P3,</text>
 <text x="1864" y="274" font-size="12.5" fill="#1f2933">  commit de Git</text>

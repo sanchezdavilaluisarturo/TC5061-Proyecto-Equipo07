@@ -40,6 +40,13 @@ MES_FIN = "2026-09"
 # Se toleran si vuelven a faltar; cualquier otro hueco detiene la ingesta.
 MESES_SIN_PUBLICAR = ["2023-04", "2023-05"]
 
+# Partición temporal común a P1, P2 y P3: train hasta 2024-09, valid de 2024-10 a 2025-09 y test
+# de 2025-10 a 2026-09. Bloques de 12 meses para que valid y test cubran todas las temporadas.
+# Las horas previas a cada frontera quedan en `brecha` (el horizonte de P1 es de 24 h) y no se usan.
+FRONTERA_VALID = "2024-10-01"
+FRONTERA_TEST = "2025-10-01"
+BRECHA_HORAS = 24
+
 # Archivos de datos
 RUTA_VIAJES_CRUDOS = RAW_DATA_DIR / "viajes"
 RUTA_ESTACIONES_CRUDAS = RAW_DATA_DIR / "estaciones"
@@ -150,11 +157,10 @@ P3_REGISTRAR_MLFLOW = p3_leer_bool("P3_REGISTRAR_MLFLOW")
 P3_REGISTRAR_DE_NUEVO = p3_leer_bool("P3_REGISTRAR_DE_NUEVO")
 P3_EXIGIR_ACEPTACION = p3_leer_bool("P3_EXIGIR_ACEPTACION")
 
-# Partición temporal acordada: train hasta 2024-09, valid 2024-10 a 2025-09, test desde 2025-10.
-# Las 24 h previas a cada frontera quedan en `brecha` (una etiqueta de P1 mira 24 h adelante).
-P3_FRONTERA_VALID = "2024-10-01"
-P3_FRONTERA_TEST = "2025-10-01"
-P3_BRECHA_HORAS = 24
+# Partición temporal: la común del proyecto (definida arriba)
+P3_FRONTERA_VALID = FRONTERA_VALID
+P3_FRONTERA_TEST = FRONTERA_TEST
+P3_BRECHA_HORAS = BRECHA_HORAS
 
 P3_HORAS_SERVICIO = [hora for hora in range(24) if hora not in HORAS_SIN_SERVICIO]
 # Columnas que pasan al modelado: usuario_id, genero y anio_de_nacimiento no pasan (privacidad)
@@ -172,6 +178,124 @@ P3_COLUMNAS_MODELADO = [
 RUTA_VIAJES_MODELADO = PROCESSED_DATA_DIR / f"viajes_modelado_{MES_INICIO}_{MES_FIN}.parquet"
 RUTA_ESTACIONES_TRAIN = PROCESSED_DATA_DIR / "estaciones_train.parquet"
 RUTA_DEMANDA_ESTACION_HORA = PROCESSED_DATA_DIR / "demanda_estacion_hora.parquet"
+
+
+# P1 (regresión): viajes que inician en cada estación por hora de servicio, un día adelante.
+# Los rezagos se miden en días completos (>= 1) para no usar información del día que se predice.
+P1_REZAGOS_DIAS = [1, 7]
+# Semanas anteriores que promedia la variable de demanda a la misma hora
+P1_SEMANAS_PROMEDIO = 4
+RUTA_P1_DEMANDA = PROCESSED_DATA_DIR / "p1_demanda_estacion_hora.parquet"
+
+# Variables de entrada de los modelos de P1 (origen_id solo lo usa el transformer de nivel)
+P1_VARIABLES = [
+    "origen_id",
+    "viajes_rezago_1d",
+    "viajes_rezago_7d",
+    f"viajes_promedio_{P1_SEMANAS_PROMEDIO}sem",
+    "hora",
+    "dia_semana",
+    "es_fin_de_semana",
+    "mes",
+    "es_festivo",
+    "capacidad",
+    "latitud",
+    "longitud",
+    "zona",
+    "dias_desde_apertura",
+]
+# Hiperparámetros iniciales fijos (sin ajuste). early_stopping=False: el corte de validación
+# interno de HGB toma filas al azar y mezclaría el orden temporal de train.
+# l2_regularization y min_samples_leaf frenan los pasos de Poisson en hojas casi sin viajes:
+# sin ellos, con los datos reales la predicción se disparó a infinito en la iteración 287.
+# (XGBoost ya trae ese freno: max_delta_step=0.7 por defecto con count:poisson.)
+P1_PARAMETROS_HGB = {
+    "loss": "poisson",
+    "max_iter": 300,
+    "learning_rate": 0.1,
+    "max_leaf_nodes": 63,
+    "l2_regularization": 1.0,
+    "min_samples_leaf": 100,
+    "early_stopping": False,
+}
+P1_PARAMETROS_XGB = {
+    "objective": "count:poisson",
+    "n_estimators": 300,
+    "learning_rate": 0.1,
+    "max_depth": 8,
+    "tree_method": "hist",
+}
+# Filas que se muestrean para los diagnósticos caros (curva de aprendizaje e importancia)
+P1_MUESTRA_DIAGNOSTICO = 200_000
+# Nombre del run, etapa y familia de cada modelo (etiquetas `stage` y `model_family` en MLflow)
+P1_MODELOS = {
+    "baseline": ("p1-baseline-promedio-4sem", "baseline", "promedio_historico"),
+    "hgb": ("p1-hgb-poisson", "candidato", "hist_gradient_boosting"),
+    "xgb": ("p1-xgb-poisson", "candidato", "xgboost"),
+}
+
+# Descripción de cada run en MLflow (caja "Description")
+P1_DESCRIPCIONES = {
+    "baseline": "Promedio de la misma hora en las 4 semanas anteriores; si la estación no tiene "
+    "historia, usa su nivel de train o el del sistema. Referencia que los candidatos deben superar.",
+    "hgb": "HistGradientBoosting con pérdida Poisson sobre el nivel histórico de cada estación "
+    "aprendido en train; predice los viajes del día siguiente por estación-hora.",
+    "xgb": "XGBoost con pérdida Poisson sobre el nivel histórico de cada estación aprendido en "
+    "train; predice los viajes del día siguiente por estación-hora.",
+}
+
+# ---------------------------------------------------------------------------------------------
+# P2 (clasificacion de riesgos)
+# ---------------------------------------------------------------------------------------------
+
+# Horas del día (0-23) en las que MiBici no ofrece servicio (las mismas que HORAS_SIN_SERVICIO)
+P2_HORAS_SIN_SERVICIO = HORAS_SIN_SERVICIO
+
+# Los viajes que terminan en esta fecha/hora o después quedan fuera del rango de análisis: es el
+# primer instante del mes siguiente a MES_FIN (con MES_FIN = "2026-09", "2026-10-01 00:00:00")
+_anio_fin, _mes_fin = map(int, MES_FIN.split("-"))
+P2_FECHA_LIMITE_FIN_VIAJE = f"{_anio_fin + _mes_fin // 12}-{_mes_fin % 12 + 1:02d}-01 00:00:00"
+
+# Ventana futura que se evalúa y tamaño de cada intervalo, en minutos
+P2_HORIZONTE_MIN = 120
+P2_BIN_MIN = 30
+P2_H_BINS = P2_HORIZONTE_MIN // P2_BIN_MIN
+# Un cambio mayor a esta fracción de la capacidad se considera riesgo
+P2_ALFA = 0.5
+
+# P2: historia y modelo (cada uno se puede cambiar con la variable de entorno del mismo nombre).
+# La partición es la común del proyecto (FRONTERA_VALID, FRONTERA_TEST y BRECHA_HORAS).
+# Peso (en días) de la frecuencia global en la historia "hasta ayer"
+P2_PESO_HISTORICO = p3_leer_entero("P2_PESO_HISTORICO", 20)
+P2_MIN_SAMPLES_LEAF = p3_leer_entero("P2_MIN_SAMPLES_LEAF", 500)
+P2_REGISTRAR_MLFLOW = p3_leer_bool("P2_REGISTRAR_MLFLOW")
+
+P2_PARAMETROS_HGB = {"max_iter": 150, "learning_rate": 0.05, "early_stopping": False}
+P2_CLASES = ["sin_riesgo", "sin_bicis", "sin_anclajes"]
+# Nombre base del run, etapa y familia (etiquetas `stage` y `model_family` en MLflow)
+P2_MODELOS = {
+    "baseline": ("baseline-historico", "baseline", "frecuencia_historica"),
+    "hgb": ("hgb", "candidato", "hist_gradient_boosting"),
+}
+P2_DESCRIPCIONES = {  # caja "Description" de cada run
+    "baseline": "Frecuencia de cada riesgo en los días previos de la misma estación, tipo de día "
+    "y hora, suavizada hacia la frecuencia global. Referencia que el candidato debe superar.",
+    "hgb": "HistGradientBoostingClassifier con las features de flujo, hora y estación más la "
+    "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h.",
+}
+
+
+P2_FEATURES_SIN_HISTORICO = (
+    [f"neto_{k}_relativo" for k in (1, 2, 4, 8)]
+    + [f"{c}_{k}" for c in ("salidas", "entradas") for k in (2, 4)]
+    + ["cumsum_dia_relativo", "dpcapacity", "latitude", "longitude", "hora_sin", "hora_cos"]
+    + ["es_fin_semana"]
+)
+
+P2_FEATURES_CON_HISTORICO = P2_FEATURES_SIN_HISTORICO + ["hist_sin_bicis", "hist_sin_anclajes"]
+
+# Tabla estación-bin con la etiqueta y las variables de P2 (`features p2-features`)
+RUTA_P2_CAMBIOS = PROCESSED_DATA_DIR / "p2_cambios_estacion_bin.parquet"
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

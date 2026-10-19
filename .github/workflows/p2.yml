@@ -1,18 +1,12 @@
-# P2 (riesgo de estación): PENDIENTE. Aún no tiene entrenamiento; la acción corre y avisa sin fallar.
+# P2 (riesgo de estación): features y entrenamiento del baseline histórico y del HistGradientBoosting.
 #
 # Se puede correr sola (pestaña Actions > P2 > Run workflow) o desde la acción de las tres
-# preguntas (TC5061-Proyecto-Equipo07.yml), que la llama con `workflow_call`.
-# Responsable: Fernando Arreola Treviño (notebooks *-fat-*, rama feat/p2; confirmar en el equipo).
+# preguntas (TC5061-Proyecto-Equipo07.yml), que la llama con `workflow_call` después de la calidad.
+# Responsable: Fernando Arreola Treviño (notebooks *-fat-*, rama feat/p2).
 #
-# CÓMO COMPLETARLA: copiar los pasos de p3.yml (job `entrenar`) y cambiar:
-#   1. Pasos "Features de P2" y "Entrenamiento de P2": `make features-p2` y `make train-p2`
-#      (hay que crear esos targets en el Makefile). Hoy `make features` y `make train` son de P3.
-#   2. En `env`: MLFLOW_RUN_NAME: ${{ inputs.nombre_run || inputs.prefijo_run || 'mibici-equipo07-p2' }} (runs `mibici-equipo07-p2-...` sola,
-#      o `mibici-equipo07-todas-p2-...` desde la acción de las 3) y P2_REGISTRAR_MLFLOW, P2_REGISTRAR_DE_NUEVO, etc. con el mismo patrón que P3_*.
-#   3. En `upload-artifact`: path `reports/figures/p2_*`.
-#   4. Borrar el job `pendiente` y el `if:` que lo acompaña.
-#   5. Si la pregunta usa funciones nuevas, prefijarlas `p2_` y probarlas en tests/test_p2_*.py
-#      (pytest ya corre todo `tests/` desde la acción de calidad).
+# Secret del repositorio (Settings > Secrets and variables > Actions > Secrets):
+#   MLFLOW_TRACKING_URI  URL del servidor MLflow (solo se usa si se marca `registrar`)
+# Nombre de los runs (lo fija el workflow):
 # Tarea: clasificar si una estación se quedará sin bicicletas o sin anclajes
 name: P2 - riesgo de estación
 
@@ -20,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       nombre_run:
-        description: "Forzar el prefijo de los runs de MLflow (vacío: mibici-equipo07-p2). Quedan <valor>-baseline, etc."
+        description: "Forzar el prefijo de los runs de MLflow (vacío: mibici-equipo07-p2). Quedan <valor>-baseline-historico y <valor>-hgb"
         type: string
         default: ""
       registrar:
@@ -28,9 +22,17 @@ on:
         type: boolean
         default: false
       de_nuevo:
-        description: "Crear un run nuevo aunque ya exista uno terminado con ese nombre"
+        description: "Sin efecto en P2 (cada registro crea runs nuevos)"
         type: boolean
         default: false
+      peso_historico:
+        description: "Peso (en días) de la frecuencia global en la historia (vacío: P2_PESO_HISTORICO de config.py)"
+        type: string
+        default: ""
+      min_samples_leaf:
+        description: "min_samples_leaf del HistGradientBoosting (vacío: P2_MIN_SAMPLES_LEAF de config.py)"
+        type: string
+        default: ""
   workflow_call:
     inputs:
       registrar:
@@ -52,11 +54,47 @@ concurrency:
   group: p2-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MPLBACKEND: Agg
+
 jobs:
-  pendiente:
+  entrenar:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 120
+    env:
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_RUN_NAME: ${{ inputs.nombre_run || inputs.prefijo_run || 'mibici-equipo07-p2' }}
+      P2_REGISTRAR_MLFLOW: ${{ inputs.registrar }}
+      P2_PESO_HISTORICO: ${{ inputs.peso_historico }}
+      P2_MIN_SAMPLES_LEAF: ${{ inputs.min_samples_leaf }}
     steps:
-      - name: Aviso
-        run: |
-          echo "::notice title=P2::Sin entrenamiento todavía, ver las instrucciones al inicio de p2.yml"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Comprobar la URL de MLflow
+        if: ${{ inputs.registrar }}
+        run: test -n "$MLFLOW_TRACKING_URI" || (echo "Falta el secret MLFLOW_TRACKING_URI" && exit 1)
+      - name: Restaurar los CSV de data/raw
+        # La clave cambia solo si cambia el manifiesto (registros y SHA-256 de cada archivo)
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: datos-raw-${{ hashFiles('references/fuentes-datos.csv') }}
+      - name: Datos (descarga lo que falte, construye y limpia)
+        # Equivale a `make data` sin reinstalar dependencias
+        run: python -m tc5061_proyecto_equipo07.dataset todo
+      - name: Features de P2
+        run: make features-p2
+      - name: Entrenamiento de P2
+        run: make train-p2
+      - name: Subir figuras y tablas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-resultados
+          path: reports/figures/p2_*
+          if-no-files-found: warn

@@ -1,34 +1,13 @@
-# P1 (regresión de viajes por estación): PENDIENTE. Aún no tiene entrenamiento; la acción corre y avisa sin fallar.
-#
-# Se puede correr sola (pestaña Actions > P1 > Run workflow) o desde la acción de las tres
-# preguntas (TC5061-Proyecto-Equipo07.yml), que la llama con `workflow_call`.
-# Responsable: Daniel Sánchez Hernández (notebooks *-dsh-*, rama feat/p1; confirmar en el equipo).
-#
-# CÓMO COMPLETARLA: copiar los pasos de p3.yml (job `entrenar`) y cambiar:
-#   1. Pasos "Features de P1" y "Entrenamiento de P1": `make features-p1` y `make train-p1`
-#      (hay que crear esos targets en el Makefile). Hoy `make features` y `make train` son de P3.
-#   2. En `env`: MLFLOW_RUN_NAME: ${{ inputs.nombre_run || inputs.prefijo_run || 'mibici-equipo07-p1' }} (runs `mibici-equipo07-p1-...` sola,
-#      o `mibici-equipo07-todas-p1-...` desde la acción de las 3) y P1_REGISTRAR_MLFLOW, P1_REGISTRAR_DE_NUEVO, etc. con el mismo patrón que P3_*.
-#   3. En `upload-artifact`: path `reports/figures/p1_*`.
-#   4. Borrar el job `pendiente` y el `if:` que lo acompaña.
-#   5. Si la pregunta usa funciones nuevas, prefijarlas `p1_` y probarlas en tests/test_p1_*.py
-#      (pytest ya corre todo `tests/` desde la acción de calidad).
-# Tarea: predecir cuántos viajes se inician en una estación o zona en un periodo futuro
-name: P1 - regresión de viajes por estación
+# P1: viajes que inician por estación-hora, un día adelante (baseline, HGB Poisson y XGBoost Poisson).
+# Se corre sola (Actions > P1 > Run workflow) o desde la acción de las tres preguntas.
+# Con `registrar` escribe los runs en el servidor MLflow del equipo (secret MLFLOW_TRACKING_URI).
+name: P1 - viajes por estación-hora
 
 on:
   workflow_dispatch:
     inputs:
-      nombre_run:
-        description: "Forzar el prefijo de los runs de MLflow (vacío: mibici-equipo07-p1). Quedan <valor>-baseline, etc."
-        type: string
-        default: ""
       registrar:
         description: "Registrar los runs en MLflow (escribe en el servidor del equipo)"
-        type: boolean
-        default: false
-      de_nuevo:
-        description: "Crear un run nuevo aunque ya exista uno terminado con ese nombre"
         type: boolean
         default: false
   workflow_call:
@@ -36,27 +15,51 @@ on:
       registrar:
         type: boolean
         default: false
-      de_nuevo:
-        type: boolean
-        default: false
-      prefijo_run:
-        description: "Prefijo del nombre de los runs de MLflow (si no se pasa, mibici-equipo07-p1)"
-        type: string
-        default: mibici-equipo07-p1
 
 permissions:
   contents: read
 
-# Un solo entrenamiento a la vez por rama, para no duplicar registros en MLflow
+# Un solo entrenamiento a la vez por rama, para no duplicar runs en MLflow
 concurrency:
   group: p1-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MPLBACKEND: Agg
+
 jobs:
-  pendiente:
+  entrenar:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 120
+    env:
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      P1_REGISTRAR_MLFLOW: ${{ inputs.registrar }}
     steps:
-      - name: Aviso
-        run: |
-          echo "::notice title=P1::Sin entrenamiento todavía, ver las instrucciones al inicio de p1.yml"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Comprobar la URL de MLflow
+        if: ${{ inputs.registrar }}
+        run: test -n "$MLFLOW_TRACKING_URI" || (echo "Falta el secret MLFLOW_TRACKING_URI" && exit 1)
+      - name: Restaurar los CSV de data/raw
+        # Misma clave que P2 y P3: la descarga se comparte mientras no cambie el manifiesto
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: datos-raw-${{ hashFiles('references/fuentes-datos.csv') }}
+      - name: Datos (descarga lo que falte, construye y limpia)
+        run: python -m tc5061_proyecto_equipo07.dataset todo
+      - name: Features y entrenamiento de P1
+        # train-p1 depende de features-p1 en el Makefile
+        run: make train-p1
+      - name: Subir figuras y tablas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p1-resultados
+          path: reports/figures/p1_*
+          if-no-files-found: warn
