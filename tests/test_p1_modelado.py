@@ -123,3 +123,40 @@ def test_p1_prediccion_por_zona_suma_lo_de_cada_estacion():
     assert gdl_dia1["real"].item() == 4
     assert len(por_zona) == 3
     assert por_zona["prediccion"].sum() == pytest.approx(8.5)  # no se pierde ni duplica nada
+
+
+def test_p1_registrar_run_deja_etiquetas_artefactos_y_modelo(tmp_path, monkeypatch):
+    mlflow = pytest.importorskip("mlflow")
+    monkeypatch.chdir(tmp_path)
+    uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    monkeypatch.setattr(cfg, "MLFLOW_TRACKING_URI", uri)
+    tabla = p1_tabla_sintetica()
+    modelo = p1_construir_modelo("baseline").fit(tabla[cfg.P1_VARIABLES], tabla["viajes"])
+    ejemplo = tabla[cfg.P1_VARIABLES].head(5).astype({"zona": str})
+    figura, tabla_csv = tmp_path / "grafica.png", tmp_path / "tabla.csv"
+    figura.write_bytes(b"png")
+    tabla_csv.write_text("a,b\n1,2\n")
+
+    id_run = train.p1_registrar_run(
+        "baseline",
+        {"modelo": "baseline"},
+        {"valid_mae": 1.0},
+        [figura, tabla_csv],
+        modelo,
+        ejemplo,
+        tabla,
+    )
+
+    cliente = mlflow.MlflowClient(uri)
+    corrida = cliente.get_run(id_run)
+    etiquetas = corrida.data.tags
+    assert etiquetas["question"] == "p1"
+    assert etiquetas["stage_of_work"] == "baseline"
+    assert etiquetas["model_family"] == "promedio_historico"
+    assert etiquetas["fase"] == cfg.FASE_ENTREGA
+    carpetas = {archivo.path for archivo in cliente.list_artifacts(id_run)}
+    assert {"plots", "tables", "data", "config"} <= carpetas
+    assert len(corrida.inputs.dataset_inputs) == 1
+    modelo_registrado = corrida.outputs.model_outputs[0].model_id
+    firma = mlflow.models.get_model_info(f"models:/{modelo_registrado}").signature
+    assert firma is not None

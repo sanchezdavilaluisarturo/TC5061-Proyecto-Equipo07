@@ -1180,6 +1180,21 @@ def p1_parametros(clave: str, n_train: int) -> dict:
     return parametros
 
 
+def p1_carpeta_artefacto(ruta: Path) -> str:
+    """Subcarpeta del run donde va un artefacto: las figuras en plots/ y las tablas en tables/."""
+    return "plots" if ruta.suffix == ".png" else "tables"
+
+
+def p1_archivos_configuracion() -> list[Path]:
+    """Archivos con los que corre el run: config.py y, si existen, MLproject y python_env.yaml."""
+    candidatos = [
+        Path(cfg.__file__),
+        cfg.PROJ_ROOT / "MLproject",
+        cfg.PROJ_ROOT / "python_env.yaml",
+    ]
+    return [ruta for ruta in candidatos if ruta.exists()]
+
+
 def p1_registrar_run(
     clave: str,
     parametros: dict,
@@ -1187,10 +1202,13 @@ def p1_registrar_run(
     artefactos: list[Path],
     modelo,
     ejemplo: pd.DataFrame,
+    train: pd.DataFrame,
     curva: pd.DataFrame | None = None,
 ) -> str:
     """Registra un run de P1 en el experimento del proyecto y regresa su id."""
     import mlflow
+    import mlflow.data
+    from mlflow.models import infer_signature
     import mlflow.sklearn
 
     if not cfg.MLFLOW_TRACKING_URI:
@@ -1202,11 +1220,12 @@ def p1_registrar_run(
         mlflow.set_tags(
             {
                 "equipo": "07",
-                "pregunta": "P1",
+                "question": "p1",
                 "commit": p1_commit_actual(),
                 "autor": "Daniel Sánchez Hernández",
-                "stage": etapa,
+                "stage_of_work": etapa,
                 "model_family": familia,
+                "fase": cfg.FASE_ENTREGA,
                 "mlflow.note.content": cfg.P1_DESCRIPCIONES[clave],
             }
         )
@@ -1216,11 +1235,25 @@ def p1_registrar_run(
             for fila in curva.itertuples():
                 mlflow.log_metric("train_mae_por_iteracion", fila.train_mae, step=fila.iteracion)
                 mlflow.log_metric("valid_mae_por_iteracion", fila.valid_mae, step=fila.iteracion)
+        # La tabla ya está en memoria; MLflow guarda su esquema, perfil y huella (digest)
+        mlflow.log_input(
+            mlflow.data.from_pandas(
+                train, source=str(cfg.RUTA_P1_DEMANDA), name="p1_train", targets="viajes"
+            ),
+            context="training",
+        )
         for ruta in artefactos:
-            mlflow.log_artifact(str(ruta), artifact_path="p1")
+            mlflow.log_artifact(str(ruta), artifact_path=p1_carpeta_artefacto(ruta))
+        mlflow.log_artifact(str(cfg.RUTA_MANIFIESTO), artifact_path="data")
+        for ruta in p1_archivos_configuracion():
+            mlflow.log_artifact(str(ruta), artifact_path="config")
         # cloudpickle: el formato por defecto (skops) rechaza las clases propias de P1
         mlflow.sklearn.log_model(
-            modelo, name="modelo", input_example=ejemplo, serialization_format="cloudpickle"
+            modelo,
+            name=nombre_run,
+            signature=infer_signature(ejemplo, modelo.predict(ejemplo)),
+            input_example=ejemplo,
+            serialization_format="cloudpickle",
         )
     logger.success(f"Run '{nombre_run}' registrado: {corrida.info.run_id}")
     return corrida.info.run_id
@@ -1261,6 +1294,7 @@ def p1_entrenar(
                 artefactos,
                 modelo,
                 train[cfg.P1_VARIABLES].sample(5, random_state=cfg.SEMILLA).astype({"zona": str}),
+                train,
                 curva,
             )
     comparacion = pd.DataFrame(resumen).T.sort_values("valid_mae").round(4)

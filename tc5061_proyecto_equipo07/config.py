@@ -97,6 +97,8 @@ SEMILLA = 42
 
 # MLflow: el experimento incluye el número de equipo; la URI viene del .env
 EXPERIMENTO_MLFLOW = "mibici-equipo07"
+# Etiqueta `fase` de los runs de esta entrega (la Fase 1 no la tiene)
+FASE_ENTREGA = "2"
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI")
 
 # Paleta Okabe-Ito (apta para daltonismo) para las gráficas del proyecto
@@ -227,11 +229,11 @@ P1_PARAMETROS_XGB = {
 }
 # Filas que se muestrean para los diagnósticos caros (curva de aprendizaje e importancia)
 P1_MUESTRA_DIAGNOSTICO = 200_000
-# Nombre del run, etapa y familia de cada modelo (etiquetas `stage` y `model_family` en MLflow)
+# Nombre del run, etapa y familia de cada modelo (etiquetas `stage_of_work` y `model_family`)
 P1_MODELOS = {
     "baseline": ("p1-baseline-promedio-4sem", "baseline", "promedio_historico"),
-    "hgb": ("p1-hgb-poisson", "candidato", "hist_gradient_boosting"),
-    "xgb": ("p1-xgb-poisson", "candidato", "xgboost"),
+    "hgb": ("p1-hgb-poisson", "candidate", "hist_gradient_boosting"),
+    "xgb": ("p1-xgb-poisson", "candidate", "xgboost"),
 }
 
 # Descripción de cada run en MLflow (caja "Description")
