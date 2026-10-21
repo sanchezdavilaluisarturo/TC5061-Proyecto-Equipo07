@@ -39,6 +39,35 @@ P1_REGISTRAR_MLFLOW=true P2_REGISTRAR_MLFLOW=true P3_REGISTRAR_MLFLOW=true make 
 
 `make help` lista todos los comandos. `train-p1` depende de `features-p1`, así que siempre entrena con las features al día.
 
+### Reproducir con MLflow Project
+
+El `MLproject` de la raíz declara el entorno (`python_env.yaml`, que instala `requirements.txt`) y dos puntos de entrada. Las corridas de la entrega se lanzan así, no desde un notebook. Rutas, fechas y semillas salen de `config.py`; un parámetro vacío conserva el valor de `config.py`.
+
+```bash
+# 1. Servidor local con base de datos (si no se usa el del equipo) y URI en el entorno
+mlflow server --backend-store-uri sqlite:///mlflow.db --artifacts-destination ./mlartifacts --port 5000
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+
+# 2. Desde un clon limpio: descarga, limpieza y features de P1, P2 y P3
+mlflow run . -e ingest --experiment-name mibici-equipo07
+
+# 3. Entrenamiento y registro (question = p1 | p2 | p3)
+mlflow run . -e train -P question=p1 -P model=xgb -P n_estimators=300 --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p1 -P model=hgb --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p2 -P model=hgb -P min_samples_leaf=500 --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p3 -P model=alternativo --experiment-name mibici-equipo07
+```
+
+| Parámetro | Valores | Aplica a |
+|---|---|---|
+| `question` | `p1`, `p2`, `p3` (obligatorio) | todos |
+| `model` | P1: `baseline`, `hgb`, `xgb`; P2: `baseline`, `hgb`; P3: `baseline`, `alternativo`. Vacío = todos los de la pregunta | todos |
+| `n_estimators` | entero (en HGB es `max_iter`) | P1 y P2 `hgb`; P1 `xgb` |
+| `learning_rate`, `max_depth` | decimal, entero | P1 y P2 `hgb`; P1 `xgb` |
+| `min_samples_leaf` | entero | P1 y P2 `hgb` (no `xgb`) |
+
+Un hiperparámetro que no aplica al modelo elegido se rechaza con un error, no se ignora. P2 entrena el baseline y el HGB juntos (`model` solo se valida) y P3 no recibe hiperparámetros por esta vía (se ajustan con las variables `P3_*`). Con `--env-manager local` se usa el entorno activo en lugar de construir uno nuevo.
+
 ### Comandos por pregunta
 
 Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks solo exploran y documentan los hallazgos (se corren desde `notebooks/`).

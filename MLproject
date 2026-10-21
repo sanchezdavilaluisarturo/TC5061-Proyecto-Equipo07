@@ -1,0 +1,30 @@
+name: tc5061-proyecto-equipo07
+
+python_env: python_env.yaml
+
+# Rutas, fechas y semillas no aparecen aquí: salen de tc5061_proyecto_equipo07/config.py.
+# Un parámetro en "" significa "usar el valor de config.py".
+entry_points:
+  # Datos y features de P1, P2 y P3 (equivale a `make data features`)
+  ingest:
+    command: >
+      python -m tc5061_proyecto_equipo07.dataset todo &&
+      python -m tc5061_proyecto_equipo07.features p1-features &&
+      python -m tc5061_proyecto_equipo07.features p2-features &&
+      python -m tc5061_proyecto_equipo07.dataset p3-particionar &&
+      python -m tc5061_proyecto_equipo07.features p3-features
+
+  # Entrena y registra en MLflow una pregunta (ver modeling/run.py)
+  train:
+    parameters:
+      question: {type: string}
+      model: {type: string, default: ""}
+      n_estimators: {type: string, default: ""}
+      learning_rate: {type: string, default: ""}
+      max_depth: {type: string, default: ""}
+      min_samples_leaf: {type: string, default: ""}
+    command: >
+      python -m tc5061_proyecto_equipo07.modeling.run
+      --question {question} --model {model}
+      --n-estimators {n_estimators} --learning-rate {learning_rate}
+      --max-depth {max_depth} --min-samples-leaf {min_samples_leaf}
