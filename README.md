@@ -39,34 +39,7 @@ P1_REGISTRAR_MLFLOW=true P2_REGISTRAR_MLFLOW=true P3_REGISTRAR_MLFLOW=true make 
 
 `make help` lista todos los comandos. `train-p1` depende de `features-p1`, así que siempre entrena con las features al día.
 
-### Reproducir con MLflow Project
-
-El `MLproject` de la raíz declara el entorno (`python_env.yaml`, que instala `requirements.txt`) y dos puntos de entrada. Las corridas de la entrega se lanzan así, no desde un notebook. Rutas, fechas y semillas salen de `config.py`; un parámetro vacío conserva el valor de `config.py`.
-
-```bash
-# 1. Servidor local con base de datos (si no se usa el del equipo) y URI en el entorno
-mlflow server --backend-store-uri sqlite:///mlflow.db --artifacts-destination ./mlartifacts --port 5000
-export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
-
-# 2. Desde un clon limpio: descarga, limpieza y features de P1, P2 y P3
-mlflow run . -e ingest --experiment-name mibici-equipo07
-
-# 3. Entrenamiento y registro (question = p1 | p2 | p3)
-mlflow run . -e train -P question=p1 -P model=xgb -P n_estimators=300 --experiment-name mibici-equipo07
-mlflow run . -e train -P question=p1 -P model=hgb --experiment-name mibici-equipo07
-mlflow run . -e train -P question=p2 -P model=hgb -P min_samples_leaf=500 --experiment-name mibici-equipo07
-mlflow run . -e train -P question=p3 -P model=alternativo --experiment-name mibici-equipo07
-```
-
-| Parámetro | Valores | Aplica a |
-|---|---|---|
-| `question` | `p1`, `p2`, `p3` (obligatorio) | todos |
-| `model` | P1: `baseline`, `hgb`, `xgb`; P2: `baseline`, `hgb`; P3: `baseline`, `alternativo`. Vacío = todos los de la pregunta | todos |
-| `n_estimators` | entero (en HGB es `max_iter`) | P1 y P2 `hgb`; P1 `xgb` |
-| `learning_rate`, `max_depth` | decimal, entero | P1 y P2 `hgb`; P1 `xgb` |
-| `min_samples_leaf` | entero | P1 y P2 `hgb` (no `xgb`) |
-
-Un hiperparámetro que no aplica al modelo elegido se rechaza con un error, no se ignora. P2 entrena el baseline y el HGB juntos (`model` solo se valida) y P3 no recibe hiperparámetros por esta vía (se ajustan con las variables `P3_*`). Con `--env-manager local` se usa el entorno activo en lugar de construir uno nuevo.
+Para reproducir las corridas con `mlflow run` (entorno propio y runs registrados), ver [Ejecución con MLflow Project](#ejecución-con-mlflow-project).
 
 ### Comandos por pregunta
 
@@ -99,6 +72,117 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 **GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff` y `pytest`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
 **MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3).
+
+## Ejecución con MLflow Project
+
+Las corridas de la entrega se lanzan con `mlflow run` desde el `MLproject` de la raíz, no desde un notebook. MLflow construye un entorno aislado con las versiones fijas de `requirements.txt` (`python_env.yaml`), ejecuta el punto de entrada pedido y registra el run. Rutas, fechas y semillas no se repiten en la línea de comandos: salen de `tc5061_proyecto_equipo07/config.py`.
+
+### Requisitos
+
+| Requisito | Para qué | Cómo |
+|---|---|---|
+| CLI de `mlflow` | Lanzar `mlflow run` | Viene en `requirements.txt` (con el `.venv` activo) |
+| [pyenv](https://github.com/pyenv/pyenv) | Que MLflow instale Python 3.11 en su entorno aislado | `brew install pyenv` (macOS) |
+| `MLFLOW_TRACKING_URI` | Dónde se registran los runs | Ver el paso 1 |
+
+Si no se quiere instalar pyenv, se puede usar el `.venv` del proyecto con `--env-manager local` (ver [Entorno de ejecución](#entorno-de-ejecución)).
+
+### Paso a paso
+
+**1. Elegir el servidor de MLflow y exportar su URI.** El servidor del equipo es **https://mlflow.equipo7mlops.com/** (no pide credenciales) y es donde deben quedar los runs de la entrega. `mlflow run` lee la variable del shell, no del `.env`, así que se exporta en la terminal donde se lanzan los runs.
+
+```bash
+# Servidor del equipo (el de la entrega)
+export MLFLOW_TRACKING_URI=https://mlflow.equipo7mlops.com
+```
+
+Si el servidor del equipo no responde, se puede usar uno local de respaldo. En otra terminal se levanta y se deja corriendo; en la terminal de los runs se apunta a él:
+
+```bash
+# Terminal 1: servidor local con base de datos
+mlflow server --backend-store-uri sqlite:///mlflow.db --artifacts-destination ./mlartifacts --port 5000
+
+# Terminal 2: la terminal donde se lanzan los runs
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+```
+
+`--artifacts-destination` es necesario en el servidor local: sin él, MLflow 3 no puede subir los artefactos (figuras y modelo).
+
+**2. Preparar datos y features** (`ingest`). Descarga, normaliza y limpia los viajes y construye las features de P1, P2 y P3. Es el equivalente de `make data` más `make features`, y se corre una vez por clon. Si `data/processed/` ya tiene las tablas de la pregunta que se va a entrenar, se puede omitir. Para la entrega, desde un clon limpio, se corre con todo:
+
+```bash
+mlflow run . -e ingest --experiment-name mibici-equipo07
+```
+
+**3. Entrenar y registrar** (`train`). Cada comando entrena el modelo elegido y deja sus runs en el experimento `mibici-equipo07` del servidor al que apunta `MLFLOW_TRACKING_URI`.
+
+```bash
+# P1: un modelo con hiperparámetros
+mlflow run . -e train -P question=p1 -P model=xgb -P n_estimators=300 --experiment-name mibici-equipo07
+
+# P1: los demás modelos (baseline, hgb)
+mlflow run . -e train -P question=p1 -P model=baseline --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p1 -P model=hgb --experiment-name mibici-equipo07
+
+# P2: riesgo de estación (baseline y hgb se entrenan juntos)
+mlflow run . -e train -P question=p2 -P model=hgb --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p2 -P model=hgb -P min_samples_leaf=500 --experiment-name mibici-equipo07
+
+# P3: clustering de estaciones (baseline y alternativo; sin `model` corre los dos)
+mlflow run . -e train -P question=p3 -P model=baseline --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p3 -P model=alternativo --experiment-name mibici-equipo07
+```
+
+### Puntos de entrada
+
+| Punto de entrada | Qué ejecuta | Parámetros |
+|---|---|---|
+| `ingest` | `dataset todo`, `p1-features`, `p2-features`, `p3-particionar` y `p3-features` | Ninguno: usa el rango de `config.py` |
+| `train` | `modeling/run.py`, que llama al comando de `modeling/train.py` de la pregunta y siempre registra en MLflow | Ver la tabla siguiente |
+
+### Parámetros de `train`
+
+Un parámetro vacío (el valor por defecto) conserva el valor de `config.py`. `question` es el único obligatorio.
+
+| Parámetro | Valores | Aplica a |
+|---|---|---|
+| `question` | `p1`, `p2`, `p3` | todos |
+| `model` | P1: `baseline`, `hgb`, `xgb`. P2: `baseline`, `hgb`. P3: `baseline`, `alternativo`. Vacío = todos los de la pregunta | todos |
+| `n_estimators` | entero (en HGB se traduce a `max_iter`) | P1 y P2 `hgb`; P1 `xgb` |
+| `learning_rate` | decimal | P1 y P2 `hgb`; P1 `xgb` |
+| `max_depth` | entero | P1 y P2 `hgb`; P1 `xgb` |
+| `min_samples_leaf` | entero | P1 y P2 `hgb` (no `xgb`) |
+
+- Un hiperparámetro que no aplica al modelo elegido se rechaza con un error claro; no se ignora en silencio.
+- P2 entrena el baseline y el HGB en el mismo comando, así que `model` solo se valida.
+- P3 no recibe hiperparámetros por esta vía: se ajustan con las variables `P3_*` (ver la tabla de variables de entorno).
+- Los valores que se pasan quedan registrados como parámetros del run (por ejemplo `modelo_n_estimators` en `xgb` o `modelo_max_iter` en `hgb`).
+
+### Entorno de ejecución
+
+| Modo | Comando | Cuándo usarlo |
+|---|---|---|
+| Entorno aislado (por defecto) | `mlflow run . -e train ...` | Entrega y verificación desde un clon limpio. La primera vez tarda varios minutos: instala Python 3.11 y todo `requirements.txt`. Las siguientes reutilizan el entorno en `~/.mlflow/envs/` |
+| Entorno activo | `source .venv/bin/activate` y `mlflow run . -e train ... --env-manager local` | Iterar rápido. Debe ser el `.venv` del proyecto (Python 3.11); no sirve el `base` de conda |
+
+### Qué deja cada corrida
+
+- **Runs del modelo** en el experimento `mibici-equipo07`, con parámetros, métricas, etiquetas (`equipo`, `pregunta`, `commit`), artefactos y el modelo. Sus nombres son los de la sección "MLflow del equipo" más abajo.
+- **Un run contenedor** del proyecto (nombre aleatorio, por ejemplo `silent-ray-926`), sin métricas: guarda los parámetros de `mlflow run`. Sale en el experimento que se pasa con `--experiment-name`.
+- **Archivos regenerados** en `reports/figures/`. Están versionados, así que conviene revisar `git status` y revertir con `git checkout -- reports/figures` lo que no se quiera commitear.
+
+### Problemas frecuentes
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| `FileNotFoundError: ... 'None'` en `_install_python` | pyenv no está instalado y MLflow no puede instalar Python 3.11 | `brew install pyenv`, o `--env-manager local` con el `.venv` activo |
+| `Falta p2_cambios_estacion_bin.parquet` (o `p1_demanda...`, `viajes_modelado...`) | No se han generado las features de esa pregunta | `mlflow run . -e ingest ...` o `make features-p1`, `make features-p2`, `make features-p3` |
+| `MLFLOW_TRACKING_URI no está definida` | La variable no está en el shell donde se lanzó | `export MLFLOW_TRACKING_URI=...` (paso 1) |
+| `When an mlflow-artifacts URI was supplied, the tracking URI must be ...` | Se usó `sqlite:///...` directo como URI, sin servidor | Levantar `mlflow server` y usar su URL `http://127.0.0.1:5000` |
+| `The filesystem tracking backend ... is in maintenance mode` | Se usó una carpeta (`./mlruns`) como backend | Usar el servidor del equipo o el servidor local con SQLite |
+| `Invalid value: ... no aplica a p1/xgb` | Un hiperparámetro no corresponde al modelo | Quitarlo o cambiar de modelo (ver la tabla de parámetros) |
+
+Un run fallido deja un run contenedor en estado FAILED en el servidor: se puede borrar desde la interfaz (menú del run, *Delete*).
 
 ## Propósito
 
