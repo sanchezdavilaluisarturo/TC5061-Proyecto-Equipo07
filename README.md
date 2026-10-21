@@ -412,7 +412,7 @@ Notebooks `0.01-fat-exploracion-inicial-p2`, `0.02-fat-exploracion-y-limpieza-p2
 | Elemento | Decisión |
 |---|---|
 | **Qué se predice** | Para cada estación y bloque de 30 minutos, si en las próximas 2 horas estará en riesgo de quedarse **sin bicis**, **sin anclajes** o **sin riesgo** (3 clases) |
-| **Aproximación del riesgo** | Los datos no traen inventario. Se usa el cambio neto de viajes (llegadas − salidas) en la ventana futura frente a la capacidad: si supera el 50 % de la capacidad (`P2_ALFA`) hay riesgo; si hay los dos eventos, gana el de mayor estrés relativo |
+| **Aproximación del riesgo** | Los datos no traen inventario. Se usa el cambio neto de viajes (llegadas − salidas) en la ventana futura frente a la capacidad: si alcanza o supera el 50 % de la capacidad (`P2_ALFA`) hay riesgo; si hay los dos eventos, gana el de mayor estrés relativo |
 | **Partición** | La común del proyecto; validación solo para elegir los umbrales de decisión, test solo se reporta |
 | **Variables** | Balance neto relativo de los últimos 1, 2, 4 y 8 bloques, salidas y entradas recientes, acumulado del día, capacidad, ubicación, hora cíclica, fin de semana y la frecuencia histórica de cada riesgo "hasta ayer" en la misma estación, tipo de día y hora |
 | **Métricas** | Average precision (PR-AUC) por clase de riesgo y de riesgo en general, log-loss, y precisión, recall y F1 por clase con el umbral de cada clase que maximiza el F1 en validación |
