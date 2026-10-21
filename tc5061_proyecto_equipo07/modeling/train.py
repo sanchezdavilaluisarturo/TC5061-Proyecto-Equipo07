@@ -1259,6 +1259,19 @@ def p1_registrar_run(
     return corrida.info.run_id
 
 
+def p1_combinar_comparacion(comparacion: pd.DataFrame, ruta: Path) -> pd.DataFrame:
+    """Une la comparación de esta corrida con la ya guardada en `ruta`.
+
+    Reemplaza las filas de los modelos entrenados ahora y conserva las demás, así una corrida
+    parcial (por ejemplo solo el baseline) no borra la comparación de los otros modelos.
+    """
+    if not ruta.exists():
+        return comparacion
+    previas = pd.read_csv(ruta, index_col=0)
+    combinada = pd.concat([previas.drop(index=comparacion.index, errors="ignore"), comparacion])
+    return combinada.sort_values("valid_mae")
+
+
 @app.command()
 def p1_entrenar(
     modelos: str = typer.Option("baseline,hgb,xgb", help="Modelos a entrenar, separados por coma"),
@@ -1298,7 +1311,8 @@ def p1_entrenar(
                 curva,
             )
     comparacion = pd.DataFrame(resumen).T.sort_values("valid_mae").round(4)
-    comparacion.to_csv(cfg.FIGURES_DIR / "p1_comparacion_modelos.csv")
+    ruta_comparacion = cfg.FIGURES_DIR / "p1_comparacion_modelos.csv"
+    p1_combinar_comparacion(comparacion, ruta_comparacion).to_csv(ruta_comparacion)
     logger.info(f"Comparación (ordenada por valid_mae):\n{comparacion.to_string()}")
     logger.success(f"Mejor modelo por valid_mae: {comparacion.index[0]}")
     if not registrar:

@@ -160,3 +160,46 @@ def test_p1_registrar_run_deja_etiquetas_artefactos_y_modelo(tmp_path, monkeypat
     modelo_registrado = corrida.outputs.model_outputs[0].model_id
     firma = mlflow.models.get_model_info(f"models:/{modelo_registrado}").signature
     assert firma is not None
+
+
+def test_p1_combinar_comparacion_conserva_las_filas_de_otros_modelos(tmp_path):
+    ruta = tmp_path / "comparacion.csv"
+    columnas = ["segundos_entrenamiento", "valid_mae"]
+    previas = pd.DataFrame(
+        {"segundos_entrenamiento": [67.2, 72.5, 1.6], "valid_mae": [0.9761, 0.9928, 1.0189]},
+        index=["p1-xgb-poisson", "p1-hgb-poisson", "p1-baseline-promedio-4sem"],
+    )
+    previas.to_csv(ruta)
+    corrida = pd.DataFrame(
+        {"segundos_entrenamiento": [1.8], "valid_mae": [1.0189]},
+        index=["p1-baseline-promedio-4sem"],
+    )
+
+    combinada = train.p1_combinar_comparacion(corrida, ruta)
+
+    assert list(combinada.index) == [
+        "p1-xgb-poisson",
+        "p1-hgb-poisson",
+        "p1-baseline-promedio-4sem",
+    ]
+    assert combinada.loc["p1-baseline-promedio-4sem", "segundos_entrenamiento"] == 1.8
+    assert combinada.loc["p1-xgb-poisson", "valid_mae"] == 0.9761
+    assert list(combinada.columns) == columnas
+
+
+def test_p1_combinar_comparacion_agrega_modelos_nuevos_y_ordena(tmp_path):
+    ruta = tmp_path / "comparacion.csv"
+    pd.DataFrame({"valid_mae": [1.0189]}, index=["p1-baseline"]).to_csv(ruta)
+    corrida = pd.DataFrame({"valid_mae": [0.95]}, index=["p1-xgb-optuna"])
+
+    combinada = train.p1_combinar_comparacion(corrida, ruta)
+
+    assert list(combinada.index) == ["p1-xgb-optuna", "p1-baseline"]
+
+
+def test_p1_combinar_comparacion_sin_archivo_previo_regresa_la_corrida(tmp_path):
+    corrida = pd.DataFrame({"valid_mae": [1.0]}, index=["p1-baseline"])
+
+    combinada = train.p1_combinar_comparacion(corrida, tmp_path / "no_existe.csv")
+
+    assert combinada.equals(corrida)
