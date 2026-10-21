@@ -82,8 +82,18 @@ Las corridas de la entrega se lanzan con `mlflow run` desde el `MLproject` de la
 | Requisito | Para qué | Cómo |
 |---|---|---|
 | CLI de `mlflow` | Lanzar `mlflow run` | Viene en `requirements.txt` (con el `.venv` activo) |
-| [pyenv](https://github.com/pyenv/pyenv) | Que MLflow instale Python 3.11 en su entorno aislado | `brew install pyenv` (macOS) |
+| [pyenv](https://github.com/pyenv/pyenv) | Que MLflow instale Python 3.11 en su entorno aislado | macOS: `brew install pyenv`. WSL/Ubuntu: ver el bloque siguiente |
 | `MLFLOW_TRACKING_URI` | Dónde se registran los runs | Ver el paso 1 |
+
+En WSL/Ubuntu, pyenv se instala con su script oficial, después de las dependencias con las que se compila Python:
+
+```bash
+sudo apt update && sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
+  libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
+curl https://pyenv.run | bash
+# Agregar al ~/.bashrc las líneas que imprime el instalador, abrir una terminal nueva y verificar
+pyenv --version
+```
 
 Si no se quiere instalar pyenv, se puede usar el `.venv` del proyecto con `--env-manager local` (ver [Entorno de ejecución](#entorno-de-ejecución)).
 
@@ -175,7 +185,7 @@ Un parámetro vacío (el valor por defecto) conserva el valor de `config.py`. `q
 
 | Mensaje | Causa | Solución |
 |---|---|---|
-| `FileNotFoundError: ... 'None'` en `_install_python` | pyenv no está instalado y MLflow no puede instalar Python 3.11 | `brew install pyenv`, o `--env-manager local` con el `.venv` activo |
+| `FileNotFoundError: ... 'None'` en `_install_python` | pyenv no está instalado y MLflow no puede instalar Python 3.11 | Instalar pyenv (ver Requisitos), o `--env-manager local` con el `.venv` activo |
 | `Falta p2_cambios_estacion_bin.parquet` (o `p1_demanda...`, `viajes_modelado...`) | No se han generado las features de esa pregunta | `mlflow run . -e ingest ...` o `make features-p1`, `make features-p2`, `make features-p3` |
 | `MLFLOW_TRACKING_URI no está definida` | La variable no está en el shell donde se lanzó | `export MLFLOW_TRACKING_URI=...` (paso 1) |
 | `When an mlflow-artifacts URI was supplied, the tracking URI must be ...` | Se usó `sqlite:///...` directo como URI, sin servidor | Levantar `mlflow server` y usar su URL `http://127.0.0.1:5000` |
