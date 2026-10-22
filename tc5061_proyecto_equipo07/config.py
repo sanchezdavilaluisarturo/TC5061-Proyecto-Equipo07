@@ -97,6 +97,8 @@ SEMILLA = 42
 
 # MLflow: el experimento incluye el número de equipo; la URI viene del .env
 EXPERIMENTO_MLFLOW = "mibici-equipo07"
+# Etiqueta `fase` de los runs de esta entrega (la Fase 1 no la tiene)
+FASE_ENTREGA = "2"
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI")
 
 # Paleta Okabe-Ito (apta para daltonismo) para las gráficas del proyecto
@@ -227,11 +229,22 @@ P1_PARAMETROS_XGB = {
 }
 # Filas que se muestrean para los diagnósticos caros (curva de aprendizaje e importancia)
 P1_MUESTRA_DIAGNOSTICO = 200_000
-# Nombre del run, etapa y familia de cada modelo (etiquetas `stage_of_work` y `model_family` en MLflow)
+# Nombre del run, etapa y familia de cada modelo (etiquetas `stage_of_work` y `model_family`)
 P1_MODELOS = {
     "baseline": ("p1-baseline-promedio-4sem", "baseline", "promedio_historico"),
-    "hgb": ("p1-hgb-poisson", "candidato", "hist_gradient_boosting"),
-    "xgb": ("p1-xgb-poisson", "candidato", "xgboost"),
+    "hgb": ("p1-hgb-poisson", "candidate", "hist_gradient_boosting"),
+    "xgb": ("p1-xgb-poisson", "candidate", "xgboost"),
+    # Candidatos que salen de la búsqueda con Optuna (tuning_p1.py); no se entrenan sin ella
+    "hgb_optuna": ("p1-hgb-optuna", "candidate", "hist_gradient_boosting"),
+    "xgb_optuna": ("p1-xgb-optuna", "candidate", "xgboost"),
+}
+
+# Búsqueda con Optuna: trials, fracción de train y tope de minutos por modelo. Un ajuste completo
+# tarda ~2 min en XGBoost y ~16 min en HGB (10.5 M de filas, 16 CPUs), así que HGB busca con una
+# muestra de train y el mejor trial se vuelve a entrenar con todo train.
+P1_BUSQUEDA = {
+    "xgb": {"n_trials": 20, "fraccion_train": 1.0, "timeout_min": 60},
+    "hgb": {"n_trials": 10, "fraccion_train": 0.15, "timeout_min": 45},
 }
 
 # Descripción de cada run en MLflow (caja "Description")
@@ -242,6 +255,10 @@ P1_DESCRIPCIONES = {
     "aprendido en train; predice los viajes del día siguiente por estación-hora.",
     "xgb": "XGBoost con pérdida Poisson sobre el nivel histórico de cada estación aprendido en "
     "train; predice los viajes del día siguiente por estación-hora.",
+    "hgb_optuna": "HistGradientBoosting con pérdida Poisson y los hiperparámetros del mejor trial "
+    "de la búsqueda con Optuna (elegido por valid_mae), entrenado con todo train.",
+    "xgb_optuna": "XGBoost con pérdida Poisson y los hiperparámetros del mejor trial de la "
+    "búsqueda con Optuna (elegido por valid_mae), entrenado con todo train.",
 }
 
 # ---------------------------------------------------------------------------------------------

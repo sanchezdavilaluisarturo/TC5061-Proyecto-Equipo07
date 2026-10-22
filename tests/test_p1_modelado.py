@@ -123,3 +123,83 @@ def test_p1_prediccion_por_zona_suma_lo_de_cada_estacion():
     assert gdl_dia1["real"].item() == 4
     assert len(por_zona) == 3
     assert por_zona["prediccion"].sum() == pytest.approx(8.5)  # no se pierde ni duplica nada
+
+
+def test_p1_registrar_run_deja_etiquetas_artefactos_y_modelo(tmp_path, monkeypatch):
+    mlflow = pytest.importorskip("mlflow")
+    monkeypatch.chdir(tmp_path)
+    uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    monkeypatch.setattr(cfg, "MLFLOW_TRACKING_URI", uri)
+    tabla = p1_tabla_sintetica()
+    modelo = p1_construir_modelo("baseline").fit(tabla[cfg.P1_VARIABLES], tabla["viajes"])
+    ejemplo = tabla[cfg.P1_VARIABLES].head(5).astype({"zona": str})
+    figura, tabla_csv = tmp_path / "grafica.png", tmp_path / "tabla.csv"
+    figura.write_bytes(b"png")
+    tabla_csv.write_text("a,b\n1,2\n")
+
+    id_run = train.p1_registrar_run(
+        "baseline",
+        {"modelo": "baseline"},
+        {"valid_mae": 1.0},
+        [figura, tabla_csv],
+        modelo,
+        ejemplo,
+        tabla,
+    )
+
+    cliente = mlflow.MlflowClient(uri)
+    corrida = cliente.get_run(id_run)
+    etiquetas = corrida.data.tags
+    assert etiquetas["question"] == "p1"
+    assert etiquetas["stage_of_work"] == "baseline"
+    assert etiquetas["model_family"] == "promedio_historico"
+    assert etiquetas["fase"] == cfg.FASE_ENTREGA
+    carpetas = {archivo.path for archivo in cliente.list_artifacts(id_run)}
+    assert {"plots", "tables", "data", "config"} <= carpetas
+    assert len(corrida.inputs.dataset_inputs) == 1
+    modelo_registrado = corrida.outputs.model_outputs[0].model_id
+    firma = mlflow.models.get_model_info(f"models:/{modelo_registrado}").signature
+    assert firma is not None
+
+
+def test_p1_combinar_comparacion_conserva_las_filas_de_otros_modelos(tmp_path):
+    ruta = tmp_path / "comparacion.csv"
+    columnas = ["segundos_entrenamiento", "valid_mae"]
+    previas = pd.DataFrame(
+        {"segundos_entrenamiento": [67.2, 72.5, 1.6], "valid_mae": [0.9761, 0.9928, 1.0189]},
+        index=["p1-xgb-poisson", "p1-hgb-poisson", "p1-baseline-promedio-4sem"],
+    )
+    previas.to_csv(ruta)
+    corrida = pd.DataFrame(
+        {"segundos_entrenamiento": [1.8], "valid_mae": [1.0189]},
+        index=["p1-baseline-promedio-4sem"],
+    )
+
+    combinada = train.p1_combinar_comparacion(corrida, ruta)
+
+    assert list(combinada.index) == [
+        "p1-xgb-poisson",
+        "p1-hgb-poisson",
+        "p1-baseline-promedio-4sem",
+    ]
+    assert combinada.loc["p1-baseline-promedio-4sem", "segundos_entrenamiento"] == 1.8
+    assert combinada.loc["p1-xgb-poisson", "valid_mae"] == 0.9761
+    assert list(combinada.columns) == columnas
+
+
+def test_p1_combinar_comparacion_agrega_modelos_nuevos_y_ordena(tmp_path):
+    ruta = tmp_path / "comparacion.csv"
+    pd.DataFrame({"valid_mae": [1.0189]}, index=["p1-baseline"]).to_csv(ruta)
+    corrida = pd.DataFrame({"valid_mae": [0.95]}, index=["p1-xgb-optuna"])
+
+    combinada = train.p1_combinar_comparacion(corrida, ruta)
+
+    assert list(combinada.index) == ["p1-xgb-optuna", "p1-baseline"]
+
+
+def test_p1_combinar_comparacion_sin_archivo_previo_regresa_la_corrida(tmp_path):
+    corrida = pd.DataFrame({"valid_mae": [1.0]}, index=["p1-baseline"])
+
+    combinada = train.p1_combinar_comparacion(corrida, tmp_path / "no_existe.csv")
+
+    assert combinada.equals(corrida)
