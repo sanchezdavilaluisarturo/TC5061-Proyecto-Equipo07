@@ -962,17 +962,29 @@ class P1BaselinePromedio(BaseEstimator, RegressorMixin):
         return np.nan_to_num(prediccion, nan=0.0)
 
 
-def p1_construir_modelo(clave: str, semilla: int = cfg.SEMILLA):
-    """Regresa el modelo sin entrenar: baseline, HGB o XGBoost (estos dos con el nivel de train)."""
-    if clave == "baseline":
+def p1_construir_modelo(
+    clave: str, semilla: int = cfg.SEMILLA, hiperparametros: dict | None = None
+):
+    """Regresa el modelo sin entrenar: baseline, HGB o XGBoost (estos dos con el nivel de train).
+
+    `hiperparametros` se aplica sobre los de config.py; las claves `*_optuna` lo exigen.
+    """
+    base = clave.removesuffix("_optuna")
+    if clave.endswith("_optuna") and hiperparametros is None:
+        raise ValueError(f"{clave} necesita los hiperparámetros de la búsqueda (tuning_p1.py)")
+    if base == "baseline":
         return P1BaselinePromedio()
-    if clave == "hgb":
+    if base == "hgb":
         regresor = HistGradientBoostingRegressor(
-            **cfg.P1_PARAMETROS_HGB, categorical_features="from_dtype", random_state=semilla
+            **{**cfg.P1_PARAMETROS_HGB, **(hiperparametros or {})},
+            categorical_features="from_dtype",
+            random_state=semilla,
         )
-    elif clave == "xgb":
+    elif base == "xgb":
         regresor = XGBRegressor(
-            **cfg.P1_PARAMETROS_XGB, enable_categorical=True, random_state=semilla
+            **{**cfg.P1_PARAMETROS_XGB, **(hiperparametros or {})},
+            enable_categorical=True,
+            random_state=semilla,
         )
     else:
         raise ValueError(
@@ -1044,12 +1056,13 @@ def p1_curva_aprendizaje(
         for nombre, datos in [("train", train), ("valid", valid)]
     }
     entradas = {nombre: nivel.transform(m[cfg.P1_VARIABLES]) for nombre, m in muestras.items()}
-    total = regresor.n_estimators if clave == "xgb" else regresor.n_iter_
+    es_xgb = clave.startswith("xgb")
+    total = regresor.n_estimators if es_xgb else regresor.n_iter_
     iteraciones = np.unique(np.linspace(1, total, pasos, dtype=int))
     curva = pd.DataFrame({"iteracion": iteraciones})
     for nombre, entrada in entradas.items():
         real = muestras[nombre]["viajes"]
-        if clave == "xgb":
+        if es_xgb:
             errores = [
                 mean_absolute_error(real, regresor.predict(entrada, iteration_range=(0, int(i))))
                 for i in iteraciones
@@ -1157,7 +1170,7 @@ def p1_commit_actual() -> str:
         return "desconocido"
 
 
-def p1_parametros(clave: str, n_train: int) -> dict:
+def p1_parametros(clave: str, n_train: int, hiperparametros: dict | None = None) -> dict:
     """Parámetros que permiten reproducir el run: datos, partición, horizonte y modelo."""
     parametros = {
         "rango_datos": f"{cfg.MES_INICIO} a {cfg.MES_FIN}",
@@ -1175,7 +1188,8 @@ def p1_parametros(clave: str, n_train: int) -> dict:
     if clave == "baseline":
         parametros["semanas_promedio"] = cfg.P1_SEMANAS_PROMEDIO
     else:
-        hiper = cfg.P1_PARAMETROS_HGB if clave == "hgb" else cfg.P1_PARAMETROS_XGB
+        base = cfg.P1_PARAMETROS_HGB if clave.startswith("hgb") else cfg.P1_PARAMETROS_XGB
+        hiper = {**base, **(hiperparametros or {})}
         parametros.update({f"modelo_{nombre}": valor for nombre, valor in hiper.items()})
     return parametros
 
@@ -1204,6 +1218,7 @@ def p1_registrar_run(
     ejemplo: pd.DataFrame,
     train: pd.DataFrame,
     curva: pd.DataFrame | None = None,
+    etiquetas_extra: dict | None = None,
 ) -> str:
     """Registra un run de P1 en el experimento del proyecto y regresa su id."""
     import mlflow
@@ -1227,6 +1242,7 @@ def p1_registrar_run(
                 "model_family": familia,
                 "fase": cfg.FASE_ENTREGA,
                 "mlflow.note.content": cfg.P1_DESCRIPCIONES[clave],
+                **(etiquetas_extra or {}),
             }
         )
         mlflow.log_params(parametros)
@@ -1272,6 +1288,43 @@ def p1_combinar_comparacion(comparacion: pd.DataFrame, ruta: Path) -> pd.DataFra
     return combinada.sort_values("valid_mae")
 
 
+def p1_ajustar_y_evaluar(
+    clave: str,
+    conjuntos: dict[str, pd.DataFrame],
+    registrar: bool,
+    hiperparametros: dict | None = None,
+    etiquetas_extra: dict | None = None,
+) -> dict[str, float]:
+    """Ajusta un modelo con todo train, lo evalúa en valid y test y, si se pide, registra su run."""
+    train = conjuntos["train"]
+    nombre = cfg.P1_MODELOS[clave][0]
+    modelo = p1_construir_modelo(clave, hiperparametros=hiperparametros)
+    logger.info(f"Entrenando {nombre}")
+    inicio = time.perf_counter()
+    modelo.fit(train[cfg.P1_VARIABLES], train["viajes"])
+    # El run se abre después de entrenar, así que su duración en MLflow no incluye el fit
+    metricas = {"segundos_entrenamiento": round(time.perf_counter() - inicio, 1)}
+    predicciones = {}
+    for conjunto in ["valid", "test"]:
+        resultado, predicciones[conjunto] = p1_evaluar(modelo, conjuntos[conjunto], conjunto)
+        metricas.update(resultado)
+    artefactos, curva = p1_guardar_diagnosticos(clave, modelo, conjuntos, predicciones)
+    logger.info(f"{nombre}: {metricas}")
+    if registrar:
+        p1_registrar_run(
+            clave,
+            p1_parametros(clave, len(train), hiperparametros),
+            metricas,
+            artefactos,
+            modelo,
+            train[cfg.P1_VARIABLES].sample(5, random_state=cfg.SEMILLA).astype({"zona": str}),
+            train,
+            curva,
+            etiquetas_extra,
+        )
+    return metricas
+
+
 @app.command()
 def p1_entrenar(
     modelos: str = typer.Option("baseline,hgb,xgb", help="Modelos a entrenar, separados por coma"),
@@ -1282,34 +1335,11 @@ def p1_entrenar(
     """Entrena y evalúa los modelos de P1; elige el mejor por valid_mae (test solo se reporta)."""
     claves = [clave.strip() for clave in modelos.split(",") if clave.strip()]
     conjuntos = p1_cargar_conjuntos()
-    train = conjuntos["train"]
     logger.info(", ".join(f"{nombre}: {len(datos)} filas" for nombre, datos in conjuntos.items()))
-    resumen = {}
-    for clave in claves:
-        modelo = p1_construir_modelo(clave)
-        logger.info(f"Entrenando {cfg.P1_MODELOS[clave][0]}")
-        inicio = time.perf_counter()
-        modelo.fit(train[cfg.P1_VARIABLES], train["viajes"])
-        # El run se abre después de entrenar, así que su duración en MLflow no incluye el fit
-        metricas = {"segundos_entrenamiento": round(time.perf_counter() - inicio, 1)}
-        predicciones = {}
-        for conjunto in ["valid", "test"]:
-            resultado, predicciones[conjunto] = p1_evaluar(modelo, conjuntos[conjunto], conjunto)
-            metricas.update(resultado)
-        artefactos, curva = p1_guardar_diagnosticos(clave, modelo, conjuntos, predicciones)
-        resumen[cfg.P1_MODELOS[clave][0]] = metricas
-        logger.info(f"{cfg.P1_MODELOS[clave][0]}: {metricas}")
-        if registrar:
-            p1_registrar_run(
-                clave,
-                p1_parametros(clave, len(train)),
-                metricas,
-                artefactos,
-                modelo,
-                train[cfg.P1_VARIABLES].sample(5, random_state=cfg.SEMILLA).astype({"zona": str}),
-                train,
-                curva,
-            )
+    resumen = {
+        cfg.P1_MODELOS[clave][0]: p1_ajustar_y_evaluar(clave, conjuntos, registrar)
+        for clave in claves
+    }
     comparacion = pd.DataFrame(resumen).T.sort_values("valid_mae").round(4)
     ruta_comparacion = cfg.FIGURES_DIR / "p1_comparacion_modelos.csv"
     p1_combinar_comparacion(comparacion, ruta_comparacion).to_csv(ruta_comparacion)
