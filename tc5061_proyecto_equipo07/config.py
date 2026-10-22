@@ -272,10 +272,10 @@ P2_REGISTRAR_MLFLOW = p3_leer_bool("P2_REGISTRAR_MLFLOW")
 
 P2_PARAMETROS_HGB = {"max_iter": 150, "learning_rate": 0.05, "early_stopping": False}
 P2_CLASES = ["sin_riesgo", "sin_bicis", "sin_anclajes"]
-# Nombre base del run, etapa y familia (etiquetas `stage` y `model_family` en MLflow)
+# Nombre base del run, stage y familia (etiquetas `stage` y `model_family` en MLflow)
 P2_MODELOS = {
     "baseline": ("baseline-historico", "baseline", "frecuencia_historica"),
-    "hgb": ("hgb", "candidato", "hist_gradient_boosting"),
+    "hgb": ("hgb", "candidate", "hist_gradient_boosting"),
 }
 P2_DESCRIPCIONES = {  # caja "Description" de cada run
     "baseline": "Frecuencia de cada riesgo en los días previos de la misma estación, tipo de día "

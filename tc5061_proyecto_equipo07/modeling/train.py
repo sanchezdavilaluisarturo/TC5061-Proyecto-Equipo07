@@ -1365,25 +1365,29 @@ def p2_reportar_evaluacion(nombre: str, resultado: dict, y_test: np.ndarray) -> 
     )
 
 
-def p2_guardar_artefactos(clave: str, resultado: dict, y_test: np.ndarray) -> list[Path]:
-    """Guarda en reports/figures/ la matriz de confusión de test (imagen y conteos en JSON)."""
+def p2_guardar_artefactos(clave: str, resultado: dict, y_test: np.ndarray) -> dict:
+    """Guarda en reports/figures/ la matriz de confusión y curva PR de test."""
     matriz = confusion_matrix(y_test, resultado["pred"], labels=[0, 1, 2])
     nombre = cfg.P2_MODELOS[clave][0]
     figura = plots.p2_grafica_matriz_confusion(
         matriz, cfg.P2_CLASES, f"Matriz de confusión: {nombre} (test)"
     )
-    ruta_png = plots.p3_guardar_figura(
-        figura, cfg.FIGURES_DIR / f"p2_{clave}_matriz_confusion.png"
-    )
-    ruta_json = cfg.FIGURES_DIR / f"p2_{clave}_matriz_confusion.json"
+    ruta_cm = plots.p3_guardar_figura(figura, cfg.FIGURES_DIR / f"p2_{clave}_matriz_confusion.png")
+    ruta_cm_json = cfg.FIGURES_DIR / f"p2_{clave}_matriz_confusion.json"
     contenido = {
         "clases": cfg.P2_CLASES,
         "filas": "clase real",
         "columnas": "clase predicha",
         "matriz": matriz.tolist(),
     }
-    ruta_json.write_text(json.dumps(contenido, ensure_ascii=False, indent=1))
-    return [ruta_png, ruta_json]
+    ruta_cm_json.write_text(json.dumps(contenido, ensure_ascii=False, indent=1))
+
+    figura_pr = plots.p2_grafica_curva_pr(
+        y_test, resultado["proba_test"], cfg.P2_CLASES, f"Curva precisión-recall: {nombre}, (test)"
+    )
+    ruta_pr = plots.p3_guardar_figura(figura_pr, cfg.FIGURES_DIR / f"p2_{clave}_curva_pr.png")
+
+    return {"plots": [ruta_cm, ruta_pr], "tables": [ruta_cm_json]}
 
 
 def p2_nombre_run(base: str) -> str:
@@ -1432,7 +1436,7 @@ def p2_registrar_run(
     clave: str,
     parametros: dict,
     metricas: dict,
-    artefactos: list[Path],
+    artefactos: dict,
     modelo,
     ejemplo: pd.DataFrame,
 ) -> str:
@@ -1451,11 +1455,11 @@ def p2_registrar_run(
         mlflow.set_tags(
             {
                 "equipo": "07",
-                "pregunta": "P2",
+                "question": "p2",
                 "tarea": "clasificacion",
                 "commit": p3_commit_actual(),
                 "autor": "Fernando Arreola Treviño",
-                "stage": etapa,
+                "stage_of_work": etapa,
                 "model_family": familia,
                 "mlflow.note.content": cfg.P2_DESCRIPCIONES[clave],
                 **p3_etiquetas_ci(),
@@ -1463,8 +1467,9 @@ def p2_registrar_run(
         )
         mlflow.log_params(parametros)
         mlflow.log_metrics(metricas)
-        for ruta in artefactos:
-            mlflow.log_artifact(str(ruta), artifact_path="p2")
+        for carpeta, rutas in artefactos.items():
+            for ruta in rutas:
+                mlflow.log_artifact(str(ruta), artifact_path=carpeta)
         # cloudpickle: el formato por defecto (skops) rechaza la clase propia del baseline
         mlflow.sklearn.log_model(
             modelo,
