@@ -227,7 +227,7 @@ P1_PARAMETROS_XGB = {
 }
 # Filas que se muestrean para los diagnósticos caros (curva de aprendizaje e importancia)
 P1_MUESTRA_DIAGNOSTICO = 200_000
-# Nombre del run, etapa y familia de cada modelo (etiquetas `stage` y `model_family` en MLflow)
+# Nombre del run, etapa y familia de cada modelo (etiquetas `stage_of_work` y `model_family` en MLflow)
 P1_MODELOS = {
     "baseline": ("p1-baseline-promedio-4sem", "baseline", "promedio_historico"),
     "hgb": ("p1-hgb-poisson", "candidato", "hist_gradient_boosting"),

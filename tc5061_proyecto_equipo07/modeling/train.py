@@ -1383,7 +1383,7 @@ def p2_guardar_artefactos(clave: str, resultado: dict, y_test: np.ndarray) -> di
     ruta_cm_json.write_text(json.dumps(contenido, ensure_ascii=False, indent=1))
 
     figura_pr = plots.p2_grafica_curva_pr(
-        y_test, resultado["proba_test"], cfg.P2_CLASES, f"Curva precisión-recall: {nombre}, (test)"
+        y_test, resultado["proba_test"], cfg.P2_CLASES, f"Curva precisión-recall: {nombre} (test)"
     )
     ruta_pr = plots.p3_guardar_figura(figura_pr, cfg.FIGURES_DIR / f"p2_{clave}_curva_pr.png")
 
