@@ -82,8 +82,18 @@ Las corridas de la entrega se lanzan con `mlflow run` desde el `MLproject` de la
 | Requisito | Para qué | Cómo |
 |---|---|---|
 | CLI de `mlflow` | Lanzar `mlflow run` | Viene en `requirements.txt` (con el `.venv` activo) |
-| [pyenv](https://github.com/pyenv/pyenv) | Que MLflow instale Python 3.11 en su entorno aislado | `brew install pyenv` (macOS) |
+| [pyenv](https://github.com/pyenv/pyenv) | Que MLflow instale Python 3.11 en su entorno aislado | macOS: `brew install pyenv`. WSL/Ubuntu: ver el bloque siguiente |
 | `MLFLOW_TRACKING_URI` | Dónde se registran los runs | Ver el paso 1 |
+
+En WSL/Ubuntu, pyenv se instala con su script oficial, después de las dependencias con las que se compila Python:
+
+```bash
+sudo apt update && sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
+  libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
+curl https://pyenv.run | bash
+# Agregar al ~/.bashrc las líneas que imprime el instalador, abrir una terminal nueva y verificar
+pyenv --version
+```
 
 Si no se quiere instalar pyenv, se puede usar el `.venv` del proyecto con `--env-manager local` (ver [Entorno de ejecución](#entorno-de-ejecución)).
 
@@ -175,7 +185,7 @@ Un parámetro vacío (el valor por defecto) conserva el valor de `config.py`. `q
 
 | Mensaje | Causa | Solución |
 |---|---|---|
-| `FileNotFoundError: ... 'None'` en `_install_python` | pyenv no está instalado y MLflow no puede instalar Python 3.11 | `brew install pyenv`, o `--env-manager local` con el `.venv` activo |
+| `FileNotFoundError: ... 'None'` en `_install_python` | pyenv no está instalado y MLflow no puede instalar Python 3.11 | Instalar pyenv (ver Requisitos), o `--env-manager local` con el `.venv` activo |
 | `Falta p2_cambios_estacion_bin.parquet` (o `p1_demanda...`, `viajes_modelado...`) | No se han generado las features de esa pregunta | `mlflow run . -e ingest ...` o `make features-p1`, `make features-p2`, `make features-p3` |
 | `MLFLOW_TRACKING_URI no está definida` | La variable no está en el shell donde se lanzó | `export MLFLOW_TRACKING_URI=...` (paso 1) |
 | `When an mlflow-artifacts URI was supplied, the tracking URI must be ...` | Se usó `sqlite:///...` directo como URI, sin servidor | Levantar `mlflow server` y usar su URL `http://127.0.0.1:5000` |
@@ -412,7 +422,7 @@ Notebooks `0.01-fat-exploracion-inicial-p2`, `0.02-fat-exploracion-y-limpieza-p2
 | Elemento | Decisión |
 |---|---|
 | **Qué se predice** | Para cada estación y bloque de 30 minutos, si en las próximas 2 horas estará en riesgo de quedarse **sin bicis**, **sin anclajes** o **sin riesgo** (3 clases) |
-| **Aproximación del riesgo** | Los datos no traen inventario. Se usa el cambio neto de viajes (llegadas − salidas) en la ventana futura frente a la capacidad: si supera el 50 % de la capacidad (`P2_ALFA`) hay riesgo; si hay los dos eventos, gana el de mayor estrés relativo |
+| **Aproximación del riesgo** | Los datos no traen inventario. Se usa el cambio neto de viajes (llegadas − salidas) en la ventana futura frente a la capacidad: si alcanza o supera el 50 % de la capacidad (`P2_ALFA`) hay riesgo; si hay los dos eventos, gana el de mayor estrés relativo |
 | **Partición** | La común del proyecto; validación solo para elegir los umbrales de decisión, test solo se reporta |
 | **Variables** | Balance neto relativo de los últimos 1, 2, 4 y 8 bloques, salidas y entradas recientes, acumulado del día, capacidad, ubicación, hora cíclica, fin de semana y la frecuencia histórica de cada riesgo "hasta ayer" en la misma estación, tipo de día y hora |
 | **Métricas** | Average precision (PR-AUC) por clase de riesgo y de riesgo en general, log-loss, y precisión, recall y F1 por clase con el umbral de cada clase que maximiza el F1 en validación |

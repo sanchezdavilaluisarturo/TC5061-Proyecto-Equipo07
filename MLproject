@@ -28,3 +28,16 @@ entry_points:
       --question {question} --model {model}
       --n-estimators {n_estimators} --learning-rate {learning_rate}
       --max-depth {max_depth} --min-samples-leaf {min_samples_leaf}
+
+  # Búsqueda de hiperparámetros con Optuna (nested runs); el módulo es tuning_<question>.py
+  tune:
+    parameters:
+      question: {type: string}
+      model: {type: string}
+      n_trials: {type: string, default: ""}
+      fraccion_train: {type: string, default: ""}
+      timeout_min: {type: string, default: ""}
+    command: >
+      python -m tc5061_proyecto_equipo07.modeling.tuning_{question}
+      --model {model} --n-trials {n_trials} --fraccion-train {fraccion_train}
+      --timeout-min {timeout_min}

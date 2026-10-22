@@ -82,6 +82,6 @@ Formulación del problema del proyecto integrador de **Operaciones de Aprendizaj
 ## Decisiones tomadas
 
 - Horizonte de P1: el día siguiente, con rezagos de 1 día o más.
-- Riesgo de P2: el cambio neto (llegadas − salidas) en las próximas 2 horas supera el 50 % de la capacidad (`P2_ALFA`).
+- Riesgo de P2: el cambio neto (llegadas − salidas) en las próximas 2 horas alcanza o supera el 50 % de la capacidad (`P2_ALFA`).
 - 2023-04 y 2023-05: el portal los volvió a publicar; el rango de 81 meses está completo.
 - Una pregunta por integrante: P1 Daniel Sánchez Hernández, P2 Fernando Arreola Treviño y P3 Luis Arturo Sánchez Davila.
