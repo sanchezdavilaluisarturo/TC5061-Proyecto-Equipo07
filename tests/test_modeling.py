@@ -183,3 +183,27 @@ def test_p3_estabilidad_ari_y_reasignacion():
     modelo = train.p3_construir_modelo(COLUMNAS, 5, False, 3, 42).fit(x)
     grupos = predict.p3_reasignar_grupos(modelo, x, COLUMNAS)
     assert len(grupos) == len(x) and set(grupos) == {0, 1, 2}
+
+
+def test_p3_nombrar_metricas_antepone_el_conjunto():
+    nombradas = train.p3_nombrar_metricas({"silueta": 0.1, "ari_valid": 0.7, "tam_grupo_min": 9})
+    assert nombradas == {"train_silueta": 0.1, "valid_ari": 0.7, "train_tam_grupo_min": 9}
+
+
+def test_p3_nombrar_metricas_exige_que_toda_metrica_tenga_conjunto():
+    with pytest.raises(KeyError, match="metrica_nueva"):
+        train.p3_nombrar_metricas({"silueta": 0.1, "metrica_nueva": 1.0})
+
+
+def test_p3_metricas_del_baseline_y_del_alternativo_tienen_conjunto():
+    base = train.p3_ajustar_baseline(
+        p3_limpios_sinteticos(),
+        42,
+        k_minimo=2,
+        k_maximo=4,
+        min_salidas_train=50,
+        min_salidas_valid=20,
+    )
+    nombradas = train.p3_nombrar_metricas(base.metricas)
+    assert all(n.startswith(("train_", "valid_")) for n in nombradas)
+    assert "valid_ari" in nombradas and "train_silueta" in nombradas

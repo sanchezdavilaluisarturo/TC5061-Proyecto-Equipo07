@@ -149,6 +149,7 @@ mlflow run . -e train -P question=p3 -P model=alternativo --experiment-name mibi
 |---|---|---|
 | `ingest` | `dataset todo`, `p1-features`, `p2-features`, `p3-particionar` y `p3-features` | Ninguno: usa el rango de `config.py` |
 | `train` | `modeling/run.py`, que llama al comando de `modeling/train.py` de la pregunta y siempre registra en MLflow | Ver la tabla siguiente |
+| `tune` | `modeling/tuning_<question>.py`: búsqueda con Optuna, un run padre por búsqueda y un run hijo por trial, y deja el mejor como candidato | `question` (`p1` o `p3`), `model`, `n_trials`, `fraccion_train` (solo P1) y `timeout_min`; vacío = `config.py` |
 
 ### Parámetros de `train`
 
@@ -477,11 +478,40 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 
 ### Registro en MLflow
 
-- **Servidor:** la URL de `MLFLOW_TRACKING_URI` (https://mlflow.equipo7mlops.com/) · **Experimento:** `mibici-equipo07` (el de `config.py`) · **Runs:** `<MLFLOW_RUN_NAME>-baseline` y `<MLFLOW_RUN_NAME>-pca_kmeans`; los de la entrega son `p3-baseline` y `p3-pca_kmeans`.
+- **Servidor:** la URL de `MLFLOW_TRACKING_URI` (https://mlflow.equipo7mlops.com/) · **Experimento:** `mibici-equipo07` (el de `config.py`) · **Runs:** `<MLFLOW_RUN_NAME>-baseline` y `<MLFLOW_RUN_NAME>-pca_kmeans`; los de la entrega son `p3-baseline` y `p3-pca_kmeans`. La búsqueda con Optuna agrega `<MLFLOW_RUN_NAME>-pca_kmeans_optuna-busqueda` y el candidato `<MLFLOW_RUN_NAME>-pca_kmeans_optuna`.
 - **Cuándo se registra:** solo con `P3_REGISTRAR_MLFLOW=true`; es idempotente (un run terminado con el mismo nombre no se duplica, y uno que quedó a medias no cuenta).
-- **Registrado:** 14 parámetros, 11 métricas, etiquetas (equipo, pregunta, commit, autor), artefactos (asignación por estación, resumen de grupos, mapa y silueta por `k`) y el modelo (`StandardScaler` + `KMeans`).
+- **Registrado:** 14 parámetros, 11 métricas (con el conjunto en el nombre: `train_*` para silueta, Davies-Bouldin, Calinski-Harabasz, inercia y tamaños de grupo, medidos con el entrenamiento en el espacio estandarizado del baseline, y `valid_*` para la estabilidad, `valid_ari`, al reasignar las estaciones con el año de validación; P3 no usa test), etiquetas de la rúbrica (`equipo`, `question`, `commit`, `autor`, `stage_of_work`, `model_family`, `fase` y la descripción del run), la tabla de entrada con `log_input`, artefactos (asignación por estación, resumen de grupos, mapa y silueta por `k`) y el modelo (`StandardScaler` + `KMeans`) con firma e `input_example`.
+- **Artefactos por carpeta:** `plots/` (figuras), `tables/` (CSV y JSON), `data/` (manifiesto de fuentes) y `config/` (`config.py`, `MLproject` y `python_env.yaml`).
 - **Trazabilidad:** el parámetro `data_version` es `dataset.version_datos()` (hash de los SHA-256 de `references/fuentes-datos.csv`); en CI las etiquetas incluyen `github_run_id`, `github_actor`, `github_ref_name` y el commit.
 - **Copia local:** los mismos artefactos se guardan en `reports/figures/p3_*` y sí se versionan en Git.
+
+### Búsqueda con Optuna (P3)
+
+Módulo `modeling/tuning_p3.py`. Sustituye la rejilla del modelo alternativo (48 configuraciones) por una búsqueda TPE más amplia: con o sin pesos por bloque, de 2 a 20 componentes y `k` de 2 a 8 (`P3_BUSQUEDA` en `config.py`).
+
+```bash
+export MLFLOW_TRACKING_URI=https://mlflow.equipo7mlops.com/
+mlflow run . -e tune -P question=p3 -P model=alternativo -P n_trials=60 --experiment-name mibici-equipo07
+```
+
+- **Objetivo:** silueta promedio entre las semillas de búsqueda (`P3_SEMILLAS_BUSQUEDA`), medida en el espacio estandarizado del baseline, como en el resto de P3.
+- **Restricciones:** son los criterios de aceptación fijados antes de ver resultados: ARI de estabilidad mayor o igual al del baseline y grupo más chico de al menos `P3_TAM_MIN_ACEPTABLE` estaciones. Optuna las trata como restricciones, no como penalización.
+- **Selección:** entre las configuraciones evaluadas se aplica la misma regla de la rejilla (`p3_seleccionar_alternativo`): la de mayor silueta que cumple. Si ninguna cumple, se registra la mejor y queda como no aceptada.
+- **Sin test:** la estabilidad se mide con el año de validación; P3 no usa test.
+- **Runs:** un padre `pca_kmeans_optuna-busqueda` (`stage_of_work=search`), un hijo `trial_<n>` por trial con sus métricas y la etiqueta `cumple_criterios`, y el candidato `pca_kmeans_optuna` (`stage_of_work=candidate`) enlazado al padre con `busqueda_run_id`. Los artefactos del candidato se guardan como `reports/figures/p3_pca_optuna_*`.
+- **Presupuesto:** `n_trials` y `timeout_min` vacíos usan `config.py` (60 trials y 20 minutos). `fraccion_train` no aplica a P3 y se rechaza.
+
+### Model Registry (P3)
+
+Módulo `modeling/registro_p3.py`, mismo flujo que el de P1: se elige el run del modelo en la interfaz, se copia su ID y se registra con un alias. El punto de entrada `register` resuelve `registro_<question>`.
+
+```bash
+mlflow run . -e register -P question=p3 -P run_id=<id del run> -P alias=champion --experiment-name mibici-equipo07
+```
+
+- **Modelo registrado:** `mibici-equipo07-p3-segmentos` (`P3_MODELO_REGISTRADO` en `config.py`). Cada versión lleva en sus etiquetas el commit, `data_version`, `source_run_id`, `train_silueta`, `valid_ari`, `aceptado` y, si viene de una búsqueda, `busqueda_run_id`.
+- **No decide el campeón:** registra el run que se le indica y comprueba que `models:/<nombre>@<alias>` carga y asigna grupos. Si el run quedó con `aceptado=false`, advierte: el baseline sigue siendo el piso y es el que corresponde a `champion`.
+- **Solo runs con métricas por conjunto:** un run anterior a los prefijos `train_` y `valid_` se rechaza con un error claro y debe volver a registrarse.
 
 > **Al crear un experimento nuevo en este servidor, usar `artifact_location="mlflow-artifacts:/<nombre>"`.** Sin esa opción el servidor asigna una ruta local suya (`/home/ec2-user/mlflow/artifacts/...`) y la subida de artefactos falla con `Errno 45`. El servidor es MLflow 3.1.4 y el `requirements.txt` fija el cliente en 3.16.0: conviene alinearlos.
 
