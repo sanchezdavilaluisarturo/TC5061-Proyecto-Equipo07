@@ -71,7 +71,7 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 
 **GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff` y `pytest`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
-**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3).
+**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega la búsqueda `p1-xgb-optuna-busqueda` (con sus runs `trial_N`), el candidato `p1-xgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`).
 
 ## Ejecución con MLflow Project
 
@@ -89,11 +89,17 @@ En WSL/Ubuntu, pyenv se instala con su script oficial, después de las dependenc
 
 ```bash
 sudo apt update && sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
-  libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
+  libreadline-dev libsqlite3-dev libffi-dev liblzma-dev libncurses-dev tk-dev xz-utils
 curl https://pyenv.run | bash
-# Agregar al ~/.bashrc las líneas que imprime el instalador, abrir una terminal nueva y verificar
+# Solo estas dos líneas en el ~/.bashrc (no las de `pyenv init` que sugiere el instalador)
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
+echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
+# Abrir una terminal nueva y verificar
 pyenv --version
+which -a python   # el primero debe seguir siendo el del entorno activo
 ```
+
+`mlflow run` solo necesita el comando `pyenv`. Las líneas `eval "$(pyenv init ...)"` que imprime el instalador ponen los *shims* de pyenv antes que el entorno activo en el `PATH`, y entonces `python` deja de ser el del `.venv` (por ejemplo, `pytest` aparece como no instalado).
 
 Si no se quiere instalar pyenv, se puede usar el `.venv` del proyecto con `--env-manager local` (ver [Entorno de ejecución](#entorno-de-ejecución)).
 
@@ -143,12 +149,28 @@ mlflow run . -e train -P question=p3 -P model=baseline --experiment-name mibici-
 mlflow run . -e train -P question=p3 -P model=alternativo --experiment-name mibici-equipo07
 ```
 
+**4. Buscar hiperparámetros** (`tune`, por ahora solo P1). Corre una búsqueda con Optuna: un run padre, un run hijo por trial y, al final, el mejor trial re-entrenado como candidato (ver [Fase 2 de P1](#fase-2-búsqueda-de-hiperparámetros-selección-y-registro)).
+
+```bash
+mlflow run . -e tune -P question=p1 -P model=xgb --experiment-name mibici-equipo07
+```
+
+**5. Registrar el campeón** (`register`, por ahora solo P1). Registra el modelo de un run como versión nueva en el Model Registry y le pone un alias (`champion` por defecto). El run se elige en la interfaz y se pasa su ID:
+
+```bash
+mlflow run . -e register -P question=p1 -P run_id=ID_DEL_RUN --experiment-name mibici-equipo07
+```
+
 ### Puntos de entrada
 
 | Punto de entrada | Qué ejecuta | Parámetros |
 |---|---|---|
 | `ingest` | `dataset todo`, `p1-features`, `p2-features`, `p3-particionar` y `p3-features` | Ninguno: usa el rango de `config.py` |
 | `train` | `modeling/run.py`, que llama al comando de `modeling/train.py` de la pregunta y siempre registra en MLflow | Ver la tabla siguiente |
+| `tune` | `modeling/tuning_<question>.py`: búsqueda de hiperparámetros con Optuna y runs anidados | `question`, `model` y, opcionales, `n_trials`, `fraccion_train`, `timeout_min` (vacío = `P1_BUSQUEDA` de `config.py`) |
+| `register` | `modeling/registro_<question>.py`: registra el modelo de un run en el Model Registry con un alias | `question`, `run_id` y `alias` (por defecto `champion`) |
+
+`tune` y `register` arman el módulo con el nombre de la pregunta, así que una pregunta nueva solo agrega su `tuning_pN.py` o `registro_pN.py`, sin tocar el `MLproject`.
 
 ### Parámetros de `train`
 
@@ -177,8 +199,8 @@ Un parámetro vacío (el valor por defecto) conserva el valor de `config.py`. `q
 
 ### Qué deja cada corrida
 
-- **Runs del modelo** en el experimento `mibici-equipo07`, con parámetros, métricas, etiquetas (`equipo`, `pregunta`, `commit`), artefactos y el modelo. Sus nombres son los de la sección "MLflow del equipo" más abajo.
-- **Un run contenedor** del proyecto (nombre aleatorio, por ejemplo `silent-ray-926`), sin métricas: guarda los parámetros de `mlflow run`. Sale en el experimento que se pasa con `--experiment-name`.
+- **Runs del modelo** en el experimento `mibici-equipo07`, con parámetros, métricas, etiquetas (`equipo`, `pregunta`, `commit`; en la Fase 2, P1 usa `question`, `stage_of_work`, `model_family` y `fase`), artefactos y el modelo. Sus nombres son los de la sección "MLflow del equipo" más abajo.
+- **Un run contenedor** del proyecto (nombre aleatorio, por ejemplo `silent-ray-926`), sin métricas: guarda los parámetros de `mlflow run`. Sale en el experimento que se pasa con `--experiment-name` (sin la opción, en `Default`).
 - **Archivos regenerados** en `reports/figures/`. Están versionados, así que conviene revisar `git status` y revertir con `git checkout -- reports/figures` lo que no se quiera commitear.
 
 ### Problemas frecuentes
@@ -343,7 +365,7 @@ Reglas aplicadas por `dataset.limpiar` y documentadas en `0.03-lasd-limpieza-p3`
 | Versionado de datos | Manifiesto CSV (`references/fuentes-datos.csv`) + `hashlib`, versionado en Git | Registros y SHA-256 por archivo; su hash es el `data_version` que se registra en cada run | Huyen (2022) |
 | Procesamiento y features | pandas + scikit-learn (`features.py`) | Suficiente para agregados por estación y hora; los transformers aprenden solo con train, sin fuga | Huyen (2022) |
 | Modelado | scikit-learn y XGBoost (`modeling/`) | Un baseline sencillo por pregunta antes de los candidatos, para medir cuánto aporta cada modelo | Huyen (2022) |
-| Experimentos | MLflow Tracking, servidor del equipo (https://mlflow.equipo7mlops.com) | Parámetros, métricas, etiquetas (equipo, pregunta, commit), artefactos y modelo en un solo lugar compartido | Treveil et al. (2020); MLflow (s.f.) |
+| Experimentos | MLflow Tracking, servidor del equipo (https://mlflow.equipo7mlops.com) | Parámetros, métricas, etiquetas (equipo, pregunta, commit), artefactos y modelo en un solo lugar compartido | Treveil et al. (2020); MLflow (s.f.-c) |
 | Código y colaboración | Cookiecutter Data Science + Git/GitHub (ramas, PR y revisión) | Estructura estándar y cambios revisados antes de integrarse | Wilson (2022) |
 | Automatización | Makefile + GitHub Actions | Calidad (ruff y pytest) en cada PR y entrenamiento de cada pregunta con un comando | Treveil et al. (2020) |
 
@@ -397,7 +419,9 @@ XGBoost reduce el MAE del baseline 4.2 % en valid y 1.9 % en test, y entrena en 
 1. HGB Poisson divergía: el valor crudo llegó a 2574 en la iteración 287 y las predicciones salieron infinitas. Se corrigió con `l2_regularization=1.0` y `min_samples_leaf=100`; XGBoost ya trae ese freno (`max_delta_step=0.7` por defecto con `count:poisson`).
 2. Las estaciones nuevas (109 estaciones y 8.93 % de las filas de test; 9 y 1.80 % en valid) recibían un nivel vacío y XGBoost se disparaba en test (1.164). El transformer ahora les asigna el nivel del sistema. Se detectó al revisar test y se corrigió un error de manejo de datos, sin ajustar hiperparámetros.
 
-### Registro en MLflow
+### Registro en MLflow (Fase 1)
+
+En la Fase 2 cambiaron las etiquetas y el orden de los artefactos, y se agregaron la búsqueda y el Model Registry: ver [Fase 2](#fase-2-búsqueda-de-hiperparámetros-selección-y-registro).
 
 - **Comando:** `P1_REGISTRAR_MLFLOW=true make train-p1` (o `python -m tc5061_proyecto_equipo07.modeling.train p1-entrenar --registrar`).
 - **Experimento:** `mibici-equipo07`, un run por modelo: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson`.
@@ -414,6 +438,101 @@ Runs de la entrega (commit `59df230`):
 | `p1-baseline-promedio-4sem` | `b31814333aea4a9984401276c1caf850` |
 | `p1-hgb-poisson` | `758a7fb096f9497a8d5dc2ed1224c575` |
 | `p1-xgb-poisson` | `0cd6ae8976a54e77b71d48f94afaa60d` |
+
+### Fase 2: búsqueda de hiperparámetros, selección y registro
+
+Todo se corre con `mlflow run` desde el `MLproject` (puntos de entrada `train`, `tune` y `register`; ver [Ejecución con MLflow Project](#ejecución-con-mlflow-project)) y queda en el servidor del equipo (MLflow, s.f.-b).
+
+**Búsqueda con Optuna.** Se usa Optuna (sampler TPE, semilla 42; Akiba et al., 2019) en lugar de una búsqueda en malla porque cada ajuste con todo train (10.5 M de filas) cuesta minutos: con 16 CPUs, XGBoost tarda unos 2 min y HGB unos 16 min. TPE usa los resultados de los trials anteriores para proponer los siguientes, así que llega a buenas combinaciones con menos ajustes.
+
+| | XGBoost | HGB |
+|---|---|---|
+| Trials (máximo) | 20 | 10 |
+| Train por trial | 100 % | Muestra al azar del 15 % |
+| Tope de tiempo | 60 min | 45 min |
+| Hiperparámetros | `n_estimators`, `learning_rate`, `max_depth`, `min_child_weight`, `subsample`, `colsample_bytree`, `reg_lambda` | `max_iter`, `learning_rate`, `max_leaf_nodes`, `min_samples_leaf`, `l2_regularization` |
+
+Los límites están en `P1_BUSQUEDA` (`config.py`) y los rangos en `modeling/tuning_p1.py`; los dos primeros se pueden cambiar en la línea de comandos (`-P n_trials=40 -P timeout_min=120`). En HGB solo se muestrea train: valid queda completo y en orden temporal, y el mejor trial se vuelve a entrenar con todo train. Los rangos de HGB tienen piso en `l2_regularization` y `min_samples_leaf` porque sin ellos la pérdida Poisson diverge (hallazgo 1 de la validación).
+
+Antes de fijar los límites se intentó estimar el tiempo con una prueba en seco sobre el 10 % de train: extrapolarla de forma lineal daba unos 10 min por ajuste de XGBoost, pero con todo train tardó 2 min. Por eso los límites salen de tiempos medidos con todo train ([método y script](references/tiempos-p1.md)).
+
+**Estructura en MLflow:**
+
+- Run padre `p1-<modelo>-optuna-busqueda` (`stage_of_work=search`): parámetros de la búsqueda (`n_trials_max`, `timeout_min`, `fraccion_train`, `data_version`), el mejor resultado (`mejor_*`, `mejor_valid_mae`) y `best_child_run_id`.
+- Un run hijo `trial_N` por trial (anidado, `stage_of_work=search`) con sus hiperparámetros, `valid_mae`, `valid_rmse` y segundos de ajuste.
+- El candidato `p1-<modelo>-optuna` (`stage_of_work=candidate`): el mejor trial re-entrenado con todo train, con los mismos artefactos que los demás candidatos y la etiqueta `busqueda_run_id` hacia su búsqueda.
+
+El objetivo de Optuna es `valid_mae`; test no interviene en ninguna decisión.
+
+**Reproducibilidad.** Con la semilla fija, TPE propone la misma secuencia de hiperparámetros: el `trial_0` salió idéntico en dos computadoras distintas. Dos límites: el tope de tiempo puede cambiar cuántos trials terminan, y el estudio vive en memoria, así que una búsqueda interrumpida no se puede continuar (sus trials terminados sí quedan en MLflow).
+
+**Etiquetas de los runs de P1 en la Fase 2** (en la Fase 1 eran `pregunta` y `stage`):
+
+| Etiqueta | Valores | Para qué |
+|---|---|---|
+| `equipo` | `07` | Identificar al equipo en el servidor compartido |
+| `question` | `p1` | Filtrar los runs de la pregunta |
+| `stage_of_work` | `baseline`, `search` o `candidate` | Separar el baseline, los runs de una búsqueda (padre e hijos) y los candidatos que compiten por el Registry |
+| `model_family` | `promedio_historico`, `hist_gradient_boosting` o `xgboost` | Comparar por familia de modelo |
+| `fase` | `2` | Distinguir los runs de esta entrega de los de la Fase 1 |
+| `commit` | Hash corto del commit | Saber con qué código se ejecutó |
+| `autor` | Integrante que lo ejecutó | Responsable del run |
+| `busqueda_run_id` | ID del run padre | Solo en los candidatos de Optuna: liga el candidato con su búsqueda |
+| `mlflow.note.content` | Texto | Descripción del run (caja *Description*) |
+
+En la interfaz, por ejemplo, `tags.question = "p1" and tags.fase = "2" and tags.stage_of_work = "candidate"` deja solo los candidatos de esta entrega.
+
+**Artefactos:** se ordenan en `plots/`, `tables/`, `data/` (manifiesto de fuentes) y `config/` (`config.py`, `MLproject`, `python_env.yaml`). Cada run registra además su dataset de entrada (`p1_train`, con su digest) y el modelo con firma e `input_example`.
+
+#### Resultados de la Fase 2
+
+Se elige por `valid_mae`; test solo se reporta. Las métricas de baseline, HGB y XGBoost coinciden con las de la Fase 1: `mlflow run` reproduce los resultados desde su entorno aislado. Los segundos de entrenamiento, en cambio, pueden variar entre tablas y corridas: los runs de P1 se ejecutaron en computadoras distintas según dónde se trabajó durante el día, y el tiempo depende del equipo; las métricas no.
+
+| Modelo | valid_mae | valid_rmse | test_mae | test_rmse | Segundos de entrenamiento |
+|---|---:|---:|---:|---:|---:|
+| **XGBoost con Optuna, 20 trials (champion v1)** | **0.9635** | 1.5177 | **0.9863** | 1.6371 | 106.9 |
+| XGBoost Poisson | 0.9761 | 1.5639 | 0.9952 | 1.6781 | 119.5 |
+| HGB Poisson | 0.9928 | 1.6157 | 1.0082 | 1.7138 | 988.4 |
+| Baseline promedio 4 semanas | 1.0189 | 1.6539 | 1.0146 | 1.7500 | 1.8 |
+
+Por zona (suma diaria de las estaciones, en test):
+
+| Zona | MAE diario XGBoost | MAE diario XGBoost con Optuna | Viajes diarios promedio | Error relativo (Optuna) |
+|---|---:|---:|---:|---:|
+| GDL | 1348.2 | 1009.9 | 11012.2 | 9 % |
+| ZPN | 156.0 | 139.1 | 1144.6 | 12 % |
+| TLQ | 23.4 | 27.2 | 142.6 | 19 % |
+
+**Selección del campeón:** `p1-xgb-optuna` (20 trials).
+
+- **Mejora sobre el baseline:** 5.4 % menos MAE en valid y 2.8 % en test; sobre XGBoost con los hiperparámetros por defecto, 1.3 % en valid.
+- **Métrica de negocio:** el error diario por zona baja 25 % en GDL (de 12 % a 9 % de los viajes del día) y 11 % en ZPN. En TLQ sube de 23 a 27 viajes por día; es la zona con menos viajes (1 % del total).
+- **Estabilidad:** test sigue la misma dirección que valid y el orden de los modelos es el mismo en los dos conjuntos.
+- **Costo:** entrena en menos de 2 minutos, como el XGBoost por defecto, y la búsqueda completa de 20 trials tardó unos 35 minutos.
+
+**Model Registry** (MLflow, s.f.-a). El modelo registrado es `mibici-equipo07-p1-demanda`. Cada versión apunta al modelo de un run y lleva en su descripción las métricas, y en sus etiquetas el linaje: `commit`, `data_version`, `source_run_id`, `busqueda_run_id`, `question`, `fase` y `valid_mae`. El alias `champion` señala la versión vigente.
+
+| Versión | Run de origen | Alias |
+|---|---|---|
+| 1 | `p1-xgb-optuna`, 20 trials (`32b4517a11e54fd686b7f1bd7a84224d`) | `champion` |
+
+`register` no elige el campeón: registra el run que se le indica. Para promover otro, se registra su run (queda como versión nueva y el alias se mueve); con `-P alias=challenger` queda registrado sin reemplazar al campeón. El modelo se carga por alias, así que quien lo usa no cambia su código cuando se promueve una versión nueva:
+
+```python
+import mlflow
+
+modelo = mlflow.pyfunc.load_model("models:/mibici-equipo07-p1-demanda@champion")
+```
+
+Runs de la Fase 2:
+
+| Run | Run ID | Commit |
+|---|---|---|
+| `p1-baseline-promedio-4sem` | `42c6908766a0477490fec3fc8dcca19e` | `076053e` |
+| `p1-hgb-poisson` | `6d14e64520d4446c9a6ba09a3ac4f24c` | `076053e` |
+| `p1-xgb-poisson` | `0090816c11a945809f14beaacbb5245a` | `076053e` |
+| `p1-xgb-optuna-busqueda` (20 trials) | `d44b205545a6402392ee30ee63eca411` | `29d4d35` |
+| `p1-xgb-optuna` (20 trials) | `32b4517a11e54fd686b7f1bd7a84224d` | `29d4d35` |
 
 ## P2: riesgo de estación (clasificación)
 
@@ -483,7 +602,7 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 - **Trazabilidad:** el parámetro `data_version` es `dataset.version_datos()` (hash de los SHA-256 de `references/fuentes-datos.csv`); en CI las etiquetas incluyen `github_run_id`, `github_actor`, `github_ref_name` y el commit.
 - **Copia local:** los mismos artefactos se guardan en `reports/figures/p3_*` y sí se versionan en Git.
 
-> **Al crear un experimento nuevo en este servidor, usar `artifact_location="mlflow-artifacts:/<nombre>"`.** Sin esa opción el servidor asigna una ruta local suya (`/home/ec2-user/mlflow/artifacts/...`) y la subida de artefactos falla con `Errno 45`. El servidor es MLflow 3.1.4 y el `requirements.txt` fija el cliente en 3.16.0: conviene alinearlos.
+> **Al crear un experimento nuevo en este servidor, usar `artifact_location="mlflow-artifacts:/<nombre>"`.** Sin esa opción el servidor asigna una ruta local suya (`/home/ec2-user/mlflow/artifacts/...`) y la subida de artefactos falla con `Errno 45`. El servidor es MLflow 3.16.1 y el `requirements.txt` fija el cliente en 3.16.0.
 
 ## Estructura de carpetas
 
@@ -513,9 +632,10 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 │   ├── pipeline-ml.md        <- Pipeline por pregunta: limpieza, features, entrenamiento y evaluación
 │   ├── pipeline-ml.png       <- Diagrama del pipeline por pregunta (fuente editable: pipeline-ml.svg)
 │   ├── fuentes-datos.csv     <- URLs, registros y SHA-256 de los archivos del portal
+│   ├── tiempos-p1.md         <- Tiempos medidos de los modelos de P1 y límites de la búsqueda
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/figures/   <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
-├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict), plots
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, registro_p1), plots
 ├── tests/             <- Pruebas (pytest) del módulo
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
@@ -524,6 +644,8 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 │   └── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
 ├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
 ├── Makefile           <- Comandos del proyecto (make help)
+├── MLproject          <- Puntos de entrada de `mlflow run` (ingest, train, tune, register)
+├── python_env.yaml    <- Entorno aislado de `mlflow run` (Python 3.11 + requirements.txt)
 ├── pyproject.toml
 └── requirements.txt   <- Dependencias con versiones fijadas
 ```
@@ -532,6 +654,7 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 
 - `main` está protegida: todo cambio entra por Pull Request con al menos una revisión aprobada.
 - `EDA` es la rama de integración del equipo. Cada integrante trabaja en su rama (`feat/<tema>`, `fix/<tema>`, `docs/<tema>`) creada desde `EDA`, abre un PR hacia `EDA` y, al cerrar cada entrega, se abre un PR `EDA → main`.
+- En la Fase 2 la rama de integración es `mlflow_run` (creada desde `main`): las ramas de cada pregunta (`tuning/p1`, `tuning/p2`, `tuning/p3`) salen de ella y vuelven por PR.
 - Commits con [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/) en español, sin alcance entre paréntesis y mencionando la pregunta: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `build:`, `ci:`, `style:`, `chore:`.
 - Cada integrante abre al menos un PR y revisa al menos uno de otro integrante.
 - En cada PR, GitHub Actions corre `ruff` y `pytest` (`TC5061-Proyecto-Equipo07.yml`).
@@ -543,11 +666,13 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 |---|---|
 | Un experimento por proyecto y runs con nombre descriptivo | Experimento `mibici-equipo07` (`EXPERIMENTO_MLFLOW` en `config.py`); cada run lleva el nombre del enfoque (por ejemplo, `p1-xgb-poisson`), nunca el nombre aleatorio |
 | Registrar lo necesario para reproducir el run | Parámetros con el rango de fechas, `data_version` (hash del manifiesto), semilla, partición e hiperparámetros del modelo |
-| Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run |
+| Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run; en la Fase 2, P1 usa `question`, `stage_of_work` y `fase` |
+| Búsqueda de hiperparámetros trazable | Un run padre por búsqueda y un run hijo por trial (Optuna con semilla fija); el candidato final apunta a su búsqueda con `busqueda_run_id` |
+| Un modelo oficial por pregunta | Model Registry con alias `champion`; cada versión lleva en sus etiquetas el commit, `data_version` y el run de origen |
 | Métricas con el conjunto en el nombre | `valid_mae`, `test_mae`, `test_ap_riesgo`, etc. |
 | Sin credenciales ni datos personales en MLflow | La URL del servidor vive en `.env` (no versionado) o en el secret de GitHub; `usuario_id`, género y año de nacimiento no entran a ninguna tabla de modelado |
 | Elegir el modelo sin usar test | La selección se hace con el conjunto de validación; test solo se reporta |
-| Notebooks solo para exploración | Nombrados `FASE.NUMERO-INICIALES-descripcion.ipynb`; la lógica final vive en el módulo y los runs se ejecutan con `make` o `python -m` |
+| Notebooks solo para exploración | Nombrados `FASE.NUMERO-INICIALES-descripcion.ipynb`; la lógica final vive en el módulo y los runs se ejecutan con `mlflow run`, `make` o `python -m` |
 | Configuración en un solo lugar | Rutas, rango de fechas, fronteras de la partición, semilla y parámetros en `config.py` |
 | Dependencias fijas y entorno reproducible | `requirements.txt` con versiones fijadas; instalación desde un clon limpio en *Instalación* |
 | Ningún dato, modelo, carpeta de MLflow ni credencial en Git | `.gitignore` excluye `data/`, `models/*`, `*.pkl`, `*.joblib`, `mlruns/`, `mlartifacts/`, `mlflow.db` y `.env` |
@@ -563,6 +688,8 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 
 ## Referencias
 
+Akiba, T., Sano, S., Yanase, T., Ohta, T., & Koyama, M. (2019). Optuna: A next-generation hyperparameter optimization framework. En *Proceedings of the 25th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining* (pp. 2623–2631). https://doi.org/10.1145/3292500.3330701
+
 Anthropic. (2026). *Claude* (Claude Opus 5.5 y Claude Sonnet 5.5) [Modelo de lenguaje grande], utilizado como asistente de programación, depuración y redacción de la documentación. https://claude.ai/
 
 Dorard, L. (2018, 9 de marzo). *From data to AI with the Machine Learning Canvas (Part I)*. Own Machine Learning (Medium). https://medium.com/louis-dorard/from-data-to-ai-with-the-machine-learning-canvas-part-i-d171b867b047
@@ -571,7 +698,11 @@ Huyen, C. (2022). *Designing machine learning systems: An iterative process for 
 
 MiBici. (s.f.). *Datos abiertos* [Conjunto de datos]. Sistema de Bicicleta Pública del Área Metropolitana de Guadalajara. https://mibici.net/es/datos-abiertos/
 
-MLflow. (s.f.). *MLflow Tracking* [Documentación]. https://mlflow.org/docs/latest/ml/tracking/
+MLflow. (s.f.-a). *ML Model Registry* [Documentación]. https://mlflow.org/docs/latest/ml/model-registry/
+
+MLflow. (s.f.-b). *ML Projects* [Documentación]. https://mlflow.org/docs/latest/ml/projects/
+
+MLflow. (s.f.-c). *MLflow Tracking* [Documentación]. https://mlflow.org/docs/latest/ml/tracking/
 
 Treveil, M., Omont, N., Stenac, C., Lefevre, K., Phan, D., Zentici, J., Lavoillotte, A., Miyazaki, M., & Heidmann, L. (2020). *Introducing MLOps: How to scale machine learning in the enterprise*. O'Reilly Media.
 
@@ -583,7 +714,7 @@ Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programac
 
 | Integrante | Herramienta | Para qué se usó |
 |---|---|---|
-| Daniel Sánchez Hernández (P1) | Claude Code, con el modelo Claude Opus 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte |
+| Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
 | Fernando Arreola Treviño (P2) | Claude Code, con el modelo Claude Sonnet 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks |
 | Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks |
 
