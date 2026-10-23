@@ -71,7 +71,7 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 
 **GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff` y `pytest`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
-**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega la búsqueda `p1-xgb-optuna-busqueda` (con sus runs `trial_N`), el candidato `p1-xgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`).
+**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`).
 
 ## Ejecución con MLflow Project
 
@@ -493,6 +493,7 @@ Se elige por `valid_mae`; test solo se reporta. Las métricas de baseline, HGB y
 | **XGBoost con Optuna, 40 trials (champion v2)** | **0.9617** | 1.5181 | **0.9861** | 1.6440 | 83.7 |
 | XGBoost con Optuna, 20 trials (v1) | 0.9635 | 1.5177 | 0.9863 | 1.6371 | 106.9 |
 | XGBoost Poisson | 0.9761 | 1.5639 | 0.9952 | 1.6781 | 119.5 |
+| HGB con Optuna, 10 trials | 0.9783 | 1.5630 | 0.9982 | 1.6658 | 57.6 |
 | HGB Poisson | 0.9928 | 1.6157 | 1.0082 | 1.7138 | 988.4 |
 | Baseline promedio 4 semanas | 1.0189 | 1.6539 | 1.0146 | 1.7500 | 1.8 |
 
@@ -509,6 +510,7 @@ Por zona (suma diaria de las estaciones, en test):
 - **Mejora sobre el baseline:** 5.6 % menos MAE en valid y 2.8 % en test; sobre XGBoost con los hiperparámetros por defecto, 1.5 % en valid.
 - **Frente a la v1:** la mejora es marginal (0.2 % en valid y prácticamente nula en test: 0.9861 contra 0.9863), y el RMSE queda casi igual. En la práctica las dos versiones son equivalentes; se promueve la v2 porque así lo indica el criterio, sin cambiarlo después de ver test.
 - **Métrica de negocio:** frente a XGBoost por defecto, el error diario por zona baja 23 % en GDL (de 12 % a 9 % de los viajes del día) y 11 % en ZPN. En TLQ sube de 23 a 26 viajes por día; es la zona con menos viajes (1 % del total). En GDL la v1 tenía un error diario algo menor (1009.9 contra 1039.1), otra señal de que las dos versiones son equivalentes; al ser un resultado de test, no se usa para elegir.
+- **Otra familia:** también se buscó en HGB (10 trials con el 15 % de train). Optuna mejora a HGB por defecto 1.5 % en valid y 1.0 % en test, pero queda detrás de XGBoost, incluso con sus hiperparámetros por defecto; por eso no se registra. La búsqueda completa tardó menos de 5 minutos, porque el mejor trial usa árboles más chicos (22 hojas contra 63) y menos iteraciones.
 - **Estabilidad:** test sigue la misma dirección que valid y el orden de los modelos es el mismo en los dos conjuntos.
 - **Costo:** entrena en menos de 1.5 minutos; la búsqueda de 20 trials tardó unos 35 minutos y la de 40, unos 48.
 
@@ -538,6 +540,8 @@ Runs de la Fase 2:
 | `p1-xgb-optuna` (20 trials) | `32b4517a11e54fd686b7f1bd7a84224d` | `29d4d35` |
 | `p1-xgb-optuna-busqueda` (40 trials) | `97790dffc87d45b5af2dfa58a4fabe64` | `aa9a646` |
 | `p1-xgb-optuna` (40 trials) | `eae9b6f4f3244161a13b3d230f32f70f` | `339dab8` |
+| `p1-hgb-optuna-busqueda` (10 trials) | `f1e9460e10214a2a860a309c0de07deb` | `cf21b21` |
+| `p1-hgb-optuna` | `54e693d448a84085bc5cfcc44bf28555` | `cf21b21` |
 
 Durante la búsqueda de 40 trials se hizo un commit que solo cambió documentación (`339dab8`): los primeros trials llevan la etiqueta `aa9a646` y los últimos, con el candidato, `339dab8`. El código es el mismo en los dos commits, así que los resultados no cambian; para evitarlo, no se hacen commits mientras corre una búsqueda.
 
