@@ -9,11 +9,11 @@ P1_REGISTRAR_MLFLOW=true), registra un run por modelo en el experimento del proy
 P2: python -m tc5061_proyecto_equipo07.modeling.train p2-entrenar [--registrar]
 Entrada: data/processed/p2_cambios_estacion_bin.parquet (`make features-p2`). Usa la partición común
 del proyecto por día de servicio (validación solo para elegir umbrales; test solo se reporta);
-agrega la historia "hasta ayer" (P2_PESO_HISTORICO) y entrena el baseline histórico y
-HistGradientBoosting (P2_MIN_SAMPLES_LEAF). Deja la matriz de confusión y la comparación en
-reports/figures/p2_* y, con --registrar (o P2_REGISTRAR_MLFLOW=true), registra un run por modelo en
-el experimento del proyecto. Cada parámetro tiene su opción de línea de comandos y su variable de
-entorno equivalente (ver config.py).
+agrega la historia "hasta ayer" (P2_PESO_HISTORICO) y entrena el baseline histórico,
+HistGradientBoosting (P2_MIN_SAMPLES_LEAF) y XGBoost. Deja la matriz de confusión y la comparación
+en reports/figures/p2_* y, con --registrar (o P2_REGISTRAR_MLFLOW=true), registra un run por modelo
+en el experimento del proyecto. Cada parámetro tiene su opción de línea de comandos y su variable
+de entorno equivalente (ver config.py).
 
 P3 (cada parámetro tiene una variable de entorno equivalente, ver config.py):
     python -m tc5061_proyecto_equipo07.modeling.train p3-baseline
@@ -56,7 +56,7 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 import typer
-from xgboost import XGBRegressor
+from xgboost import XGBClassifier, XGBRegressor
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import dataset, plots
@@ -1461,7 +1461,7 @@ def p1_entrenar(
 
 
 # ---------------------------------------------------------------------------------------------
-# P2: riesgo de estación (baseline histórico y HistGradientBoosting)
+# P2: riesgo de estación (baseline histórico, HistGradientBoosting y XGBoost)
 # Uso: python -m tc5061_proyecto_equipo07.modeling.train p2-entrenar [--registrar]
 # Lee data/processed/p2_cambios_estacion_bin.parquet (`make features-p2`), agrega la historia
 # "hasta ayer", deja la matriz de confusión y la comparación en reports/figures/p2_* y, con
@@ -1487,15 +1487,25 @@ class P2BaselineHistorico(BaseEstimator, ClassifierMixin):
 
 
 def p2_construir_modelo(
-    clave: str, min_samples_leaf: int = cfg.P2_MIN_SAMPLES_LEAF, semilla: int = cfg.SEMILLA
+    clave: str,
+    min_samples_leaf: int = cfg.P2_MIN_SAMPLES_LEAF,
+    semilla: int = cfg.SEMILLA,
+    hiperparametros: dict | None = None,
 ):
-    """Regresa el modelo sin entrenar: el baseline histórico o el HistGradientBoosting."""
-    if clave == "baseline":
+    """Regresa el modelo sin entrenar: el baseline histórico, HistGradientBoosting o XGBoost."""
+    base = clave.removesuffix("_optuna")
+    if clave.endswith("_optuna") and hiperparametros is None:
+        raise ValueError(f"{clave} necesita los hiperparámetros de la búsqueda (tuning_p2.py)")
+    hiper = hiperparametros or {}
+    if base == "baseline":
         return P2BaselineHistorico()
-    if clave == "hgb":
+    if base == "hgb":
         return HistGradientBoostingClassifier(
-            **cfg.P2_PARAMETROS_HGB, min_samples_leaf=min_samples_leaf, random_state=semilla
+            **{**cfg.P2_PARAMETROS_HGB, "min_samples_leaf": min_samples_leaf, **hiper},
+            random_state=semilla,
         )
+    if base == "xgb":
+        return XGBClassifier(**{**cfg.P2_PARAMETROS_XGB, **hiper}, random_state=semilla)
     raise ValueError(f"Modelo de P2 desconocido: {clave} (opciones: {', '.join(cfg.P2_MODELOS)})")
 
 
@@ -1519,7 +1529,8 @@ def p2_elegir_umbral(y_binaria: np.ndarray, p: np.ndarray) -> float:
 def p2_evaluar_modelo(modelo, val: pd.DataFrame, test: pd.DataFrame, variables: list[str]) -> dict:
     """Evalúa un modelo entrenado: los umbrales salen de validación y las métricas de test.
 
-    Regresa las probabilidades de test, la clase predicha, los umbrales y las métricas.
+    Regresa las probabilidades de test, la clase predicha, los umbrales, las métricas de test y,
+    en `metricas_valid`, las de validación que no dependen del umbral (con ellas se elige).
     """
     y_val, y_test = val["clase"].to_numpy(), test["clase"].to_numpy()
     p_val, p_test = modelo.predict_proba(val[variables]), modelo.predict_proba(test[variables])
@@ -1537,7 +1548,13 @@ def p2_evaluar_modelo(modelo, val: pd.DataFrame, test: pd.DataFrame, variables: 
         "recall_sin_anclajes": recall[1],
         "f1_sin_anclajes": f1[1],
     }
-    return {"proba_test": p_test, "pred": pred, "umbrales": umbrales, "metricas": metricas}
+    return {
+        "proba_test": p_test,
+        "pred": pred,
+        "umbrales": umbrales,
+        "metricas": metricas,
+        "metricas_valid": p2_calcular_metricas(y_val, p_val),
+    }
 
 
 def p2_reportar_evaluacion(nombre: str, resultado: dict, y_test: np.ndarray) -> None:
@@ -1554,25 +1571,48 @@ def p2_reportar_evaluacion(nombre: str, resultado: dict, y_test: np.ndarray) -> 
     )
 
 
-def p2_guardar_artefactos(clave: str, resultado: dict, y_test: np.ndarray) -> list[Path]:
-    """Guarda en reports/figures/ la matriz de confusión de test (imagen y conteos en JSON)."""
+def p2_archivos_configuracion() -> list[Path]:
+    """Archivos con los que corre el run: config.py y, si existen, MLproject y python_env.yaml."""
+    candidatos = [
+        Path(cfg.__file__),
+        cfg.PROJ_ROOT / "MLproject",
+        cfg.PROJ_ROOT / "python_env.yaml",
+    ]
+    return [ruta for ruta in candidatos if ruta.exists()]
+
+
+def p2_guardar_artefactos(clave: str, resultado: dict, y_test: np.ndarray) -> dict:
+    """Guarda en reports/figures/ la matriz de confusión y curva PR de test.
+    Además devuelve, por carpeta del run, lo que se registra en MLflow."""
     matriz = confusion_matrix(y_test, resultado["pred"], labels=[0, 1, 2])
     nombre = cfg.P2_MODELOS[clave][0]
     figura = plots.p2_grafica_matriz_confusion(
         matriz, cfg.P2_CLASES, f"Matriz de confusión: {nombre} (test)"
     )
-    ruta_png = plots.p3_guardar_figura(
-        figura, cfg.FIGURES_DIR / f"p2_{clave}_matriz_confusion.png"
-    )
-    ruta_json = cfg.FIGURES_DIR / f"p2_{clave}_matriz_confusion.json"
+    ruta_cm = plots.p3_guardar_figura(figura, cfg.FIGURES_DIR / f"p2_{clave}_matriz_confusion.png")
+    ruta_cm_json = cfg.FIGURES_DIR / f"p2_{clave}_matriz_confusion.json"
     contenido = {
         "clases": cfg.P2_CLASES,
         "filas": "clase real",
         "columnas": "clase predicha",
         "matriz": matriz.tolist(),
     }
-    ruta_json.write_text(json.dumps(contenido, ensure_ascii=False, indent=1))
-    return [ruta_png, ruta_json]
+    ruta_cm_json.write_text(json.dumps(contenido, ensure_ascii=False, indent=1))
+
+    figura_pr = plots.p2_grafica_curva_pr(
+        y_test, resultado["proba_test"], cfg.P2_CLASES, f"Curva precisión-recall: {nombre} (test)"
+    )
+    ruta_pr = plots.p3_guardar_figura(figura_pr, cfg.FIGURES_DIR / f"p2_{clave}_curva_pr.png")
+
+    rutas_config = p2_archivos_configuracion()
+    ruta_manifiesto = cfg.RUTA_MANIFIESTO
+
+    return {
+        "plots": [ruta_cm, ruta_pr],
+        "tables": [ruta_cm_json],
+        "config": rutas_config,
+        "data": [ruta_manifiesto],
+    }
 
 
 def p2_nombre_run(base: str) -> str:
@@ -1605,12 +1645,21 @@ def p2_parametros_comunes(
     }
 
 
-def p2_parametros_modelo(clave: str, modelo, resultado: dict) -> dict:
+def p2_parametros_modelo(
+    clave: str, modelo, resultado: dict, hiperparametros: dict | None = None
+) -> dict:
     """Parámetros propios de un modelo, más los umbrales de decisión elegidos en validación."""
     parametros = {"modelo": clave}
-    if clave == "hgb":
-        hiper = {**cfg.P2_PARAMETROS_HGB, "min_samples_leaf": modelo.min_samples_leaf}
-        parametros.update({f"modelo_{nombre}": valor for nombre, valor in hiper.items()})
+    base = clave.removesuffix("_optuna")
+    if base in ("hgb", "xgb"):
+        defecto = cfg.P2_PARAMETROS_HGB if base == "hgb" else cfg.P2_PARAMETROS_XGB
+        nombres = [*defecto, *(hiperparametros or {})]
+        if base == "hgb":
+            nombres.append("min_samples_leaf")
+        valores = modelo.get_params()
+        for nombre in dict.fromkeys(nombres):  # sin repetir los que la búsqueda sobrescribe
+            parametros[f"modelo_{nombre}"] = valores[nombre]
+    if base == "hgb":
         parametros["modelo_n_iter"] = modelo.n_iter_
     umbrales = resultado["umbrales"]
     parametros.update({f"umbral_{cfg.P2_CLASES[k]}": float(v) for k, v in umbrales.items()})
@@ -1621,12 +1670,16 @@ def p2_registrar_run(
     clave: str,
     parametros: dict,
     metricas: dict,
-    artefactos: list[Path],
+    artefactos: dict,
     modelo,
     ejemplo: pd.DataFrame,
+    fit: pd.DataFrame,
+    etiquetas_extra: dict | None = None,
 ) -> str:
     """Registra un run de P2 en el experimento del proyecto y regresa su id."""
     import mlflow
+    import mlflow.data
+    from mlflow.data.digest_utils import compute_pandas_digest
     from mlflow.models import infer_signature
     import mlflow.sklearn
 
@@ -1640,24 +1693,34 @@ def p2_registrar_run(
         mlflow.set_tags(
             {
                 "equipo": "07",
-                "pregunta": "P2",
+                "question": "p2",
                 "tarea": "clasificacion",
                 "commit": p3_commit_actual(),
                 "autor": "Fernando Arreola Treviño",
-                "stage": etapa,
+                "stage_of_work": etapa,
                 "model_family": familia,
+                "fase": cfg.FASE_ENTREGA,
                 "mlflow.note.content": cfg.P2_DESCRIPCIONES[clave],
                 **p3_etiquetas_ci(),
+                **(etiquetas_extra or {}),
             }
         )
         mlflow.log_params(parametros)
         mlflow.log_metrics(metricas)
-        for ruta in artefactos:
-            mlflow.log_artifact(str(ruta), artifact_path="p2")
+        for carpeta, rutas in artefactos.items():
+            for ruta in rutas:
+                mlflow.log_artifact(str(ruta), artifact_path=carpeta)
+        huella = compute_pandas_digest(fit.head(10_000))
+        mlflow.log_input(
+            mlflow.data.from_pandas(
+                fit, source=str(cfg.RUTA_P2_CAMBIOS), name="p2_fit", targets="clase", digest=huella
+            ),
+            context="training",
+        )
         # cloudpickle: el formato por defecto (skops) rechaza la clase propia del baseline
         mlflow.sklearn.log_model(
             modelo,
-            name="modelo",
+            name=nombre_run,
             signature=infer_signature(ejemplo, modelo.predict_proba(ejemplo)),
             input_example=ejemplo,
             pyfunc_predict_fn="predict_proba",
@@ -1674,52 +1737,83 @@ def p2_cargar_cambios(ruta: Path = cfg.RUTA_P2_CAMBIOS) -> pd.DataFrame:
     return pd.read_parquet(ruta)
 
 
+def p2_ajustar_y_evaluar(
+    clave: str,
+    fit: pd.DataFrame,
+    val: pd.DataFrame,
+    test: pd.DataFrame,
+    comunes: dict,
+    registrar: bool,
+    min_samples_leaf: int = cfg.P2_MIN_SAMPLES_LEAF,
+    hiperparametros: dict | None = None,
+    etiquetas_extra: dict | None = None,
+) -> dict[str, float]:
+    """Ajusta un modelo con fit, lo evalúa en validación y test y, si se pide, registra su run.
+
+    Regresa las métricas del run: valid_* (con ellas se elige), test_* y el tiempo de ajuste.
+    """
+    variables = cfg.P2_FEATURES_CON_HISTORICO
+    base = cfg.P2_MODELOS[clave][0]
+    x_fit, y_test = fit[variables], test["clase"].to_numpy()
+    modelo = p2_construir_modelo(clave, min_samples_leaf, hiperparametros=hiperparametros)
+    logger.info(f"Entrenando {base}")
+    inicio = time.perf_counter()
+    modelo.fit(x_fit, fit["clase"])
+    segundos = round(time.perf_counter() - inicio, 1)
+    if list(modelo.classes_) != [0, 1, 2]:
+        raise ValueError(f"{base}: clases inesperadas {list(modelo.classes_)}")
+
+    resultado = p2_evaluar_modelo(modelo, val, test, variables)
+    p2_reportar_evaluacion(base, resultado, y_test)
+    artefactos = p2_guardar_artefactos(clave, resultado, y_test)
+    metricas = {
+        **{f"valid_{k}": float(v) for k, v in resultado["metricas_valid"].items()},
+        **{f"test_{k}": float(v) for k, v in resultado["metricas"].items()},
+        "segundos_entrenamiento": segundos,
+    }
+    if registrar:
+        p2_registrar_run(
+            clave,
+            {**comunes, **p2_parametros_modelo(clave, modelo, resultado, hiperparametros)},
+            metricas,
+            artefactos,
+            modelo,
+            x_fit.head(5),
+            fit,
+            etiquetas_extra,
+        )
+    return metricas
+
+
 @app.command()
 def p2_entrenar(
     peso_historico: int = typer.Option(cfg.P2_PESO_HISTORICO, envvar="P2_PESO_HISTORICO"),
     min_samples_leaf: int = typer.Option(cfg.P2_MIN_SAMPLES_LEAF, envvar="P2_MIN_SAMPLES_LEAF"),
     registrar: bool = typer.Option(cfg.P2_REGISTRAR_MLFLOW, envvar="P2_REGISTRAR_MLFLOW"),
 ):
-    """Entrena y evalúa el baseline histórico y el HistGradientBoosting de P2.
+    """Entrena y evalúa el baseline histórico, HistGradientBoosting y XGBoost de P2.
 
-    Los umbrales de decisión salen de validación; test solo se reporta.
+    Los umbrales de decisión salen de validación y el mejor modelo se elige por
+    valid_ap_riesgo; test solo se reporta.
     """
     cambios = p2_cargar_cambios()
     fit, val, test = p2_preparar_conjuntos(cambios, peso_historico)
     del cambios
 
-    variables = cfg.P2_FEATURES_CON_HISTORICO
-    x_fit, y_test = fit[variables], test["clase"].to_numpy()
     comunes = p2_parametros_comunes(fit, val, test, peso_historico)
-    resumen = {}
-    for clave, (base, _, _) in cfg.P2_MODELOS.items():
-        modelo = p2_construir_modelo(clave, min_samples_leaf)
-        logger.info(f"Entrenando {base}")
-        inicio = time.perf_counter()
-        modelo.fit(x_fit, fit["clase"])
-        segundos = round(time.perf_counter() - inicio, 1)
-        if list(modelo.classes_) != [0, 1, 2]:
-            raise ValueError(f"{base}: clases inesperadas {list(modelo.classes_)}")
+    # Los candidatos `*_optuna` salen de la búsqueda (tuning_p2.py); no se entrenan sin ella
+    claves = [clave for clave in cfg.P2_MODELOS if not clave.endswith("_optuna")]
+    resumen = {
+        cfg.P2_MODELOS[clave][0]: p2_ajustar_y_evaluar(
+            clave, fit, val, test, comunes, registrar, min_samples_leaf
+        )
+        for clave in claves
+    }
 
-        resultado = p2_evaluar_modelo(modelo, val, test, variables)
-        p2_reportar_evaluacion(base, resultado, y_test)
-        artefactos = p2_guardar_artefactos(clave, resultado, y_test)
-        metricas = {f"test_{k}": float(v) for k, v in resultado["metricas"].items()}
-        metricas["segundos_entrenamiento"] = segundos
-        resumen[base] = metricas
-        if registrar:
-            p2_registrar_run(
-                clave,
-                {**comunes, **p2_parametros_modelo(clave, modelo, resultado)},
-                metricas,
-                artefactos,
-                modelo,
-                x_fit.head(5),
-            )
-
-    comparacion = pd.DataFrame(resumen).T.round(4)
+    comparacion = pd.DataFrame(resumen).T.sort_values("valid_ap_riesgo", ascending=False)
+    comparacion = comparacion.round(4)
     comparacion.to_csv(cfg.FIGURES_DIR / "p2_comparacion_modelos.csv")
-    logger.info(f"Comparación en test:\n{comparacion.to_string()}")
+    logger.info(f"Comparación (ordenada por valid_ap_riesgo):\n{comparacion.to_string()}")
     if not registrar:
         logger.info("Registro en MLflow desactivado (usar --registrar o P2_REGISTRAR_MLFLOW=true)")
 

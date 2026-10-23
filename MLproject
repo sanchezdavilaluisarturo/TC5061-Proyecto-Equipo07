@@ -42,3 +42,13 @@ entry_points:
       python -m tc5061_proyecto_equipo07.modeling.tuning_{question}
       --model {model} --n-trials {n_trials} --fraccion-train {fraccion_train}
       --timeout-min {timeout_min}
+
+  # Registra un candidato en el Model Registry con un alias; el módulo es registro_<question>.py
+  register:
+    parameters:
+      question: {type: string}
+      run_id: {type: string}
+      alias: {type: string, default: champion}
+    command: >
+      python -m tc5061_proyecto_equipo07.modeling.registro_{question}
+      --run-id {run_id} --alias {alias}

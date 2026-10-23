@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from sklearn.metrics import average_precision_score, precision_recall_curve
 
 from tc5061_proyecto_equipo07.config import AZUL, GRIS, NARANJA, VERDE
 
@@ -405,5 +406,23 @@ def p2_grafica_matriz_confusion(matriz: np.ndarray, clases: list[str], titulo: s
     ax.set_ylabel("Clase real")
     ax.set_title(titulo)
     figura.colorbar(imagen, ax=ax, label="% de la clase real")
+    figura.tight_layout()
+    return figura
+
+
+def p2_grafica_curva_pr(y: np.ndarray, p: np.ndarray, clases: list[str], titulo: str):
+    """Curva precisión-recall de cada clase de riesgo, con su prevalencia (modelo al azar) punteada."""
+    figura, ax = plt.subplots(figsize=(6.5, 5.5))
+    for k, color in [(1, NARANJA), (2, AZUL)]:
+        precision, recall, _ = precision_recall_curve(y == k, p[:, k])
+        ap = average_precision_score(y == k, p[:, k])
+        ax.plot(recall, precision, color=color, label=f"{clases[k]} (AP = {ap:.3f})")
+        ax.axhline((y == k).mean(), color=color, linestyle=":", label=f"prevalencia {clases[k]}")
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precisión")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_title(titulo)
+    ax.legend()
     figura.tight_layout()
     return figura

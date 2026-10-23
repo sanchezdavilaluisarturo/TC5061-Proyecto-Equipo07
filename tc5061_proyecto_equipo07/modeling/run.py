@@ -35,6 +35,11 @@ HIPERPARAMETROS = {
         "max_depth": "max_depth",
         "min_samples_leaf": "min_samples_leaf",
     },
+    ("p2", "xgb"): {
+        "n_estimators": "n_estimators",
+        "learning_rate": "learning_rate",
+        "max_depth": "max_depth",
+    },
 }
 TIPOS = {"n_estimators": int, "learning_rate": float, "max_depth": int, "min_samples_leaf": int}
 
@@ -72,6 +77,7 @@ def aplicar_hiperparametros(pregunta: str, modelo: str, recibidos: dict) -> list
         ("p1", "hgb"): cfg.P1_PARAMETROS_HGB,
         ("p1", "xgb"): cfg.P1_PARAMETROS_XGB,
         ("p2", "hgb"): cfg.P2_PARAMETROS_HGB,
+        ("p2", "xgb"): cfg.P2_PARAMETROS_XGB,
     }[(pregunta, modelo)]
     extras = []
     for nombre, valor in recibidos.items():
