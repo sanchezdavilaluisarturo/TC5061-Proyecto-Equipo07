@@ -490,31 +490,34 @@ Se elige por `valid_mae`; test solo se reporta. Las métricas de baseline, HGB y
 
 | Modelo | valid_mae | valid_rmse | test_mae | test_rmse | Segundos de entrenamiento |
 |---|---:|---:|---:|---:|---:|
-| **XGBoost con Optuna, 20 trials (champion v1)** | **0.9635** | 1.5177 | **0.9863** | 1.6371 | 106.9 |
+| **XGBoost con Optuna, 40 trials (champion v2)** | **0.9617** | 1.5181 | **0.9861** | 1.6440 | 83.7 |
+| XGBoost con Optuna, 20 trials (v1) | 0.9635 | 1.5177 | 0.9863 | 1.6371 | 106.9 |
 | XGBoost Poisson | 0.9761 | 1.5639 | 0.9952 | 1.6781 | 119.5 |
 | HGB Poisson | 0.9928 | 1.6157 | 1.0082 | 1.7138 | 988.4 |
 | Baseline promedio 4 semanas | 1.0189 | 1.6539 | 1.0146 | 1.7500 | 1.8 |
 
 Por zona (suma diaria de las estaciones, en test):
 
-| Zona | MAE diario XGBoost | MAE diario XGBoost con Optuna | Viajes diarios promedio | Error relativo (Optuna) |
-|---|---:|---:|---:|---:|
-| GDL | 1348.2 | 1009.9 | 11012.2 | 9 % |
-| ZPN | 156.0 | 139.1 | 1144.6 | 12 % |
-| TLQ | 23.4 | 27.2 | 142.6 | 19 % |
+| Zona | MAE diario XGBoost | MAE diario Optuna v1 | MAE diario Optuna v2 | Viajes diarios promedio | Error relativo (v2) |
+|---|---:|---:|---:|---:|---:|
+| GDL | 1348.2 | 1009.9 | 1039.1 | 11012.2 | 9 % |
+| ZPN | 156.0 | 139.1 | 138.3 | 1144.6 | 12 % |
+| TLQ | 23.4 | 27.2 | 26.2 | 142.6 | 18 % |
 
-**Selección del campeón:** `p1-xgb-optuna` (20 trials).
+**Selección del campeón.** El campeón se eligió en dos iteraciones, siempre con el criterio fijado de antemano (`valid_mae`): la búsqueda de 20 trials dio la v1; como su mejor trial fue el último, la búsqueda se amplió a 40 trials y su candidato es la v2, el campeón actual.
 
-- **Mejora sobre el baseline:** 5.4 % menos MAE en valid y 2.8 % en test; sobre XGBoost con los hiperparámetros por defecto, 1.3 % en valid.
-- **Métrica de negocio:** el error diario por zona baja 25 % en GDL (de 12 % a 9 % de los viajes del día) y 11 % en ZPN. En TLQ sube de 23 a 27 viajes por día; es la zona con menos viajes (1 % del total).
+- **Mejora sobre el baseline:** 5.6 % menos MAE en valid y 2.8 % en test; sobre XGBoost con los hiperparámetros por defecto, 1.5 % en valid.
+- **Frente a la v1:** la mejora es marginal (0.2 % en valid y prácticamente nula en test: 0.9861 contra 0.9863), y el RMSE queda casi igual. En la práctica las dos versiones son equivalentes; se promueve la v2 porque así lo indica el criterio, sin cambiarlo después de ver test.
+- **Métrica de negocio:** frente a XGBoost por defecto, el error diario por zona baja 23 % en GDL (de 12 % a 9 % de los viajes del día) y 11 % en ZPN. En TLQ sube de 23 a 26 viajes por día; es la zona con menos viajes (1 % del total). En GDL la v1 tenía un error diario algo menor (1009.9 contra 1039.1), otra señal de que las dos versiones son equivalentes; al ser un resultado de test, no se usa para elegir.
 - **Estabilidad:** test sigue la misma dirección que valid y el orden de los modelos es el mismo en los dos conjuntos.
-- **Costo:** entrena en menos de 2 minutos, como el XGBoost por defecto, y la búsqueda completa de 20 trials tardó unos 35 minutos.
+- **Costo:** entrena en menos de 1.5 minutos; la búsqueda de 20 trials tardó unos 35 minutos y la de 40, unos 48.
 
 **Model Registry** (MLflow, s.f.-a). El modelo registrado es `mibici-equipo07-p1-demanda`. Cada versión apunta al modelo de un run y lleva en su descripción las métricas, y en sus etiquetas el linaje: `commit`, `data_version`, `source_run_id`, `busqueda_run_id`, `question`, `fase` y `valid_mae`. El alias `champion` señala la versión vigente.
 
 | Versión | Run de origen | Alias |
 |---|---|---|
-| 1 | `p1-xgb-optuna`, 20 trials (`32b4517a11e54fd686b7f1bd7a84224d`) | `champion` |
+| 1 | `p1-xgb-optuna`, 20 trials (`32b4517a11e54fd686b7f1bd7a84224d`) | — (queda en el historial) |
+| 2 | `p1-xgb-optuna`, 40 trials (`eae9b6f4f3244161a13b3d230f32f70f`) | `champion` |
 
 `register` no elige el campeón: registra el run que se le indica. Para promover otro, se registra su run (queda como versión nueva y el alias se mueve); con `-P alias=challenger` queda registrado sin reemplazar al campeón. El modelo se carga por alias, así que quien lo usa no cambia su código cuando se promueve una versión nueva:
 
@@ -533,6 +536,10 @@ Runs de la Fase 2:
 | `p1-xgb-poisson` | `0090816c11a945809f14beaacbb5245a` | `076053e` |
 | `p1-xgb-optuna-busqueda` (20 trials) | `d44b205545a6402392ee30ee63eca411` | `29d4d35` |
 | `p1-xgb-optuna` (20 trials) | `32b4517a11e54fd686b7f1bd7a84224d` | `29d4d35` |
+| `p1-xgb-optuna-busqueda` (40 trials) | `97790dffc87d45b5af2dfa58a4fabe64` | `aa9a646` |
+| `p1-xgb-optuna` (40 trials) | `eae9b6f4f3244161a13b3d230f32f70f` | `339dab8` |
+
+Durante la búsqueda de 40 trials se hizo un commit que solo cambió documentación (`339dab8`): los primeros trials llevan la etiqueta `aa9a646` y los últimos, con el candidato, `339dab8`. El código es el mismo en los dos commits, así que los resultados no cambian; para evitarlo, no se hacen commits mientras corre una búsqueda.
 
 ## P2: riesgo de estación (clasificación)
 
