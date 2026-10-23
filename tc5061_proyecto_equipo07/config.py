@@ -99,6 +99,8 @@ SEMILLA = 42
 EXPERIMENTO_MLFLOW = "mibici-equipo07"
 # Etiqueta `fase` de los runs de esta entrega (la Fase 1 no la tiene)
 FASE_ENTREGA = "2"
+# Nombre del modelo de P1 en el Model Registry
+P1_MODELO_REGISTRADO = "mibici-equipo07-p1-demanda"
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI")
 
 # Paleta Okabe-Ito (apta para daltonismo) para las gráficas del proyecto
