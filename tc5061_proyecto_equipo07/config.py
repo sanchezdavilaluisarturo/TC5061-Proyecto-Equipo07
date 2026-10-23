@@ -286,20 +286,35 @@ P2_ALFA = 0.5
 # La partición es la común del proyecto (FRONTERA_VALID, FRONTERA_TEST y BRECHA_HORAS).
 # Peso (en días) de la frecuencia global en la historia "hasta ayer"
 P2_PESO_HISTORICO = p3_leer_entero("P2_PESO_HISTORICO", 20)
-P2_MIN_SAMPLES_LEAF = p3_leer_entero("P2_MIN_SAMPLES_LEAF", 500)
+P2_MIN_SAMPLES_LEAF = p3_leer_entero("P2_MIN_SAMPLES_LEAF", 1000)
 P2_REGISTRAR_MLFLOW = p3_leer_bool("P2_REGISTRAR_MLFLOW")
 
-P2_PARAMETROS_HGB = {"max_iter": 150, "learning_rate": 0.05, "early_stopping": False}
+P2_PARAMETROS_HGB = {
+    "max_iter": 150,
+    "learning_rate": 0.05,
+    "l2_regularization": 1.0,
+    "early_stopping": False,
+}
+P2_PARAMETROS_XGB = {
+    "objective": "multi:softprob",
+    "n_estimators": 300,
+    "learning_rate": 0.1,
+    "max_depth": 6,
+    "tree_method": "hist",
+}
 P2_CLASES = ["sin_riesgo", "sin_bicis", "sin_anclajes"]
-# Nombre base del run, stage y familia (etiquetas `stage` y `model_family` en MLflow)
+# Nombre base del run, stage y familia (etiquetas `stage_of_work` y `model_family` en MLflow)
 P2_MODELOS = {
     "baseline": ("baseline-historico", "baseline", "frecuencia_historica"),
     "hgb": ("hgb", "candidate", "hist_gradient_boosting"),
+    "xgb": ("xgb", "candidate", "xgboost"),
 }
 P2_DESCRIPCIONES = {  # caja "Description" de cada run
     "baseline": "Frecuencia de cada riesgo en los días previos de la misma estación, tipo de día "
     "y hora, suavizada hacia la frecuencia global. Referencia que el candidato debe superar.",
     "hgb": "HistGradientBoostingClassifier con las features de flujo, hora y estación más la "
+    "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h.",
+    "xgb": "XGBoost con las features de flujo, hora y estación más la "
     "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h.",
 }
 
