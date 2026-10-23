@@ -211,6 +211,45 @@ Un parámetro vacío (el valor por defecto) conserva el valor de `config.py`. `q
 - **Un run contenedor** del proyecto (nombre aleatorio, por ejemplo `silent-ray-926`), sin métricas: guarda los parámetros de `mlflow run`. Sale en el experimento que se pasa con `--experiment-name` (sin la opción, en `Default`).
 - **Archivos regenerados** en `reports/figures/`. Están versionados, así que conviene revisar `git status` y revertir con `git checkout -- reports/figures` lo que no se quiera commitear.
 
+### Cargar el modelo registrado
+
+**Esquema.** Hay un modelo registrado por pregunta (`mibici-equipo07-p1-demanda` y `mibici-equipo07-p3-segmentos`). Cada `register` crea una **versión** numerada nueva, que no se modifica después, y un **alias** señala qué versión se usa:
+
+| Alias | Significado |
+|---|---|
+| `champion` | La versión vigente: la que debe usar quien consume el modelo |
+| `challenger` | Una versión registrada que compite con la vigente sin reemplazarla (por ejemplo, el baseline de P3) |
+
+El modelo se carga por nombre y alias, `models:/<nombre>@<alias>`; para fijar una versión exacta (auditoría o reproducir un resultado) se usa su número, `models:/<nombre>/<versión>`.
+
+```python
+import mlflow
+
+mlflow.set_tracking_uri("https://mlflow.equipo7mlops.com")
+modelo = mlflow.pyfunc.load_model("models:/mibici-equipo07-p3-segmentos@champion")
+grupos = modelo.predict(modelo.input_example)  # o un DataFrame con las 44 variables por estación
+```
+
+**Por qué alias y no etapas** (`Staging`, `Production`, `Archived`):
+
+- **Las etapas están en desuso.** MLflow las marca como obsoletas desde la versión 2.9.0 y avisa que se eliminarán en una versión mayor futura (el cliente lo advierte al usarlas, por ejemplo con `get_latest_versions`). Un esquema nuevo no debería depender de ellas.
+- **Los alias no imponen un ciclo fijo.** Las etapas son un conjunto cerrado de nombres (`None`, `Staging`, `Production` y `Archived`); con alias se nombra lo que el equipo necesita (`champion` y `challenger`), y una versión puede tener más de uno.
+- **Quien consume el modelo no cambia su código.** Promover una versión nueva es mover el alias, en una sola operación; la URI `models:/<nombre>@champion` sigue siendo la misma.
+- **Una sola forma de resolver el modelo.** Con etapas y alias a la vez, `models:/<nombre>/Production` y `models:/<nombre>@champion` podrían apuntar a versiones distintas. Aquí no se usan etapas: esa URI falla porque no hay versiones en la etapa.
+
+**Verificación** (23 de octubre de 2026, desde un directorio ajeno al repositorio, con MLflow 3.16.0 y scikit-learn 1.5.2, contra el servidor del equipo; `register` repite esta comprobación al terminar con `p1_verificar` y `p3_verificar`):
+
+| URI | Resultado |
+|---|---|
+| `models:/mibici-equipo07-p3-segmentos@champion` | Carga la versión 4 y asigna grupo a 3 estaciones |
+| `models:/mibici-equipo07-p3-segmentos@challenger` | Carga la versión 3 (el baseline) |
+| `models:/mibici-equipo07-p3-segmentos/4` | Carga; es el mismo run que `@champion` |
+| `models:/mibici-equipo07-p1-demanda@champion` | Carga y predice 5 filas |
+| `models:/mibici-equipo07-p3-segmentos/Production` | Falla, como se espera: no hay versiones en esa etapa |
+| `models:/mibici-equipo07-p3-segmentos@noexiste` | Falla con "alias not found" |
+
+**Requisitos para consumirlo.** El entorno debe tener las versiones de MLflow y scikit-learn de `requirements.txt`. El modelo de P1 se guarda con cloudpickle y al cargarlo importa el paquete `tc5061_proyecto_equipo07`, así que ese paquete debe estar instalado. El `champion` de P3 es un `Pipeline` estándar de scikit-learn (serializado con skops) y cargó sin importarlo; un candidato de P3 con pesos por bloque sí lo necesita, porque usa la función `p3_aplicar_pesos`.
+
 ### Problemas frecuentes
 
 | Mensaje | Causa | Solución |
@@ -666,7 +705,7 @@ mlflow run . -e register -P question=p3 -P run_id=<id del run> -P alias=champion
 ```
 
 - **Modelo registrado:** `mibici-equipo07-p3-segmentos` (`P3_MODELO_REGISTRADO` en `config.py`). Cada versión lleva en sus etiquetas el commit, `data_version`, `source_run_id`, `train_silueta`, `valid_ari`, `aceptado` y, si viene de una búsqueda, `busqueda_run_id`.
-- **No decide el campeón:** registra el run que se le indica y comprueba que `models:/<nombre>@<alias>` carga y asigna grupos. Si el run quedó con `aceptado=false`, advierte: el baseline sigue siendo el piso y es el que corresponde a `champion`.
+- **No decide el campeón:** registra el run que se le indica y comprueba que `models:/<nombre>@<alias>` carga y asigna grupos (esquema de alias y verificación en [Cargar el modelo registrado](#cargar-el-modelo-registrado)). Si el run quedó con `aceptado=false`, advierte: el baseline sigue siendo el piso y es el que corresponde a `champion`.
 - **Solo runs con métricas por conjunto:** un run anterior a los prefijos `train_` y `valid_` se rechaza con un error claro y debe volver a registrarse.
 
 Estado actual del Registry (`mibici-equipo07-p3-segmentos`):
@@ -745,7 +784,7 @@ Estado actual del Registry (`mibici-equipo07-p3-segmentos`):
 | Registrar lo necesario para reproducir el run | Parámetros con el rango de fechas, `data_version` (hash del manifiesto), semilla, partición e hiperparámetros del modelo |
 | Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run; en la Fase 2, P1 y P3 usan `question`, `stage_of_work` y `fase` |
 | Búsqueda de hiperparámetros trazable | Un run padre por búsqueda y un run hijo por trial (Optuna con semilla fija); el candidato final apunta a su búsqueda con `busqueda_run_id` |
-| Un modelo oficial por pregunta (hoy P1 y P3) | Model Registry con alias `champion`; cada versión lleva en sus etiquetas el commit, `data_version` y el run de origen |
+| Un modelo oficial por pregunta (hoy P1 y P3) | Model Registry con alias `champion` (y `challenger`), no con etapas, que MLflow dejó obsoletas (ver [Cargar el modelo registrado](#cargar-el-modelo-registrado)); cada versión lleva en sus etiquetas el commit, `data_version` y el run de origen |
 | Métricas con el conjunto en el nombre | P1 y P2: `valid_mae`, `test_mae`, `test_ap_riesgo`, etc. P3: `train_silueta`, `valid_ari`, etc. (P3 no usa test) |
 | Sin credenciales ni datos personales en MLflow | La URL del servidor vive en `.env` (no versionado) o en el secret de GitHub; `usuario_id`, género y año de nacimiento no entran a ninguna tabla de modelado |
 | Elegir el modelo sin usar test | La selección se hace con el conjunto de validación; test solo se reporta |
