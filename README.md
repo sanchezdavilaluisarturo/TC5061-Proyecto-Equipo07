@@ -561,7 +561,8 @@ Por zona (suma diaria de las estaciones, en test):
 
 | Versión | Run de origen | Alias |
 |---|---|---|
-| 1 | `p1-xgb-optuna`, 20 trials (`32b4517a11e54fd686b7f1bd7a84224d`) | `champion` |
+| 1 | `p1-xgb-optuna`, 20 trials (`32b4517a11e54fd686b7f1bd7a84224d`) | — (queda en el historial) |
+| 2 | `p1-xgb-optuna`, 40 trials (`eae9b6f4f3244161a13b3d230f32f70f`) | `champion` |
 
 `register` no elige el campeón: registra el run que se le indica. Para promover otro, se registra su run (queda como versión nueva y el alias se mueve); con `-P alias=challenger` queda registrado sin reemplazar al campeón. El modelo se carga por alias, así que quien lo usa no cambia su código cuando se promueve una versión nueva:
 
@@ -580,6 +581,12 @@ Runs de la Fase 2:
 | `p1-xgb-poisson` | `0090816c11a945809f14beaacbb5245a` | `076053e` |
 | `p1-xgb-optuna-busqueda` (20 trials) | `d44b205545a6402392ee30ee63eca411` | `29d4d35` |
 | `p1-xgb-optuna` (20 trials) | `32b4517a11e54fd686b7f1bd7a84224d` | `29d4d35` |
+| `p1-xgb-optuna-busqueda` (40 trials) | `97790dffc87d45b5af2dfa58a4fabe64` | `aa9a646` |
+| `p1-xgb-optuna` (40 trials) | `eae9b6f4f3244161a13b3d230f32f70f` | `339dab8` |
+| `p1-hgb-optuna-busqueda` (10 trials) | `f1e9460e10214a2a860a309c0de07deb` | `cf21b21` |
+| `p1-hgb-optuna` | `54e693d448a84085bc5cfcc44bf28555` | `cf21b21` |
+
+Durante la búsqueda de 40 trials se hizo un commit que solo cambió documentación (`339dab8`): los primeros trials llevan la etiqueta `aa9a646` y los últimos, con el candidato, `339dab8`. El código es el mismo en los dos commits, así que los resultados no cambian; para evitarlo, no se hacen commits mientras corre una búsqueda.
 
 ## P2: riesgo de estación (clasificación)
 
