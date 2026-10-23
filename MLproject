@@ -30,6 +30,7 @@ entry_points:
       --max-depth {max_depth} --min-samples-leaf {min_samples_leaf}
 
   # Búsqueda de hiperparámetros con Optuna (nested runs); el módulo es tuning_<question>.py
+  # P1: model=xgb|hgb. P3: model=alternativo (no admite fraccion_train: agrupa todas las estaciones)
   tune:
     parameters:
       question: {type: string}

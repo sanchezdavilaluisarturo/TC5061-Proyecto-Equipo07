@@ -149,16 +149,24 @@ mlflow run . -e train -P question=p3 -P model=baseline --experiment-name mibici-
 mlflow run . -e train -P question=p3 -P model=alternativo --experiment-name mibici-equipo07
 ```
 
-**4. Buscar hiperparámetros** (`tune`, por ahora solo P1). Corre una búsqueda con Optuna: un run padre, un run hijo por trial y, al final, el mejor trial re-entrenado como candidato (ver [Fase 2 de P1](#fase-2-búsqueda-de-hiperparámetros-selección-y-registro)).
+**4. Buscar hiperparámetros** (`tune`, P1 y P3; P2 todavía no). Corre una búsqueda con Optuna: un run padre, un run hijo por trial y, al final, el mejor trial re-entrenado como candidato (ver [Fase 2 de P1](#fase-2-búsqueda-de-hiperparámetros-selección-y-registro) y [Búsqueda con Optuna (P3)](#búsqueda-con-optuna-p3)).
 
 ```bash
+# P1
 mlflow run . -e tune -P question=p1 -P model=xgb --experiment-name mibici-equipo07
+
+# P3 (el modelo es `alternativo`; `fraccion_train` no aplica)
+mlflow run . -e tune -P question=p3 -P model=alternativo -P n_trials=60 --experiment-name mibici-equipo07
 ```
 
-**5. Registrar el campeón** (`register`, por ahora solo P1). Registra el modelo de un run como versión nueva en el Model Registry y le pone un alias (`champion` por defecto). El run se elige en la interfaz y se pasa su ID:
+**5. Registrar el campeón** (`register`, P1 y P3; P2 todavía no). Registra el modelo de un run como versión nueva en el Model Registry y le pone un alias (`champion` por defecto). El run se elige en la interfaz y se pasa su ID:
 
 ```bash
+# P1
 mlflow run . -e register -P question=p1 -P run_id=ID_DEL_RUN --experiment-name mibici-equipo07
+
+# P3 (ver Model Registry (P3)); con -P alias=challenger queda registrado sin reemplazar al campeón
+mlflow run . -e register -P question=p3 -P run_id=ID_DEL_RUN --experiment-name mibici-equipo07
 ```
 
 ### Puntos de entrada
@@ -167,7 +175,7 @@ mlflow run . -e register -P question=p1 -P run_id=ID_DEL_RUN --experiment-name m
 |---|---|---|
 | `ingest` | `dataset todo`, `p1-features`, `p2-features`, `p3-particionar` y `p3-features` | Ninguno: usa el rango de `config.py` |
 | `train` | `modeling/run.py`, que llama al comando de `modeling/train.py` de la pregunta y siempre registra en MLflow | Ver la tabla siguiente |
-| `tune` | `modeling/tuning_<question>.py`: búsqueda de hiperparámetros con Optuna y runs anidados | `question`, `model` y, opcionales, `n_trials`, `fraccion_train`, `timeout_min` (vacío = `P1_BUSQUEDA` de `config.py`) |
+| `tune` | `modeling/tuning_<question>.py`: búsqueda de hiperparámetros con Optuna y runs anidados, y deja el mejor como candidato | `question` (`p1` o `p3`), `model` y, opcionales, `n_trials`, `timeout_min` y `fraccion_train` (solo P1); vacío = `P1_BUSQUEDA` o `P3_BUSQUEDA` de `config.py` |
 | `register` | `modeling/registro_<question>.py`: registra el modelo de un run en el Model Registry con un alias | `question`, `run_id` y `alias` (por defecto `champion`) |
 
 `tune` y `register` arman el módulo con el nombre de la pregunta, así que una pregunta nueva solo agrega su `tuning_pN.py` o `registro_pN.py`, sin tocar el `MLproject`.
@@ -202,6 +210,45 @@ Un parámetro vacío (el valor por defecto) conserva el valor de `config.py`. `q
 - **Runs del modelo** en el experimento `mibici-equipo07`, con parámetros, métricas, etiquetas (`equipo`, `pregunta`, `commit`; en la Fase 2, P1 usa `question`, `stage_of_work`, `model_family` y `fase`), artefactos y el modelo. Sus nombres son los de la sección "MLflow del equipo" más abajo.
 - **Un run contenedor** del proyecto (nombre aleatorio, por ejemplo `silent-ray-926`), sin métricas: guarda los parámetros de `mlflow run`. Sale en el experimento que se pasa con `--experiment-name` (sin la opción, en `Default`).
 - **Archivos regenerados** en `reports/figures/`. Están versionados, así que conviene revisar `git status` y revertir con `git checkout -- reports/figures` lo que no se quiera commitear.
+
+### Cargar el modelo registrado
+
+**Esquema.** Hay un modelo registrado por pregunta (`mibici-equipo07-p1-demanda` y `mibici-equipo07-p3-segmentos`). Cada `register` crea una **versión** numerada nueva, que no se modifica después, y un **alias** señala qué versión se usa:
+
+| Alias | Significado |
+|---|---|
+| `champion` | La versión vigente: la que debe usar quien consume el modelo |
+| `challenger` | Una versión registrada que compite con la vigente sin reemplazarla (por ejemplo, el baseline de P3) |
+
+El modelo se carga por nombre y alias, `models:/<nombre>@<alias>`; para fijar una versión exacta (auditoría o reproducir un resultado) se usa su número, `models:/<nombre>/<versión>`.
+
+```python
+import mlflow
+
+mlflow.set_tracking_uri("https://mlflow.equipo7mlops.com")
+modelo = mlflow.pyfunc.load_model("models:/mibici-equipo07-p3-segmentos@champion")
+grupos = modelo.predict(modelo.input_example)  # o un DataFrame con las 44 variables por estación
+```
+
+**Por qué alias y no etapas** (`Staging`, `Production`, `Archived`):
+
+- **Las etapas están en desuso.** MLflow las marca como obsoletas desde la versión 2.9.0 y avisa que se eliminarán en una versión mayor futura (el cliente lo advierte al usarlas, por ejemplo con `get_latest_versions`). Un esquema nuevo no debería depender de ellas.
+- **Los alias no imponen un ciclo fijo.** Las etapas son un conjunto cerrado de nombres (`None`, `Staging`, `Production` y `Archived`); con alias se nombra lo que el equipo necesita (`champion` y `challenger`), y una versión puede tener más de uno.
+- **Quien consume el modelo no cambia su código.** Promover una versión nueva es mover el alias, en una sola operación; la URI `models:/<nombre>@champion` sigue siendo la misma.
+- **Una sola forma de resolver el modelo.** Con etapas y alias a la vez, `models:/<nombre>/Production` y `models:/<nombre>@champion` podrían apuntar a versiones distintas. Aquí no se usan etapas: esa URI falla porque no hay versiones en la etapa.
+
+**Verificación** (23 de octubre de 2026, desde un directorio ajeno al repositorio, con MLflow 3.16.0 y scikit-learn 1.5.2, contra el servidor del equipo; `register` repite esta comprobación al terminar con `p1_verificar` y `p3_verificar`):
+
+| URI | Resultado |
+|---|---|
+| `models:/mibici-equipo07-p3-segmentos@champion` | Carga la versión 4 y asigna grupo a 3 estaciones |
+| `models:/mibici-equipo07-p3-segmentos@challenger` | Carga la versión 3 (el baseline) |
+| `models:/mibici-equipo07-p3-segmentos/4` | Carga; es el mismo run que `@champion` |
+| `models:/mibici-equipo07-p1-demanda@champion` | Carga y predice 5 filas |
+| `models:/mibici-equipo07-p3-segmentos/Production` | Falla, como se espera: no hay versiones en esa etapa |
+| `models:/mibici-equipo07-p3-segmentos@noexiste` | Falla con "alias not found" |
+
+**Requisitos para consumirlo.** El entorno debe tener las versiones de MLflow y scikit-learn de `requirements.txt`. El modelo de P1 se guarda con cloudpickle y al cargarlo importa el paquete `tc5061_proyecto_equipo07`, así que ese paquete debe estar instalado. El `champion` de P3 es un `Pipeline` estándar de scikit-learn (serializado con skops) y cargó sin importarlo; un candidato de P3 con pesos por bloque sí lo necesita, porque usa la función `p3_aplicar_pesos`.
 
 ### Problemas frecuentes
 
@@ -514,7 +561,8 @@ Por zona (suma diaria de las estaciones, en test):
 
 | Versión | Run de origen | Alias |
 |---|---|---|
-| 1 | `p1-xgb-optuna`, 20 trials (`32b4517a11e54fd686b7f1bd7a84224d`) | `champion` |
+| 1 | `p1-xgb-optuna`, 20 trials (`32b4517a11e54fd686b7f1bd7a84224d`) | — (queda en el historial) |
+| 2 | `p1-xgb-optuna`, 40 trials (`eae9b6f4f3244161a13b3d230f32f70f`) | `champion` |
 
 `register` no elige el campeón: registra el run que se le indica. Para promover otro, se registra su run (queda como versión nueva y el alias se mueve); con `-P alias=challenger` queda registrado sin reemplazar al campeón. El modelo se carga por alias, así que quien lo usa no cambia su código cuando se promueve una versión nueva:
 
@@ -533,6 +581,12 @@ Runs de la Fase 2:
 | `p1-xgb-poisson` | `0090816c11a945809f14beaacbb5245a` | `076053e` |
 | `p1-xgb-optuna-busqueda` (20 trials) | `d44b205545a6402392ee30ee63eca411` | `29d4d35` |
 | `p1-xgb-optuna` (20 trials) | `32b4517a11e54fd686b7f1bd7a84224d` | `29d4d35` |
+| `p1-xgb-optuna-busqueda` (40 trials) | `97790dffc87d45b5af2dfa58a4fabe64` | `aa9a646` |
+| `p1-xgb-optuna` (40 trials) | `eae9b6f4f3244161a13b3d230f32f70f` | `339dab8` |
+| `p1-hgb-optuna-busqueda` (10 trials) | `f1e9460e10214a2a860a309c0de07deb` | `cf21b21` |
+| `p1-hgb-optuna` | `54e693d448a84085bc5cfcc44bf28555` | `cf21b21` |
+
+Durante la búsqueda de 40 trials se hizo un commit que solo cambió documentación (`339dab8`): los primeros trials llevan la etiqueta `aa9a646` y los últimos, con el candidato, `339dab8`. El código es el mismo en los dos commits, así que los resultados no cambian; para evitarlo, no se hacen commits mientras corre una búsqueda.
 
 ## P2: riesgo de estación (clasificación)
 
@@ -596,11 +650,80 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 
 ### Registro en MLflow
 
-- **Servidor:** la URL de `MLFLOW_TRACKING_URI` (https://mlflow.equipo7mlops.com/) · **Experimento:** `mibici-equipo07` (el de `config.py`) · **Runs:** `<MLFLOW_RUN_NAME>-baseline` y `<MLFLOW_RUN_NAME>-pca_kmeans`; los de la entrega son `p3-baseline` y `p3-pca_kmeans`.
+- **Servidor:** la URL de `MLFLOW_TRACKING_URI` (https://mlflow.equipo7mlops.com/) · **Experimento:** `mibici-equipo07` (el de `config.py`) · **Runs:** `<MLFLOW_RUN_NAME>-baseline` y `<MLFLOW_RUN_NAME>-pca_kmeans`; los de la Fase 1 son `p3-baseline` y `p3-pca_kmeans` (sin la etiqueta `fase`, con las métricas sin prefijo), y los de la Fase 2 llevan los mismos nombres con `fase=2` (ver [Runs de la Fase 2](#runs-de-la-fase-2-de-p3)). La búsqueda con Optuna agrega `<MLFLOW_RUN_NAME>-pca_kmeans_optuna-busqueda` y el candidato `<MLFLOW_RUN_NAME>-pca_kmeans_optuna`.
 - **Cuándo se registra:** solo con `P3_REGISTRAR_MLFLOW=true`; es idempotente (un run terminado con el mismo nombre no se duplica, y uno que quedó a medias no cuenta).
-- **Registrado:** 14 parámetros, 11 métricas, etiquetas (equipo, pregunta, commit, autor), artefactos (asignación por estación, resumen de grupos, mapa y silueta por `k`) y el modelo (`StandardScaler` + `KMeans`).
+- **Registrado:** 14 parámetros, 11 métricas (con el conjunto en el nombre: `train_*` para silueta, Davies-Bouldin, Calinski-Harabasz, inercia y tamaños de grupo, medidos con el entrenamiento en el espacio estandarizado del baseline, y `valid_*` para la estabilidad, `valid_ari`, al reasignar las estaciones con el año de validación; P3 no usa test), etiquetas de la rúbrica (`equipo`, `question`, `commit`, `autor`, `stage_of_work`, `model_family`, `fase` y la descripción del run), la tabla de entrada con `log_input`, artefactos (asignación por estación, resumen de grupos, mapa y silueta por `k`) y el modelo (`StandardScaler` + `KMeans`) con firma e `input_example`.
+- **Artefactos por carpeta:** `plots/` (figuras), `tables/` (CSV y JSON), `data/` (manifiesto de fuentes) y `config/` (`config.py`, `MLproject` y `python_env.yaml`).
 - **Trazabilidad:** el parámetro `data_version` es `dataset.version_datos()` (hash de los SHA-256 de `references/fuentes-datos.csv`); en CI las etiquetas incluyen `github_run_id`, `github_actor`, `github_ref_name` y el commit.
 - **Copia local:** los mismos artefactos se guardan en `reports/figures/p3_*` y sí se versionan en Git.
+
+### Búsqueda con Optuna (P3)
+
+Módulo `modeling/tuning_p3.py`. Sustituye la rejilla del modelo alternativo (48 configuraciones) por una búsqueda TPE más amplia: con o sin pesos por bloque, de 2 a 20 componentes y `k` de 2 a 8 (`P3_BUSQUEDA` en `config.py`).
+
+```bash
+export MLFLOW_TRACKING_URI=https://mlflow.equipo7mlops.com/
+mlflow run . -e tune -P question=p3 -P model=alternativo -P n_trials=60 --experiment-name mibici-equipo07
+```
+
+- **Objetivo:** silueta promedio entre las semillas de búsqueda (`P3_SEMILLAS_BUSQUEDA`), medida en el espacio estandarizado del baseline, como en el resto de P3.
+- **Restricciones:** son los criterios de aceptación fijados antes de ver resultados: ARI de estabilidad mayor o igual al del baseline y grupo más chico de al menos `P3_TAM_MIN_ACEPTABLE` estaciones. Optuna las trata como restricciones, no como penalización.
+- **Selección:** entre las configuraciones evaluadas se aplica la misma regla de la rejilla (`p3_seleccionar_alternativo`): la de mayor silueta que cumple. Si ninguna cumple, se registra la mejor y queda como no aceptada.
+- **Sin test:** la estabilidad se mide con el año de validación; P3 no usa test.
+- **Runs:** un padre `pca_kmeans_optuna-busqueda` (`stage_of_work=search`), un hijo `trial_<n>` por trial con sus métricas y la etiqueta `cumple_criterios`, y el candidato `pca_kmeans_optuna` (`stage_of_work=candidate`) enlazado al padre con `busqueda_run_id`. Los artefactos del candidato se guardan como `reports/figures/p3_pca_optuna_*`.
+- **Presupuesto:** `n_trials` y `timeout_min` vacíos usan `config.py` (60 trials y 20 minutos). `fraccion_train` no aplica a P3 y se rechaza. Con 60 trials basta (ver los resultados siguientes).
+- **Reproducibilidad:** con la semilla fija y semillas fijas en cada trial, la secuencia es la misma entre corridas: los primeros 40 trials salieron idénticos (configuración y silueta) en dos corridas independientes, así que una búsqueda de N trials contiene a las de menos trials. TPE puede proponer de nuevo una configuración ya evaluada, y esa repetición se vuelve a calcular.
+
+#### Resultados de la búsqueda
+
+Se comparó el avance de la búsqueda a los 40, 60 y 80 trials, tomando los hijos de una sola corrida de 80 y aplicando la regla de selección del código (mayor silueta entre las que cumplen ARI y tamaño mínimo; en empate, menos componentes). El baseline tiene silueta 0.1449 y ARI 0.6561.
+
+| Trials | Configuraciones únicas | Repetidas | Cumplen los criterios | Mejor configuración | Silueta | Δ vs baseline | ARI | Se halló en el trial |
+|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| 40 | 34 | 6 | 21 | sin pesos, 11 componentes, `k = 2` | 0.1454 | +0.0005 | 0.6726 | 16 |
+| 60 | 48 | 12 | 30 | sin pesos, 10 componentes, `k = 2` | 0.1455 | +0.0006 | 0.6799 | 48 |
+| 80 | 58 | 22 | 36 | sin pesos, 10 componentes, `k = 2` | 0.1455 | +0.0006 | 0.6799 | 48 |
+
+- **Más trials no mejoran el resultado:** el mejor aparece en el trial 48 y los 32 siguientes no lo superan; con 80 trials, 22 de 80 (27 %) son configuraciones repetidas. El ajuste de los 80 trials tarda menos de 1 minuto, así que el criterio para elegir el presupuesto es la convergencia y no el tiempo.
+- **El óptimo está en `k = 2`:** solo 2 de las configuraciones que cumplen los criterios superan al baseline, y las dos tienen `k = 2`. Con `k` de 3 a 8 ninguna lo supera, igual que en la rejilla.
+- **La mejora es marginal:** +0.0005 o +0.0006 de silueta. Es del orden de la variación entre semillas (en el candidato de 60 trials, la silueta mínima entre semillas fue 0.145, igual que la del baseline), y con `k = 2` el modelo vuelve a dar dos grupos, con el más chico de 160 estaciones en el candidato de 40 trials y en el baseline. De hecho, con la semilla del proyecto (42) el candidato de 40 trials da exactamente las métricas del baseline (silueta 0.1449, ARI 0.6561): la ventaja solo aparece en el promedio de las 5 semillas de búsqueda (`reports/figures/p3_pca_optuna_comparacion.csv`). Se acepta porque el criterio, fijado antes de ver los resultados, es `silueta > baseline`; no se debe leer como una mejora de la segmentación. El valor adicional del alternativo sigue siendo el de la rejilla: con `k = 3` separa un perfil intermedio, pero no supera al baseline en silueta.
+
+#### Runs de la Fase 2 de P3
+
+Corridas desde el commit `4d40d14`: las cuatro primeras con `mlflow run` (`-P n_trials=40` en la búsqueda). Para verlas en la interfaz: `tags.question = "p3" and tags.fase = "2"`.
+
+| Run | Run ID | Aceptado |
+|---|---|---|
+| `p3-baseline` | `956d6795a7c24d75a847c298da809ffe` | n/a (piso) |
+| `p3-pca_kmeans` (rejilla) | `8790436a24c84340b769996251bd6940` | No |
+| `p3-pca_kmeans_optuna-busqueda` (40 hijos) | `2c68e9b937d249a383ce49dd245e6646` | n/a |
+| `p3-pca_kmeans_optuna` | `872f2218deaa422e80ea197c325f7a6d` | Sí (por 0.0005 de silueta) |
+| `p3-n80-pca_kmeans_optuna-busqueda` (exploratorio: se lanzó con `python -m` y `--sin-candidato`; 80 hijos) | `c7ec821702c7464cb2e0f67979e25b51` | n/a |
+
+Cada `mlflow run` deja además un run contenedor con nombre aleatorio (por ejemplo `awesome-hare-758`) y sin métricas; no tiene que ver con el modelo y se puede ignorar en la interfaz.
+
+
+### Model Registry (P3)
+
+Módulo `modeling/registro_p3.py`, mismo flujo que el de P1: se elige el run del modelo en la interfaz, se copia su ID y se registra con un alias. El punto de entrada `register` resuelve `registro_<question>`.
+
+```bash
+mlflow run . -e register -P question=p3 -P run_id=<id del run> -P alias=champion --experiment-name mibici-equipo07
+```
+
+- **Modelo registrado:** `mibici-equipo07-p3-segmentos` (`P3_MODELO_REGISTRADO` en `config.py`). Cada versión lleva en sus etiquetas el commit, `data_version`, `source_run_id`, `train_silueta`, `valid_ari`, `aceptado` y, si viene de una búsqueda, `busqueda_run_id`.
+- **No decide el campeón:** registra el run que se le indica y comprueba que `models:/<nombre>@<alias>` carga y asigna grupos (esquema de alias y verificación en [Cargar el modelo registrado](#cargar-el-modelo-registrado)). Si el run quedó con `aceptado=false`, advierte: el baseline sigue siendo el piso y es el que corresponde a `champion`.
+- **Solo runs con métricas por conjunto:** un run anterior a los prefijos `train_` y `valid_` se rechaza con un error claro y debe volver a registrarse.
+
+Estado actual del Registry (`mibici-equipo07-p3-segmentos`):
+
+| Versión | Alias | Run de origen | `train_silueta` | `valid_ari` | Aceptado |
+|---:|---|---|---:|---:|---|
+| 4 | `champion` | `p3-pca_kmeans_optuna` | 0.1454 | 0.6726 | Sí |
+| 3 | `challenger` | `p3-baseline` | 0.1449 | 0.6561 | n/a |
+| 1 y 2 | sin alias | `p3-prueba-baseline` y `p3-prueba-pca_kmeans_optuna` (corridas de prueba) | 0.1449 y 0.1455 | 0.6561 y 0.6799 | n/a y sí |
+
+**Selección del campeón.** El campeón es el candidato de la búsqueda con Optuna porque cumple los tres criterios fijados de antemano (silueta mayor que el baseline, ARI de estabilidad mayor o igual y grupo mínimo de al menos 20 estaciones). La ventaja es de 0.0005 de silueta, así que en la práctica las dos versiones son equivalentes y el baseline queda como `challenger`. Si el equipo fija un margen mínimo de silueta para aceptar un modelo, esta promoción tendría que revisarse.
 
 > **Al crear un experimento nuevo en este servidor, usar `artifact_location="mlflow-artifacts:/<nombre>"`.** Sin esa opción el servidor asigna una ruta local suya (`/home/ec2-user/mlflow/artifacts/...`) y la subida de artefactos falla con `Errno 45`. El servidor es MLflow 3.16.1 y el `requirements.txt` fija el cliente en 3.16.0.
 
@@ -635,7 +758,7 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 │   ├── tiempos-p1.md         <- Tiempos medidos de los modelos de P1 y límites de la búsqueda
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/figures/   <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
-├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, registro_p1), plots
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p3, registro_p1, registro_p3), plots
 ├── tests/             <- Pruebas (pytest) del módulo
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
@@ -666,10 +789,10 @@ A igual `k` (`k = 3`) tampoco hay ventaja clara: el baseline logra ARI 0.689 y g
 |---|---|
 | Un experimento por proyecto y runs con nombre descriptivo | Experimento `mibici-equipo07` (`EXPERIMENTO_MLFLOW` en `config.py`); cada run lleva el nombre del enfoque (por ejemplo, `p1-xgb-poisson`), nunca el nombre aleatorio |
 | Registrar lo necesario para reproducir el run | Parámetros con el rango de fechas, `data_version` (hash del manifiesto), semilla, partición e hiperparámetros del modelo |
-| Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run; en la Fase 2, P1 usa `question`, `stage_of_work` y `fase` |
+| Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run; en la Fase 2, P1 y P3 usan `question`, `stage_of_work` y `fase` |
 | Búsqueda de hiperparámetros trazable | Un run padre por búsqueda y un run hijo por trial (Optuna con semilla fija); el candidato final apunta a su búsqueda con `busqueda_run_id` |
-| Un modelo oficial por pregunta | Model Registry con alias `champion`; cada versión lleva en sus etiquetas el commit, `data_version` y el run de origen |
-| Métricas con el conjunto en el nombre | `valid_mae`, `test_mae`, `test_ap_riesgo`, etc. |
+| Un modelo oficial por pregunta (hoy P1 y P3) | Model Registry con alias `champion` (y `challenger`), no con etapas, que MLflow dejó obsoletas (ver [Cargar el modelo registrado](#cargar-el-modelo-registrado)); cada versión lleva en sus etiquetas el commit, `data_version` y el run de origen |
+| Métricas con el conjunto en el nombre | P1 y P2: `valid_mae`, `test_mae`, `test_ap_riesgo`, etc. P3: `train_silueta`, `valid_ari`, etc. (P3 no usa test) |
 | Sin credenciales ni datos personales en MLflow | La URL del servidor vive en `.env` (no versionado) o en el secret de GitHub; `usuario_id`, género y año de nacimiento no entran a ninguna tabla de modelado |
 | Elegir el modelo sin usar test | La selección se hace con el conjunto de validación; test solo se reporta |
 | Notebooks solo para exploración | Nombrados `FASE.NUMERO-INICIALES-descripcion.ipynb`; la lógica final vive en el módulo y los runs se ejecutan con `mlflow run`, `make` o `python -m` |
@@ -716,6 +839,6 @@ Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programac
 |---|---|---|
 | Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
 | Fernando Arreola Treviño (P2) | Claude Code, con el modelo Claude Sonnet 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks |
-| Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks |
+| Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P3, métricas con el conjunto en el nombre, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
 
 En las tres preguntas, la formulación del problema, la elección de variables, modelos y métricas, los criterios de aceptación, la ejecución con los datos reales, la validación de los resultados y los commits y Pull Requests son de cada integrante, que revisó y es responsable del contenido. Por acuerdo del equipo, esta declaración vive aquí y no en los mensajes de commit.

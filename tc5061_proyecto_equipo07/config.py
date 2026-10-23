@@ -156,6 +156,32 @@ P3_COMPONENTES = p3_leer_lista_enteros("P3_COMPONENTES", [3, 4, 5, 6, 8, 10])
 P3_SEMILLAS_BUSQUEDA = p3_leer_entero("P3_SEMILLAS_BUSQUEDA", 5)
 P3_TAM_MIN_ACEPTABLE = p3_leer_entero("P3_TAM_MIN_ACEPTABLE", 20)
 
+# Nombre del run, etapa y familia de cada modelo (etiquetas `stage_of_work` y `model_family`)
+P3_MODELOS = {
+    "baseline": ("baseline", "baseline", "kmeans"),
+    "alternativo": ("pca_kmeans", "candidate", "pca_kmeans"),
+    "alternativo_optuna": ("pca_kmeans_optuna", "candidate", "pca_kmeans"),
+}
+
+# Descripción de cada run en MLflow (caja "Description")
+P3_DESCRIPCIONES = {
+    "baseline": "StandardScaler + K-Means sobre las variables por estación; k con mayor silueta "
+    "en train y estabilidad (ARI) al reasignar las estaciones con el año de validación. "
+    "Piso que el modelo alternativo debe superar.",
+    "alternativo": "StandardScaler + pesos por bloque (opcional) + PCA + K-Means; configuración "
+    "elegida por rejilla (con y sin pesos, componentes, k y varias semillas).",
+    "alternativo_optuna": "Misma familia que el alternativo, pero la configuración sale de la "
+    "búsqueda con Optuna (TPE con restricciones: ARI >= baseline y tamaño mínimo de grupo).",
+}
+
+# Nombre del modelo de P3 en el Model Registry
+P3_MODELO_REGISTRADO = "mibici-equipo07-p3-segmentos"
+
+# Búsqueda con Optuna del modelo alternativo: presupuesto y rangos de componentes PCA y de k
+P3_BUSQUEDA = {
+    "alternativo": {"n_trials": 60, "timeout_min": 20, "componentes": (2, 20), "k": (2, 8)},
+}
+
 # Comportamiento en CI: por defecto no se escribe en MLflow ni se falla si no se acepta el modelo
 P3_REGISTRAR_MLFLOW = p3_leer_bool("P3_REGISTRAR_MLFLOW")
 P3_REGISTRAR_DE_NUEVO = p3_leer_bool("P3_REGISTRAR_DE_NUEVO")
