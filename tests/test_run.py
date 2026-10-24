@@ -67,3 +67,7 @@ def test_comandos_por_pregunta():
 def test_modelos_validos_salen_de_config():
     assert run.modelos_validos("p1") == list(cfg.P1_MODELOS)
     assert run.modelos_validos("p2") == list(cfg.P2_MODELOS)
+    
+
+def test_vacio_de_mlflow_run_en_windows():
+    assert run.leer_hiperparametros({"n_estimators": '""', "max_depth": "8"}) == {"max_depth": 8}

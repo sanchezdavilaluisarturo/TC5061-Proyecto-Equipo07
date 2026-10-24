@@ -156,6 +156,32 @@ P3_COMPONENTES = p3_leer_lista_enteros("P3_COMPONENTES", [3, 4, 5, 6, 8, 10])
 P3_SEMILLAS_BUSQUEDA = p3_leer_entero("P3_SEMILLAS_BUSQUEDA", 5)
 P3_TAM_MIN_ACEPTABLE = p3_leer_entero("P3_TAM_MIN_ACEPTABLE", 20)
 
+# Nombre del run, etapa y familia de cada modelo (etiquetas `stage_of_work` y `model_family`)
+P3_MODELOS = {
+    "baseline": ("baseline", "baseline", "kmeans"),
+    "alternativo": ("pca_kmeans", "candidate", "pca_kmeans"),
+    "alternativo_optuna": ("pca_kmeans_optuna", "candidate", "pca_kmeans"),
+}
+
+# Descripción de cada run en MLflow (caja "Description")
+P3_DESCRIPCIONES = {
+    "baseline": "StandardScaler + K-Means sobre las variables por estación; k con mayor silueta "
+    "en train y estabilidad (ARI) al reasignar las estaciones con el año de validación. "
+    "Piso que el modelo alternativo debe superar.",
+    "alternativo": "StandardScaler + pesos por bloque (opcional) + PCA + K-Means; configuración "
+    "elegida por rejilla (con y sin pesos, componentes, k y varias semillas).",
+    "alternativo_optuna": "Misma familia que el alternativo, pero la configuración sale de la "
+    "búsqueda con Optuna (TPE con restricciones: ARI >= baseline y tamaño mínimo de grupo).",
+}
+
+# Nombre del modelo de P3 en el Model Registry
+P3_MODELO_REGISTRADO = "mibici-equipo07-p3-segmentos"
+
+# Búsqueda con Optuna del modelo alternativo: presupuesto y rangos de componentes PCA y de k
+P3_BUSQUEDA = {
+    "alternativo": {"n_trials": 60, "timeout_min": 20, "componentes": (2, 20), "k": (2, 8)},
+}
+
 # Comportamiento en CI: por defecto no se escribe en MLflow ni se falla si no se acepta el modelo
 P3_REGISTRAR_MLFLOW = p3_leer_bool("P3_REGISTRAR_MLFLOW")
 P3_REGISTRAR_DE_NUEVO = p3_leer_bool("P3_REGISTRAR_DE_NUEVO")
@@ -286,21 +312,43 @@ P2_ALFA = 0.5
 # La partición es la común del proyecto (FRONTERA_VALID, FRONTERA_TEST y BRECHA_HORAS).
 # Peso (en días) de la frecuencia global en la historia "hasta ayer"
 P2_PESO_HISTORICO = p3_leer_entero("P2_PESO_HISTORICO", 20)
-P2_MIN_SAMPLES_LEAF = p3_leer_entero("P2_MIN_SAMPLES_LEAF", 500)
+P2_MIN_SAMPLES_LEAF = p3_leer_entero("P2_MIN_SAMPLES_LEAF", 1000)
 P2_REGISTRAR_MLFLOW = p3_leer_bool("P2_REGISTRAR_MLFLOW")
 
-P2_PARAMETROS_HGB = {"max_iter": 150, "learning_rate": 0.05, "early_stopping": False}
+P2_PARAMETROS_HGB = {
+    "max_iter": 150,
+    "learning_rate": 0.05,
+    "l2_regularization": 1.0,
+    "early_stopping": False,
+}
+P2_PARAMETROS_XGB = {
+    "objective": "multi:softprob",
+    "n_estimators": 300,
+    "learning_rate": 0.1,
+    "tree_method": "hist",
+    "grow_policy": "lossguide",
+    "max_leaves": 60,
+    "max_depth": 0,
+    "max_bin": 128,
+}
 P2_CLASES = ["sin_riesgo", "sin_bicis", "sin_anclajes"]
-# Nombre base del run, etapa y familia (etiquetas `stage` y `model_family` en MLflow)
+# Nombre base del run, stage y familia (etiquetas `stage_of_work` y `model_family` en MLflow)
 P2_MODELOS = {
     "baseline": ("baseline-historico", "baseline", "frecuencia_historica"),
-    "hgb": ("hgb", "candidato", "hist_gradient_boosting"),
+    "hgb": ("hgb", "candidate", "hist_gradient_boosting"),
+    "xgb": ("xgb", "candidate", "xgboost"),
+    "xgb_optuna": ("xgb-optuna", "candidate", "xgboost"),
 }
 P2_DESCRIPCIONES = {  # caja "Description" de cada run
     "baseline": "Frecuencia de cada riesgo en los días previos de la misma estación, tipo de día "
     "y hora, suavizada hacia la frecuencia global. Referencia que el candidato debe superar.",
     "hgb": "HistGradientBoostingClassifier con las features de flujo, hora y estación más la "
     "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h.",
+    "xgb": "XGBoost con las features de flujo, hora y estación más la "
+    "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h.",
+    "xgb_optuna": "XGBoost con las features de flujo, hora y estación más la "
+    "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h. "
+    "Sus hiperparámetros se optimizan usando Optuna.",
 }
 
 
@@ -315,6 +363,10 @@ P2_FEATURES_CON_HISTORICO = P2_FEATURES_SIN_HISTORICO + ["hist_sin_bicis", "hist
 
 # Tabla estación-bin con la etiqueta y las variables de P2 (`features p2-features`)
 RUTA_P2_CAMBIOS = PROCESSED_DATA_DIR / "p2_cambios_estacion_bin.parquet"
+
+P2_BUSQUEDA = {"xgb": {"n_trials": 15, "fraccion_train": 0.1, "timeout_min": 60}}
+
+P2_MODELO_REGISTRADO = "mibici-equipo07-p2-riesgo"
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
