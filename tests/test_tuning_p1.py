@@ -47,6 +47,12 @@ def test_opciones_vacias_conservan_config():
     assert tuning_p1.p1_leer_opcion(" 5", int, 20) == 5
 
 
+def test_opciones_vacias_de_windows_conservan_config():
+    assert tuning_p1.p1_leer_opcion("''", int, 20) == 20
+    assert tuning_p1.p1_leer_opcion('""', float, 0.15) == 0.15
+    assert tuning_p1.p1_leer_opcion("'40'", int, 20) == 40
+
+
 def test_busqueda_deja_padre_hijos_y_candidato(tmp_path, monkeypatch):
     import mlflow
 

@@ -160,7 +160,8 @@ def buscar(
     clave = model.strip().lower()
     if clave not in ESPACIOS:
         raise typer.BadParameter(f"model debe ser alternativo, no '{model}'")
-    if fraccion_train.strip():
+    # En Windows, `mlflow run` pasa los parámetros vacíos como comillas ('' o "")
+    if fraccion_train.strip().strip("\"'"):
         raise typer.BadParameter("fraccion_train no aplica a P3: se agrupan todas las estaciones")
     valores = cfg.P3_BUSQUEDA[clave]
     n_trials = p1_leer_opcion(n_trials, int, valores["n_trials"])

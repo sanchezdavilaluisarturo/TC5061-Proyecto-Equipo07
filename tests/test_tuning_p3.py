@@ -164,3 +164,22 @@ def test_fraccion_train_y_modelo_invalido_se_rechazan():
         tuning_p3.buscar(
             model="dbscan", n_trials="", fraccion_train="", timeout_min="", sin_candidato=True
         )
+
+
+def test_fraccion_train_vacia_de_windows_se_acepta(monkeypatch):
+    class Llego(Exception):
+        pass
+
+    def detener():
+        raise Llego
+
+    # Si la validación acepta el vacío de Windows, la búsqueda llega a preparar el experimento
+    monkeypatch.setattr(tuning_p3, "p3_preparar_experimento", detener)
+    with pytest.raises(Llego):
+        tuning_p3.buscar(
+            model="alternativo",
+            n_trials="''",
+            fraccion_train="''",
+            timeout_min='""',
+            sin_candidato=True,
+        )

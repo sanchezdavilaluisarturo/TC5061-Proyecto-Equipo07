@@ -75,7 +75,9 @@ def p1_etiquetas_busqueda(clave: str, descripcion: str | None = None) -> dict:
 
 def p1_leer_opcion(valor: str, tipo, por_defecto):
     """Convierte el parámetro recibido como texto; vacío = el valor de config.py."""
-    return tipo(valor) if valor.strip() else por_defecto
+    # En Windows, `mlflow run` pasa los parámetros vacíos como comillas ('' o "")
+    valor = valor.strip().strip("\"'")
+    return tipo(valor) if valor else por_defecto
 
 
 def p1_buscar(clave: str, train, valid, n_trials: int, timeout_min: int) -> optuna.Study:
