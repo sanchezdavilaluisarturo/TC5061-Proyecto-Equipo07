@@ -55,9 +55,15 @@ def modelos_validos(pregunta: str) -> list[str]:
     return list(MODELOS_P3)
 
 
+def limpiar(valor: str) -> str:
+    """Quita espacios y las comillas con que `mlflow run` pasa los parámetros vacíos en Windows."""
+    return valor.strip().strip("\"'")
+
+
 def leer_hiperparametros(valores: dict[str, str]) -> dict:
     """Convierte los parámetros recibidos como texto; descarta los que vienen vacíos."""
-    return {nombre: TIPOS[nombre](valor) for nombre, valor in valores.items() if valor.strip()}
+    limpios = {nombre: limpiar(valor) for nombre, valor in valores.items()}
+    return {nombre: TIPOS[nombre](valor) for nombre, valor in limpios.items() if valor}
 
 
 def aplicar_hiperparametros(pregunta: str, modelo: str, recibidos: dict) -> list[str]:
@@ -93,9 +99,8 @@ def comandos_de_train(pregunta: str, modelo: str, extras: list[str]) -> list[lis
     if pregunta == "p1":
         return [["p1-entrenar", "--registrar", *(["--modelos", modelo] if modelo else [])]]
     if pregunta == "p2":
-        if modelo:
-            logger.warning("p2-entrenar entrena el baseline y el HGB juntos; `model` solo valida")
-        return [["p2-entrenar", "--registrar", *extras]]
+        filtro = ["--modelos", modelo] if modelo else []
+        return [["p2-entrenar", "--registrar", *filtro, *extras]]
     # --de-nuevo: un `mlflow run` debe dejar su run aunque ya haya uno con la misma configuración
     elegidos = [modelo] if modelo else list(MODELOS_P3)
     return [[MODELOS_P3[nombre], "--registrar", "--de-nuevo"] for nombre in elegidos]
@@ -114,7 +119,7 @@ def entrenar(
     pregunta = question.strip().lower()
     if pregunta not in ("p1", "p2", "p3"):
         raise typer.BadParameter(f"question debe ser p1, p2 o p3, no '{question}'")
-    modelo = model.strip().lower()
+    modelo = limpiar(model).lower()
     if modelo and modelo not in modelos_validos(pregunta):
         raise typer.BadParameter(
             f"modelo '{modelo}' desconocido para {pregunta} (opciones: "
