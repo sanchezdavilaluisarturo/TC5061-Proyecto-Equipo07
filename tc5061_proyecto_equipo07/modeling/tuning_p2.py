@@ -22,6 +22,7 @@ from tc5061_proyecto_equipo07.modeling.train import (
     p2_ajustar_y_evaluar,
     p2_calcular_metricas,
     p2_cargar_cambios,
+    p2_combinar_comparacion,
     p2_commit_actual,
     p2_construir_modelo,
     p2_etiquetas_ci,
@@ -191,7 +192,7 @@ def buscar(
 
     if not sin_candidato:
         del datos["muestra"]
-        p2_ajustar_y_evaluar(
+        metricas = p2_ajustar_y_evaluar(
             f"{clave}_optuna",
             datos["fit"],
             datos["val"],
@@ -201,6 +202,9 @@ def buscar(
             hiperparametros=mejor.params,
             etiquetas_extra={"busqueda_run_id": padre.info.run_id},
         )
+        fila = pd.DataFrame({cfg.P2_MODELOS[f"{clave}_optuna"][0]: metricas}).T.round(4)
+        ruta = cfg.FIGURES_DIR / "p2_comparacion_modelos.csv"
+        p2_combinar_comparacion(fila, ruta).to_csv(ruta)
 
 
 if __name__ == "__main__":
