@@ -361,6 +361,8 @@ Detectados en el EDA. El tratamiento aplicado a cada uno se documenta en *Limpie
 
 Los viajes incluyen `usuario_id`, género y año de nacimiento. Son datos personales aunque estén anonimizados; no se publican valores individuales en los notebooks ni en este README, solo agregados.
 
+Atendiendo la retroalimentación de la Fase 1, el notebook `0.02-dsh-exploracion-carga.ipynb` ya no muestra filas con esas columnas: sus celdas de primeras y últimas filas las excluyen (`COLUMNAS_PERSONALES`) y se retiraron las salidas que las mostraban. Las versiones anteriores del notebook siguen en el historial de Git.
+
 Rango de fechas y su justificación, variables y construcción de cada objetivo, condiciones de uso publicadas por MiBici y estrategia de partición temporal: [Definición de los datos](references/definicion-datos.md).
 
 ### Patrones del EDA
