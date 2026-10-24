@@ -1581,6 +1581,27 @@ def p2_archivos_configuracion() -> list[Path]:
     return [ruta for ruta in candidatos if ruta.exists()]
 
 
+def p2_etiquetas_ci() -> dict[str, str]:
+    """Etiquetas de GitHub Actions presentes en el entorno."""
+    variables = {
+        "github_run_id": "GITHUB_RUN_ID",
+        "github_actor": "GITHUB_ACTOR",
+        "github_ref_name": "GITHUB_REF_NAME",
+        "github_sha": "GITHUB_SHA",
+    }
+    return {etiqueta: os.environ[v] for etiqueta, v in variables.items() if os.environ.get(v)}
+
+
+def p2_commit_actual() -> str:
+    """Commit corto: regresa el resultado de `git rev-parse`; si falla, regresa `desconocido`."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=cfg.PROJ_ROOT, text=True
+        ).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return "desconocido"
+
+
 def p2_guardar_artefactos(clave: str, resultado: dict, y_test: np.ndarray) -> dict:
     """Guarda en reports/figures/ la matriz de confusión y curva PR de test.
     Además devuelve, por carpeta del run, lo que se registra en MLflow."""
@@ -1695,13 +1716,13 @@ def p2_registrar_run(
                 "equipo": "07",
                 "question": "p2",
                 "tarea": "clasificacion",
-                "commit": p3_commit_actual(),
+                "commit": p2_commit_actual(),
                 "autor": "Fernando Arreola Treviño",
                 "stage_of_work": etapa,
                 "model_family": familia,
                 "fase": cfg.FASE_ENTREGA,
                 "mlflow.note.content": cfg.P2_DESCRIPCIONES[clave],
-                **p3_etiquetas_ci(),
+                **p2_etiquetas_ci(),
                 **(etiquetas_extra or {}),
             }
         )
@@ -1735,6 +1756,19 @@ def p2_cargar_cambios(ruta: Path = cfg.RUTA_P2_CAMBIOS) -> pd.DataFrame:
     if not ruta.exists():
         raise FileNotFoundError(f"Falta {ruta.name}; ejecutar `make features-p2`")
     return pd.read_parquet(ruta)
+
+
+def p2_combinar_comparacion(comparacion: pd.DataFrame, ruta: Path) -> pd.DataFrame:
+    """Une la comparación de esta corrida con la ya guardada en `ruta`.
+
+    Reemplaza las filas de los modelos entrenados ahora y conserva las demás, así una corrida
+    de un solo modelo no borra la comparación de los otros.
+    """
+    if not ruta.exists():
+        return comparacion
+    previas = pd.read_csv(ruta, index_col=0)
+    combinada = pd.concat([previas.drop(index=comparacion.index, errors="ignore"), comparacion])
+    return combinada.sort_values("valid_ap_riesgo", ascending=False)
 
 
 def p2_ajustar_y_evaluar(
@@ -1787,22 +1821,28 @@ def p2_ajustar_y_evaluar(
 
 @app.command()
 def p2_entrenar(
+    modelos: str = typer.Option("baseline,hgb,xgb", help="Modelos a entrenar, separados por coma"),
     peso_historico: int = typer.Option(cfg.P2_PESO_HISTORICO, envvar="P2_PESO_HISTORICO"),
     min_samples_leaf: int = typer.Option(cfg.P2_MIN_SAMPLES_LEAF, envvar="P2_MIN_SAMPLES_LEAF"),
     registrar: bool = typer.Option(cfg.P2_REGISTRAR_MLFLOW, envvar="P2_REGISTRAR_MLFLOW"),
 ):
-    """Entrena y evalúa el baseline histórico, HistGradientBoosting y XGBoost de P2.
-
+    """Entrena y evalúa los modelos de P2 indicados (por defecto, baseline, HGB y XGBoost).
     Los umbrales de decisión salen de validación y el mejor modelo se elige por
     valid_ap_riesgo; test solo se reporta.
     """
+    claves = [clave.strip() for clave in modelos.split(",") if clave.strip()]
+    # Los candidatos `*_optuna` salen de la búsqueda (tuning_p2.py); no se entrenan sin ella
+    invalidas = [c for c in claves if c not in cfg.P2_MODELOS or c.endswith("_optuna")]
+    if invalidas:
+        raise typer.BadParameter(
+            f"{', '.join(invalidas)} no se entrena con p2-entrenar (opciones: baseline, hgb, xgb; "
+            "los *_optuna salen de `mlflow run . -e tune`)"
+        )
     cambios = p2_cargar_cambios()
     fit, val, test = p2_preparar_conjuntos(cambios, peso_historico)
     del cambios
 
     comunes = p2_parametros_comunes(fit, val, test, peso_historico)
-    # Los candidatos `*_optuna` salen de la búsqueda (tuning_p2.py); no se entrenan sin ella
-    claves = [clave for clave in cfg.P2_MODELOS if not clave.endswith("_optuna")]
     resumen = {
         cfg.P2_MODELOS[clave][0]: p2_ajustar_y_evaluar(
             clave, fit, val, test, comunes, registrar, min_samples_leaf
@@ -1812,7 +1852,8 @@ def p2_entrenar(
 
     comparacion = pd.DataFrame(resumen).T.sort_values("valid_ap_riesgo", ascending=False)
     comparacion = comparacion.round(4)
-    comparacion.to_csv(cfg.FIGURES_DIR / "p2_comparacion_modelos.csv")
+    ruta_comparacion = cfg.FIGURES_DIR / "p2_comparacion_modelos.csv"
+    p2_combinar_comparacion(comparacion, ruta_comparacion).to_csv(ruta_comparacion)
     logger.info(f"Comparación (ordenada por valid_ap_riesgo):\n{comparacion.to_string()}")
     if not registrar:
         logger.info("Registro en MLflow desactivado (usar --registrar o P2_REGISTRAR_MLFLOW=true)")
