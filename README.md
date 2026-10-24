@@ -244,7 +244,7 @@ grupos = modelo.predict(modelo.input_example)  # o un DataFrame con las 44 varia
 | `models:/mibici-equipo07-p3-segmentos@champion` | Carga la versión 4 y asigna grupo a 3 estaciones |
 | `models:/mibici-equipo07-p3-segmentos@challenger` | Carga la versión 3 (el baseline) |
 | `models:/mibici-equipo07-p3-segmentos/4` | Carga; es el mismo run que `@champion` |
-| `models:/mibici-equipo07-p1-demanda@champion` | Carga y predice 5 filas |
+| `models:/mibici-equipo07-p1-demanda@champion` | Carga y predice las 5 filas de su `input_example` |
 | `models:/mibici-equipo07-p3-segmentos/Production` | Falla, como se espera: no hay versiones en esa etapa |
 | `models:/mibici-equipo07-p3-segmentos@noexiste` | Falla con "alias not found" |
 
