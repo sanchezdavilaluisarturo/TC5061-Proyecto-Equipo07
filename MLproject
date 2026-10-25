@@ -1,0 +1,54 @@
+name: tc5061-proyecto-equipo07
+
+python_env: python_env.yaml
+
+# Rutas, fechas y semillas no aparecen aquí: salen de tc5061_proyecto_equipo07/config.py.
+# Un parámetro en "" significa "usar el valor de config.py".
+entry_points:
+  # Datos y features de P1, P2 y P3 (equivale a `make data features`)
+  ingest:
+    command: >
+      python -m tc5061_proyecto_equipo07.dataset todo &&
+      python -m tc5061_proyecto_equipo07.features p1-features &&
+      python -m tc5061_proyecto_equipo07.features p2-features &&
+      python -m tc5061_proyecto_equipo07.dataset p3-particionar &&
+      python -m tc5061_proyecto_equipo07.features p3-features
+
+  # Entrena y registra en MLflow una pregunta (ver modeling/run.py)
+  train:
+    parameters:
+      question: {type: string}
+      model: {type: string, default: ""}
+      n_estimators: {type: string, default: ""}
+      learning_rate: {type: string, default: ""}
+      max_depth: {type: string, default: ""}
+      min_samples_leaf: {type: string, default: ""}
+    command: >
+      python -m tc5061_proyecto_equipo07.modeling.run
+      --question {question} --model {model}
+      --n-estimators {n_estimators} --learning-rate {learning_rate}
+      --max-depth {max_depth} --min-samples-leaf {min_samples_leaf}
+
+  # Búsqueda de hiperparámetros con Optuna (nested runs); el módulo es tuning_<question>.py
+  # P1: model=xgb|hgb. P3: model=alternativo (no admite fraccion_train: agrupa todas las estaciones)
+  tune:
+    parameters:
+      question: {type: string}
+      model: {type: string}
+      n_trials: {type: string, default: ""}
+      fraccion_train: {type: string, default: ""}
+      timeout_min: {type: string, default: ""}
+    command: >
+      python -m tc5061_proyecto_equipo07.modeling.tuning_{question}
+      --model {model} --n-trials {n_trials} --fraccion-train {fraccion_train}
+      --timeout-min {timeout_min}
+
+  # Registra un candidato en el Model Registry con un alias; el módulo es registro_<question>.py
+  register:
+    parameters:
+      question: {type: string}
+      run_id: {type: string}
+      alias: {type: string, default: champion}
+    command: >
+      python -m tc5061_proyecto_equipo07.modeling.registro_{question}
+      --run-id {run_id} --alias {alias}

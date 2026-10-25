@@ -1,0 +1,7 @@
+# Entorno del MLflow Project (ver MLproject). Las versiones salen de requirements.txt, que se
+# exporta con uv desde pyproject.toml/uv.lock: no se repiten aquí.
+python: "3.11" # pyproject.toml: requires-python ~=3.11.0
+build_dependencies:
+  - pip
+dependencies:
+  - -r requirements.txt
