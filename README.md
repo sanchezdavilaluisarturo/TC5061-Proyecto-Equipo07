@@ -60,8 +60,8 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 |---|---|---|
 | `MLFLOW_TRACKING_URI` | URL del servidor MLflow (en CI, el secret del repositorio `MLFLOW_TRACKING_URI`) | `.env` |
 | `P1_REGISTRAR_MLFLOW`, `P2_REGISTRAR_MLFLOW`, `P3_REGISTRAR_MLFLOW` | Escribir en MLflow los runs de cada pregunta | `false` |
-| `MLFLOW_RUN_NAME` | P2 y P3: prefijo del nombre de los runs (en CI lo fija el workflow). P1 usa nombres fijos | P2: `baseline-historico` y `hgb`; P3: `baseline` y `pca_kmeans` |
-| `P2_PESO_HISTORICO`, `P2_MIN_SAMPLES_LEAF` | Parámetros del modelo de P2 | `20`, `500` |
+| `MLFLOW_RUN_NAME` | P2 y P3: prefijo del nombre de los runs (en CI lo fija el workflow). P1 usa nombres fijos | P2: `baseline-historico`, `hgb`, `xgb` y `xgb-optuna`; P3: `baseline` y `pca_kmeans` |
+| `P2_PESO_HISTORICO`, `P2_MIN_SAMPLES_LEAF` | Parámetros del modelo de P2 | `20`, `1000` |
 | `P3_REGISTRAR_DE_NUEVO` | P3: crear un run nuevo aunque ya exista uno terminado con ese nombre | `false` |
 | `P3_EXIGIR_ACEPTACION` | P3: salir con error si el modelo alternativo no cumple los criterios de aceptación | `false` |
 | `P3_EXPERIMENTO` | P3: experimento de MLflow | `mibici-equipo07` (el de `config.py`) |
@@ -71,7 +71,7 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 
 **GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff` y `pytest`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
-**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`).
+**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`). En la Fase 2, P2 agrega la búsqueda `p2_xgb_optuna_busqueda` (con sus runs `trial_N`), los candidatos `p2-xgb` y `p2-xgb-optuna`, y el modelo registrado `mibici-equipo07-p2-riesgo` (alias `champion` y `challenger`).
 
 ## Ejecución con MLflow Project
 
@@ -140,30 +140,41 @@ mlflow run . -e train -P question=p1 -P model=xgb -P n_estimators=300 --experime
 mlflow run . -e train -P question=p1 -P model=baseline --experiment-name mibici-equipo07
 mlflow run . -e train -P question=p1 -P model=hgb --experiment-name mibici-equipo07
 
-# P2: riesgo de estación (baseline y hgb se entrenan juntos)
+# P2: riesgo de estación
+mlflow run . -e train -P question=p2 -P model=baseline --experiment-name mibici-equipo07
 mlflow run . -e train -P question=p2 -P model=hgb --experiment-name mibici-equipo07
-mlflow run . -e train -P question=p2 -P model=hgb -P min_samples_leaf=500 --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p2 -P model=xgb --experiment-name mibici-equipo07
+
+# O alternativamente entrenar las 3 opciones de modelo de P2 en un solo comando:
+mlflow run . -e train -P question=p2 --experiment-name mibici-equipo07
 
 # P3: clustering de estaciones (baseline y alternativo; sin `model` corre los dos)
 mlflow run . -e train -P question=p3 -P model=baseline --experiment-name mibici-equipo07
 mlflow run . -e train -P question=p3 -P model=alternativo --experiment-name mibici-equipo07
 ```
 
-**4. Buscar hiperparámetros** (`tune`, P1 y P3; P2 todavía no). Corre una búsqueda con Optuna: un run padre, un run hijo por trial y, al final, el mejor trial re-entrenado como candidato (ver [Fase 2 de P1](#fase-2-búsqueda-de-hiperparámetros-selección-y-registro) y [Búsqueda con Optuna (P3)](#búsqueda-con-optuna-p3)).
+**4. Buscar hiperparámetros** (`tune`). Corre una búsqueda con Optuna: un run padre, un run hijo por trial y, al final, el mejor trial re-entrenado como candidato (ver [Fase 2 de P1](#fase-2-búsqueda-de-hiperparámetros-selección-y-registro), [Fase 2 de P2](#fase-2) y [Búsqueda con Optuna (P3)](#búsqueda-con-optuna-p3)).
 
 ```bash
 # P1
 mlflow run . -e tune -P question=p1 -P model=xgb --experiment-name mibici-equipo07
 
+# P2
+mlflow run . -e tune -P question=p2 -P model=xgb --experiment-name mibici-equipo07
+mlflow run . -e tune -P question=p2 -P model=xgb -P n_trials=30 -P timeout_min=120 --experiment-name mibici-equipo07
+
 # P3 (el modelo es `alternativo`; `fraccion_train` no aplica)
 mlflow run . -e tune -P question=p3 -P model=alternativo -P n_trials=60 --experiment-name mibici-equipo07
 ```
 
-**5. Registrar el campeón** (`register`, P1 y P3; P2 todavía no). Registra el modelo de un run como versión nueva en el Model Registry y le pone un alias (`champion` por defecto). El run se elige en la interfaz y se pasa su ID:
+**5. Registrar el campeón** (`register`). Registra el modelo de un run como versión nueva en el Model Registry y le pone un alias (`champion` por defecto). El run se elige en la interfaz y se pasa su ID:
 
 ```bash
 # P1
 mlflow run . -e register -P question=p1 -P run_id=ID_DEL_RUN --experiment-name mibici-equipo07
+
+# P2
+mlflow run . -e register -P question=p2 -P run_id=ID_DEL_RUN --experiment-name mibici-equipo07
 
 # P3 (ver Model Registry (P3)); con -P alias=challenger queda registrado sin reemplazar al campeón
 mlflow run . -e register -P question=p3 -P run_id=ID_DEL_RUN --experiment-name mibici-equipo07
@@ -175,7 +186,7 @@ mlflow run . -e register -P question=p3 -P run_id=ID_DEL_RUN --experiment-name m
 |---|---|---|
 | `ingest` | `dataset todo`, `p1-features`, `p2-features`, `p3-particionar` y `p3-features` | Ninguno: usa el rango de `config.py` |
 | `train` | `modeling/run.py`, que llama al comando de `modeling/train.py` de la pregunta y siempre registra en MLflow | Ver la tabla siguiente |
-| `tune` | `modeling/tuning_<question>.py`: búsqueda de hiperparámetros con Optuna y runs anidados, y deja el mejor como candidato | `question` (`p1` o `p3`), `model` y, opcionales, `n_trials`, `timeout_min` y `fraccion_train` (solo P1); vacío = `P1_BUSQUEDA` o `P3_BUSQUEDA` de `config.py` |
+| `tune` | `modeling/tuning_<question>.py`: búsqueda de hiperparámetros con Optuna y runs anidados, y deja el mejor como candidato | `question` (`p1`, `p2` o `p3`), `model` y, opcionales, `n_trials`, `timeout_min`, y `fraccion_train` (P1 y P2); vacío = `P1_BUSQUEDA`, `P2_BUSQUEDA`  o `P3_BUSQUEDA` de `config.py` |
 | `register` | `modeling/registro_<question>.py`: registra el modelo de un run en el Model Registry con un alias | `question`, `run_id` y `alias` (por defecto `champion`) |
 
 `tune` y `register` arman el módulo con el nombre de la pregunta, así que una pregunta nueva solo agrega su `tuning_pN.py` o `registro_pN.py`, sin tocar el `MLproject`.
@@ -187,14 +198,14 @@ Un parámetro vacío (el valor por defecto) conserva el valor de `config.py`. `q
 | Parámetro | Valores | Aplica a |
 |---|---|---|
 | `question` | `p1`, `p2`, `p3` | todos |
-| `model` | P1: `baseline`, `hgb`, `xgb`. P2: `baseline`, `hgb`. P3: `baseline`, `alternativo`. Vacío = todos los de la pregunta | todos |
-| `n_estimators` | entero (en HGB se traduce a `max_iter`) | P1 y P2 `hgb`; P1 `xgb` |
-| `learning_rate` | decimal | P1 y P2 `hgb`; P1 `xgb` |
-| `max_depth` | entero | P1 y P2 `hgb`; P1 `xgb` |
-| `min_samples_leaf` | entero | P1 y P2 `hgb` (no `xgb`) |
+| `model` | P1: `baseline`, `hgb`, `xgb`. P2: `baseline`, `hgb`, `xgb`. P3: `baseline`, `alternativo`. Vacío = todos los de la pregunta | todos |
+| `n_estimators` | entero (en HGB se traduce a `max_iter`) | P1 y P2 `hgb` y `xgb` |
+| `learning_rate` | decimal | P1 y P2 `hgb` y `xgb` |
+| `max_depth` | entero | P1 y P2 `hgb` y `xgb` |
+| `min_samples_leaf` | entero | P1 y P2 `hgb` |
 
-- Un hiperparámetro que no aplica al modelo elegido se rechaza con un error claro; no se ignora en silencio.
-- P2 entrena el baseline y el HGB en el mismo comando, así que `model` solo se valida.
+- Un hiperparámetro que no aplica al modelo elegido se rechaza con un error claro; no se ignora en silencio. Los hiperparámetros requieren `model`: sin él, se rechazan.
+- Los candidatos con Optuna (`xgb_optuna`, `hgb_optuna`) no se entrenan con `train`: salen de `tune`.
 - P3 no recibe hiperparámetros por esta vía: se ajustan con las variables `P3_*` (ver la tabla de variables de entorno).
 - Los valores que se pasan quedan registrados como parámetros del run (por ejemplo `modelo_n_estimators` en `xgb` o `modelo_max_iter` en `hgb`).
 
@@ -207,18 +218,18 @@ Un parámetro vacío (el valor por defecto) conserva el valor de `config.py`. `q
 
 ### Qué deja cada corrida
 
-- **Runs del modelo** en el experimento `mibici-equipo07`, con parámetros, métricas, etiquetas (`equipo`, `pregunta`, `commit`; en la Fase 2, P1 usa `question`, `stage_of_work`, `model_family` y `fase`), artefactos y el modelo. Sus nombres son los de la sección "MLflow del equipo" más abajo.
+- **Runs del modelo** en el experimento `mibici-equipo07`, con parámetros, métricas, etiquetas (`equipo`, `pregunta`, `commit`; en la Fase 2, se usa `question`, `stage_of_work`, `model_family` y `fase`), artefactos y el modelo. Sus nombres son los de la sección "MLflow del equipo" más abajo.
 - **Un run contenedor** del proyecto (nombre aleatorio, por ejemplo `silent-ray-926`), sin métricas: guarda los parámetros de `mlflow run`. Sale en el experimento que se pasa con `--experiment-name` (sin la opción, en `Default`).
 - **Archivos regenerados** en `reports/figures/`. Están versionados, así que conviene revisar `git status` y revertir con `git checkout -- reports/figures` lo que no se quiera commitear.
 
 ### Cargar el modelo registrado
 
-**Esquema.** Hay un modelo registrado por pregunta (`mibici-equipo07-p1-demanda` y `mibici-equipo07-p3-segmentos`). Cada `register` crea una **versión** numerada nueva, que no se modifica después, y un **alias** señala qué versión se usa:
+**Esquema.** Hay un modelo registrado por pregunta (`mibici-equipo07-p1-demanda`, `mibici-equipo07-p2-riesgo` y `mibici-equipo07-p3-segmentos`). Cada `register` crea una **versión** numerada nueva, que no se modifica después, y un **alias** señala qué versión se usa:
 
 | Alias | Significado |
 |---|---|
 | `champion` | La versión vigente: la que debe usar quien consume el modelo |
-| `challenger` | Una versión registrada que compite con la vigente sin reemplazarla (por ejemplo, el baseline de P3) |
+| `challenger` | Una versión registrada que compite con la vigente sin reemplazarla (por ejemplo, el baseline de P3 o el candidato de Optuna de 30 trials de P2) |
 
 El modelo se carga por nombre y alias, `models:/<nombre>@<alias>`; para fijar una versión exacta (auditoría o reproducir un resultado) se usa su número, `models:/<nombre>/<versión>`.
 
@@ -237,18 +248,21 @@ grupos = modelo.predict(modelo.input_example)  # o un DataFrame con las 44 varia
 - **Quien consume el modelo no cambia su código.** Promover una versión nueva es mover el alias, en una sola operación; la URI `models:/<nombre>@champion` sigue siendo la misma.
 - **Una sola forma de resolver el modelo.** Con etapas y alias a la vez, `models:/<nombre>/Production` y `models:/<nombre>@champion` podrían apuntar a versiones distintas. Aquí no se usan etapas: esa URI falla porque no hay versiones en la etapa.
 
-**Verificación** (23 de octubre de 2026, desde un directorio ajeno al repositorio, con MLflow 3.16.0 y scikit-learn 1.5.2, contra el servidor del equipo; `register` repite esta comprobación al terminar con `p1_verificar` y `p3_verificar`):
+**Verificación** (24 de octubre de 2026, desde un directorio ajeno al repositorio, con MLflow 3.16.0 y scikit-learn 1.5.2, contra el servidor del equipo; `register` repite esta comprobación al terminar con `p1_verificar`, `p2_verificar` y `p3_verificar`):
 
 | URI | Resultado |
 |---|---|
 | `models:/mibici-equipo07-p3-segmentos@champion` | Carga la versión 4 y asigna grupo a 3 estaciones |
 | `models:/mibici-equipo07-p3-segmentos@challenger` | Carga la versión 3 (el baseline) |
 | `models:/mibici-equipo07-p3-segmentos/4` | Carga; es el mismo run que `@champion` |
+| `models:/mibici-equipo07-p2-riesgo@champion`   | Carga la versión 3 y predice las 5 filas de su `input_example` (3 columnas de probabilidad) |
+| `models:/mibici-equipo07-p2-riesgo@challenger` | Carga la versión 2 (el candidato de Optuna de 30 trials) |
+| `models:/mibici-equipo07-p2-riesgo/Production` | Falla, como se espera: no hay versiones en esa etapa |
 | `models:/mibici-equipo07-p1-demanda@champion` | Carga y predice las 5 filas de su `input_example` |
 | `models:/mibici-equipo07-p3-segmentos/Production` | Falla, como se espera: no hay versiones en esa etapa |
 | `models:/mibici-equipo07-p3-segmentos@noexiste` | Falla con "alias not found" |
 
-**Requisitos para consumirlo.** El entorno debe tener las versiones de MLflow y scikit-learn de `requirements.txt`. El modelo de P1 se guarda con cloudpickle y al cargarlo importa el paquete `tc5061_proyecto_equipo07`, así que ese paquete debe estar instalado. El `champion` de P3 es un `Pipeline` estándar de scikit-learn (serializado con skops) y cargó sin importarlo; un candidato de P3 con pesos por bloque sí lo necesita, porque usa la función `p3_aplicar_pesos`.
+**Requisitos para consumirlo.** El entorno debe tener las versiones de MLflow y scikit-learn de `requirements.txt`. El modelo de P1 se guarda con cloudpickle y al cargarlo importa el paquete `tc5061_proyecto_equipo07`, así que ese paquete debe estar instalado. El `champion` de P2 es un `XGBClassifier` y carga sin el paquete; el baseline de P2 (`P2BaselineHistorico`) sí lo necesita. El `champion` de P3 es un `Pipeline` estándar de scikit-learn (serializado con skops) y cargó sin importarlo; un candidato de P3 con pesos por bloque sí lo necesita, porque usa la función `p3_aplicar_pesos`.
 
 ### Problemas frecuentes
 
@@ -275,7 +289,7 @@ Responder con ML tres preguntas operativas de MiBici, sobre una base reproducibl
 | P2 | ¿Una estación estará en riesgo de quedarse sin bicicletas o sin anclajes? | Clasificación | Equipo de rebalanceo |
 | P3 | ¿Qué grupos de estaciones comparten patrones de uso y dónde se ubican? | Clustering | Planeación urbana y expansión |
 
-> Los datos no incluyen inventario de bicicletas por estación; para P2 el riesgo se aproxima con el cambio neto de viajes (llegadas − salidas) en las próximas 2 horas frente a la capacidad de la estación.
+> Los datos no incluyen inventario de bicicletas por estación; para P2 el riesgo se aproxima con el cambio en salidas y entradas por estación en las próximas 2 horas frente a la capacidad de la estación.
 
 Detalle de cada pregunta (qué se predice, relevancia y decisión que habilita): [ML Canvas](references/ml-canvas.md).
 
@@ -361,7 +375,7 @@ Detectados en el EDA. El tratamiento aplicado a cada uno se documenta en *Limpie
 
 Los viajes incluyen `usuario_id`, género y año de nacimiento. Son datos personales aunque estén anonimizados; no se publican valores individuales en los notebooks ni en este README, solo agregados.
 
-Atendiendo la retroalimentación de la Fase 1, el notebook `0.02-dsh-exploracion-carga.ipynb` ya no muestra filas con esas columnas: sus celdas de primeras y últimas filas las excluyen (`COLUMNAS_PERSONALES`) y se retiraron las salidas que las mostraban. Las versiones anteriores del notebook siguen en el historial de Git.
+Atendiendo la retroalimentación de la Fase 1, el notebook `0.02-dsh-exploracion-carga.ipynb` ya no muestra filas con esas columnas: sus celdas de primeras y últimas filas las excluyen (`COLUMNAS_PERSONALES`) y se retiraron las salidas que las mostraban. Las versiones anteriores del notebook siguen en el historial de Git. En el caso del notebook `0.02-fat-exploracion-y-limpieza-p2.ipynb` se eliminaron las salidas de celdas con resultados de columnas de datos personales.
 
 Rango de fechas y su justificación, variables y construcción de cada objetivo, condiciones de uso publicadas por MiBici y estrategia de partición temporal: [Definición de los datos](references/definicion-datos.md).
 
@@ -596,22 +610,31 @@ Durante la búsqueda de 40 trials se hizo un commit que solo cambió documentaci
 
 ## P2: riesgo de estación (clasificación)
 
-Notebooks `0.01-fat-exploracion-inicial-p2`, `0.02-fat-exploracion-y-limpieza-p2`, `0.03-fat-feature-engineering-p2` y `0.04-fat-model-training-registration-p2`. Código: funciones `p2_*` y `P2HistoriaHastaAyer` en `features.py`, sección P2 de `modeling/train.py` y `p2_decidir_clase` en `modeling/predict.py`.
+Notebooks `0.01-fat-exploracion-inicial-p2`, `0.02-fat-exploracion-y-limpieza-p2`, `0.03-fat-feature-engineering-p2` y `0.04-fat-model-training-registration-p2`. Código: funciones `p2_*` y `P2HistoriaHastaAyer` en `features.py`, sección P2 de `modeling/train.py`, `modeling/tuning_p2.py`, `modeling/registro_p2.py` y `p2_decidir_clase` en `modeling/predict.py`.
 
 | Elemento | Decisión |
 |---|---|
 | **Qué se predice** | Para cada estación y bloque de 30 minutos, si en las próximas 2 horas estará en riesgo de quedarse **sin bicis**, **sin anclajes** o **sin riesgo** (3 clases) |
 | **Aproximación del riesgo** | Los datos no traen inventario. Se usa el cambio neto de viajes (llegadas − salidas) en la ventana futura frente a la capacidad: si alcanza o supera el 50 % de la capacidad (`P2_ALFA`) hay riesgo; si hay los dos eventos, gana el de mayor estrés relativo |
-| **Partición** | La común del proyecto; validación solo para elegir los umbrales de decisión, test solo se reporta |
+| **Partición** | La común del proyecto. El modelo se ajusta con train (`p2_fit`); validación sirve para elegir el modelo, los hiperparámetros y los umbrales de decisión; test solo se reporta |
 | **Variables** | Balance neto relativo de los últimos 1, 2, 4 y 8 bloques, salidas y entradas recientes, acumulado del día, capacidad, ubicación, hora cíclica, fin de semana y la frecuencia histórica de cada riesgo "hasta ayer" en la misma estación, tipo de día y hora |
 | **Métricas** | Average precision (PR-AUC) por clase de riesgo y de riesgo en general, log-loss, y precisión, recall y F1 por clase con el umbral de cada clase que maximiza el F1 en validación |
+| **Criterio de selección** | `valid_ap_riesgo`, fijado antes de entrenar. Test no interviene en ninguna decisión |
+
+Las clases de riesgo son raras: en test, 0.74 % de los bloques son *sin bicis* y 1.03 % *sin anclajes*. Por eso se mide con average precision y no con exactitud.
 
 | Rol | Modelo |
 |---|---|
-| Baseline | Frecuencia histórica de cada riesgo en los días previos de la misma estación, tipo de día y hora, suavizada hacia la frecuencia global |
-| Candidato | HistGradientBoostingClassifier con las variables anteriores |
+| Baseline | Frecuencia histórica de cada riesgo en los días previos de la misma estación, tipo de día y hora, suavizada hacia la frecuencia global (`P2_PESO_HISTORICO = 20` días) |
+| Candidato | `HistGradientBoostingClassifier` (`max_iter=150`, `learning_rate=0.05`, `l2_regularization=1.0`, `min_samples_leaf=1000`) |
+| Candidato | `XGBClassifier` (`multi:softprob`, `n_estimators=300`, `learning_rate=0.1`, `tree_method=hist`, `grow_policy=lossguide`, `max_leaves=60`, `max_bin=128`) |
+| Candidato | XGBoost con hiperparámetros elegidos con Optuna (ver abajo) |
 
-Resultados en test:
+Los valores por defecto de cada modelo están en `P2_PARAMETROS_HGB` y `P2_PARAMETROS_XGB` (`config.py`).
+
+### Fase 1: Resultados
+
+En la Fase 1 se compararon el baseline histórico y HistGradientBoosting (con `min_samples_leaf=500`). Resultados en test:
 
 | Modelo | AP sin bicis | AP sin anclajes | AP riesgo | Recall sin bicis | Recall sin anclajes | F1 sin bicis | F1 sin anclajes |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -619,6 +642,167 @@ Resultados en test:
 | HistGradientBoosting | 0.2318 | 0.4029 | 0.3326 | 0.4436 | 0.4467 | 0.2782 | 0.4151 |
 
 Comando: `make train-p2` (con `P2_REGISTRAR_MLFLOW=true` registra los runs `p2-baseline-historico` y `p2-hgb`). Figuras y comparación en `reports/figures/p2_*`.
+
+### Fase 1: Registro en MLflow
+
+En la fase 1 del proyecto, se llevó a cabo el siguiente proceso de registro a MLflow:
+
+- **Comando:** `P2_REGISTRAR_MLFLOW=true make train-p2` (o `python -m tc5061_proyecto_equipo07.modeling.train p2-entrenar --registrar`).
+- **Experimento:** `mibici-equipo07`, un run por modelo: `p2-baseline-historico` y `p2-hgb`.
+- **Etiquetas:** equipo, pregunta (`P2`), commit, autor y `stage` (`baseline` o `candidato`), más la descripción del run.
+- **Parámetros:** datos, etiqueta, partición, peso de la historia (`peso_historico = 20`), los hiperparámetros del modelo y los umbrales de decisión elegidos en validación (`umbral_sin_bicis`, `umbral_sin_anclajes`).
+- **Métricas:** las de test (AP por clase y de riesgo, log-loss, y precisión, recall y F1 por clase).
+- **Artefactos (`p2/`):** matriz de confusión y curva precisión-recall de test. Copia en `reports/figures/p2_*`.
+
+Runs de la entrega (commit `1584e4e`):
+
+| Run | Run ID |
+|---|---|
+| `p2-baseline-historico` | `02bbf6884a3444fab91293744e7d4aa1` |
+| `p2-hgb` | `375a4fd1bffd4fe1b6e2e77b5daf6a95` |
+
+Las métricas de test del baseline coinciden con las de la Fase 2. Las de HGB cambian un poco (AP de riesgo 0.3326 contra 0.3304) porque en la Fase 2 `P2_MIN_SAMPLES_LEAF` pasó de 500 a 1000, y se agregó un hiperparámetro de regularización L2 con el fin de evaluar una variante de este algoritmo en esta fase.
+
+### Fase 2
+
+Todo se corre con `mlflow run` desde el `MLproject` y queda en el servidor del equipo:
+
+```bash
+# Baseline, HGB y XGBoost (cada uno es un run)
+mlflow run . -e train -P question=p2 -P model=baseline --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p2 -P model=hgb --experiment-name mibici-equipo07
+mlflow run . -e train -P question=p2 -P model=xgb --experiment-name mibici-equipo07
+
+# Alternativamente, es posible ejecutar todos los entrenamientos sin Optuna en un comando
+mlflow run . -e train -P question=p2 --experiment-name mibici-equipo07
+
+# Búsqueda con Optuna (15 trials, los valores de config.py); el mejor trial queda como candidato p2-xgb-optuna
+mlflow run . -e tune -P question=p2 -P model=xgb --experiment-name mibici-equipo07
+
+# Búsqueda ampliada a 30 trials
+mlflow run . -e tune -P question=p2 -P model=xgb -P n_trials=30 -P timeout_min=120 --experiment-name mibici-equipo07
+
+# Registro del run elegido (su ID se copia de la interfaz)
+# En el caso de la fase 2, el run_id=db1ced6a7d8b4487974deb64bc82b047 fue el champion elegido
+mlflow run . -e register -P question=p2 -P run_id=<ID_DEL_RUN> --experiment-name mibici-equipo07
+```
+
+**Búsqueda con Optuna.** Se busca sobre XGBoost, el candidato con mejor `valid_ap_riesgo` con sus valores por defecto. Se usa TPE con semilla 42 (Akiba et al., 2019): cada ajuste con todo train tarda varios minutos (unos 5.5 min con XGBoost), y TPE propone cada trial a partir de los anteriores, así que necesita menos ajustes que una malla.
+
+| | Búsqueda de 15 trials | Búsqueda de 30 trials |
+|---|---|---|
+| Trials (máximo y terminados) | 15 | 30 |
+| Train por trial | Muestra al azar del 10 % | Muestra al azar del 10 % |
+| Tope de tiempo | 60 min | 120 min |
+| Mejor `valid_ap_riesgo` de un trial (con la muestra) | 0.4286 | 0.4292 |
+| Hiperparámetros | `max_leaves` (30–500, log), `learning_rate` (0.01–0.2, log), `max_delta_step` (0–10), `gamma` (0–5), `min_child_weight` (1–1000, log), `subsample` (0.6–1.0) | Los mismos |
+| Fijos | `n_estimators=300` y los demás valores de `P2_PARAMETROS_XGB` | Los mismos |
+
+Los límites están en `P2_BUSQUEDA` (`config.py`) y los rangos en `modeling/tuning_p2.py`. Los tres límites se pueden cambiar en la línea de comandos; la búsqueda de 30 trials usó `-P n_trials=30 -P timeout_min=120`. Solo se muestrea train: cada trial se califica con valid completo, y el mejor trial se vuelve a entrenar con todo train antes de evaluarse en test.
+
+Los rangos se eligieron por el desbalance de clases:
+
+- `max_delta_step` limita el paso de cada hoja, lo que estabiliza la pérdida logística cuando una clase es muy rara.
+- `min_child_weight` llega hasta 1000 para que una hoja no se ajuste a unos pocos bloques con riesgo.
+- `max_leaves` sustituye a `max_depth` porque los árboles crecen por hoja (`lossguide`).
+
+Mejores hiperparámetros de cada búsqueda (con los que se re-entrenó su candidato):
+
+| Hiperparámetro | 15 trials | 30 trials |
+|---|---:|---:|
+| `max_leaves` | 133 | 129 |
+| `learning_rate` | 0.0269 | 0.0196 |
+| `max_delta_step` | 9 | 10 |
+| `gamma` | 1.787 | 1.430 |
+| `min_child_weight` | 10.48 | 42.49 |
+| `subsample` | 0.786 | 0.671 |
+
+Las dos búsquedas llegan a una zona parecida: unas 130 hojas, una tasa de aprendizaje más baja que la de por defecto (0.1) y `max_delta_step` en el extremo alto del rango.
+
+**Estructura en MLflow:**
+
+- Run padre `p2-xgb-optuna-busqueda` (`stage_of_work=search`). Guarda los parámetros de la búsqueda (`n_trials_max`, `timeout_min`, `fraccion_train`, `n_train_busqueda`, `data_version`), el mejor resultado (`mejor_*`, `mejor_valid_ap_riesgo`), `best_child_run_id` y la tabla de trials en `tables/trials_busqueda.csv`.
+- Un run hijo `trial_N` por trial (anidado, `stage_of_work=search`), con sus hiperparámetros, las métricas de validación y los segundos de ajuste.
+- El candidato `p2-xgb-optuna` (`stage_of_work=candidate`): el mejor trial re-entrenado con todo train. Tiene los mismos artefactos que los demás candidatos y la etiqueta `busqueda_run_id`, que lo liga con su búsqueda.
+
+**Etiquetas:** las mismas que P1 (`equipo`, `question`, `stage_of_work`, `model_family`, `fase`, `commit`, `autor`, `busqueda_run_id` y `mlflow.note.content`), más `tarea=clasificacion`. Por ejemplo, `tags.question = "p2" and tags.stage_of_work = "candidate"` deja solo los candidatos de P2.
+
+**Artefactos:** cada run guarda la matriz de confusión y la curva precisión-recall de test en `plots/`, la matriz en JSON en `tables/`, el manifiesto de fuentes en `data/` y `config.py`, `MLproject` y `python_env.yaml` en `config/`. Registra además su dataset de entrada (`p2_fit`, con su digest) y el modelo con firma e `input_example`. El modelo regresa la probabilidad de cada clase (`predict_proba`). Los umbrales de decisión elegidos en validación quedan como parámetros del run (`umbral_sin_bicis`, `umbral_sin_anclajes`).
+
+#### Resultados de la Fase 2
+
+Se elige por `valid_ap_riesgo`; test solo se reporta. La mejora se mide en porcentaje respecto al baseline.
+
+| Modelo | valid AP riesgo | valid log-loss | test AP riesgo | test log-loss | Mejora en valid | Mejora en test | Segundos de entrenamiento |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **XGBoost con Optuna, 15 trials (champion v3)** | **0.4324** | **0.0743** | 0.3342 | **0.0597** | +12.5 % | +0.4 % | 550.5 |
+| XGBoost con Optuna, 30 trials (challenger v2) | 0.4314 | 0.0747 | **0.3359** | **0.0597** | +12.2 % | +0.9 % | 394.0 |
+| XGBoost | 0.4262 | 0.0745 | 0.3218 | 0.0604 | +10.9 % | −3.3 % | 327.8 |
+| HistGradientBoosting | 0.4243 | 0.0749 | 0.3304 | 0.0598 | +10.4 % | −0.8 % | 230.9 |
+| Baseline histórico | 0.3844 | 0.0802 | 0.3329 | 0.0598 | — | — | 0.0 |
+
+Por clase, en test (precisión, recall y F1 con los umbrales elegidos en validación):
+
+| Modelo | AP sin bicis | AP sin anclajes | Precisión sin bicis | Recall sin bicis | F1 sin bicis | Precisión sin anclajes | Recall sin anclajes | F1 sin anclajes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| XGBoost con Optuna, 15 trials | 0.2289 | 0.4081 | **0.2081** | 0.4295 | **0.2803** | 0.3803 | **0.4574** | 0.4153 |
+| XGBoost con Optuna, 30 trials | 0.2308 | **0.4083** | 0.2062 | **0.4364** | 0.2801 | **0.3926** | 0.4451 | **0.4172** |
+| XGBoost | 0.2169 | 0.3957 | 0.1960 | 0.4098 | 0.2652 | 0.3843 | 0.4405 | 0.4104 |
+| HistGradientBoosting | 0.2302 | 0.3996 | 0.2026 | 0.4352 | 0.2765 | 0.3850 | 0.4486 | 0.4144 |
+| Baseline histórico | **0.2453** | 0.3982 | 0.1690 | 0.4257 | 0.2419 | 0.3905 | 0.4371 | 0.4125 |
+
+Las matrices de confusión, las curvas precisión-recall y la tabla completa están en `reports/figures/p2_*` y `reports/figures/p2_comparacion_modelos.csv`. Ahí, la fila y las figuras de XGBoost con Optuna son las del campeón (15 trials); las del candidato de 30 trials están en su run de MLflow.
+
+**Análisis**
+
+- **En validación, todos los candidatos superan al baseline** por 10 a 12.5 % en AP de riesgo y bajan el log-loss. Optuna mejora a XGBoost con sus valores por defecto en 1.5 % en validación y en 3.9 % en test.
+- **En test, la ventaja desaparece.** Los dos candidatos de Optuna quedan prácticamente empatados con el baseline en AP de riesgo (0.3342 y 0.3359 contra 0.3329) y en log-loss. XGBoost y HGB con sus valores por defecto quedan por debajo.
+- **Duplicar los trials no cambia el resultado.** El mejor trial de la búsqueda de 30 apenas mejora al de 15 con la muestra (0.4292 contra 0.4286). Re-entrenado con todo train, su candidato queda ligeramente por debajo en validación (0.4314 contra 0.4324) y ligeramente por arriba en test (0.3359 contra 0.3342). Las diferencias son de una milésima, así que en la práctica los dos candidatos son equivalentes, y la búsqueda de 15 trials ya había encontrado la zona buena del espacio.
+- **Por clase:**
+  - En *sin anclajes*, el candidato supera al baseline en AP (+2.5 %), recall y F1.
+  - En *sin bicis*, el baseline tiene la mejor AP (0.2453 contra 0.2289, −6.7 %).
+  - Aun así, con los umbrales elegidos en validación, el candidato tiene mejor precisión y F1 en *sin bicis* (0.2803 contra 0.2419, +15.9 %) con un recall parecido. Ordena peor los bloques de riesgo en general, pero en el punto de operación elegido genera menos falsas alarmas.
+- **Todos los modelos pierden de validación a test**, pero los candidatos pierden más: el baseline baja 13 % en AP de riesgo y los candidatos, entre 22 y 25 %. Una explicación posible es que el baseline se recalcula cada día con la historia "hasta ayer", así que se adapta solo a cambios recientes de la red. Los candidatos, en cambio, aprendieron la relación entre variables y riesgo con datos hasta septiembre de 2024 y no se re-entrenan; parte de esa adaptación les llega por las variables `hist_sin_bicis` y `hist_sin_anclajes`. Que la brecha sea parecida en los tres candidatos apunta a un cambio entre periodos más que a un sobreajuste de la búsqueda.
+- **Costo:** los candidatos de Optuna tardan entre 6.5 y 9 min en entrenar con todo train, contra 0 s del baseline, que solo calcula frecuencias.
+
+**Selección del campeón.** Se promueve **XGBoost con Optuna de 15 trials** porque es el que indica el criterio fijado de antemano (`valid_ap_riesgo`). El candidato de 30 trials es algo mejor en test, pero test no se usa para elegir, así que el criterio no se cambió después de verlo. Queda como `challenger` porque es la siguiente mejor opción en validación y, por lo visto en test, es equivalente al campeón.
+
+El resultado de test se reporta tal como salió: en AP de riesgo, el campeón no mejora de forma apreciable al baseline, y en *sin bicis* lo empeora. Su ventaja práctica está en los umbrales de operación: con un recall similar, tiene mejor precisión y F1 en las dos clases de riesgo.
+
+**Model Registry** (MLflow, s.f.-a). El modelo registrado es `mibici-equipo07-p2-riesgo` (`P2_MODELO_REGISTRADO` en `config.py`) y tiene una descripción de qué predice y qué regresa. Cada versión apunta al modelo de un run. En su descripción lleva las métricas (`valid_ap_riesgo`, `valid_log_loss`, `test_ap_riesgo`, `test_log_loss`, segundos de entrenamiento). En sus etiquetas lleva el linaje: `question`, `fase`, `commit`, `data_version`, `source_run_id`, `valid_ap_riesgo` y, si viene de una búsqueda, `busqueda_run_id`. Se usa el esquema de aliases, igual que en P1 y P3: `champion` señala la versión en producción y `challenger` la siguiente opción.
+
+| Versión | Run de origen | Commit | `valid_ap_riesgo` | Alias |
+|---|---|---|---:|---|
+| 3 | `p2-xgb-optuna`, 15 trials (`db1ced6a7d8b4487974deb64bc82b047`) | `fb13fb2` | 0.4324 | `champion` |
+| 2 | `p2-xgb-optuna`, 30 trials (`e5aee1b4a34446d4bc709defe9cf359f`) | `e9602e3` | 0.4314 | `challenger` |
+| 1 | `p2-xgb-optuna`, 15 trials (`db1ced6a7d8b4487974deb64bc82b047`) | `fb13fb2` | 0.4324 | — (queda en el historial) |
+
+Las versiones 1 y 3 apuntan al mismo run. La versión 1 anteriormente era el champion. El registro de la versión 3 únicamente se ejecutó con el fin de evaluar el comando de `register` al volver a registrar otro champion: tal como es deseado, solo la versión 3 conservó el alias, y la versión 1 lo perdió. Por lo tanto, para promover otra versión basta con registrar su run, y el alias se mueve.
+
+El modelo champion se carga con el siguiente comando:
+
+```python
+import mlflow
+
+modelo = mlflow.pyfunc.load_model("models:/mibici-equipo07-p2-riesgo@champion")
+probabilidades = modelo.predict(x)  # columnas: sin_riesgo, sin_bicis, sin_anclajes
+```
+
+La clase final se decide con `p2_decidir_clase` (`modeling/predict.py`) y los umbrales del run de origen (`umbral_sin_bicis` y `umbral_sin_anclajes`).
+
+Runs de la Fase 2:
+
+| Run | Run ID | Commit |
+|---|---|---|
+| `p2-baseline-historico` | `a1afcafb1cb94f09ac1a7ce9b550fe67` | `fb13fb2` |
+| `p2-hgb` | `311cb1fb14a54f79aecc0b670558d4e9` | `fb13fb2` |
+| `p2-xgb` | `bd753a1fdf7245a1b3dab8a089a3f453` | `fb13fb2` |
+| `p2-xgb-optuna-busqueda` (15 trials) | `9e7815b9b0b24113bf8721aa621ec725` | `fb13fb2` |
+| `p2-xgb-optuna` (15 trials) | `db1ced6a7d8b4487974deb64bc82b047` | `fb13fb2` |
+| `p2-xgb-optuna-busqueda` (30 trials) | `155a8f8c0d8140ef98aed8a805c1d1b9` | `e9602e3` |
+| `p2-xgb-optuna` (30 trials) | `e5aee1b4a34446d4bc709defe9cf359f` | `e9602e3` |
+
+Las dos búsquedas y sus candidatos tienen el mismo nombre de run; se distinguen por el ID, por `n_trials_max` en el run padre y por la etiqueta `busqueda_run_id` en el candidato. El run de Optuna con 30 trials difiere de los otros runs por solo un commit: este commit fue una carga de las gráficas del problema P2 guardados en /reports, y no representa cambios en código. El proyecto en ambos commits debe dar exactamente los mismos resultados.
 
 ## P3: clustering de estaciones
 
@@ -764,7 +948,7 @@ Estado actual del Registry (`mibici-equipo07-p3-segmentos`):
 │   ├── tiempos-p1.md         <- Tiempos medidos de los modelos de P1 y límites de la búsqueda
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/figures/   <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
-├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p3, registro_p1, registro_p3), plots
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3), plots
 ├── tests/             <- Pruebas (pytest) del módulo
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
@@ -795,9 +979,9 @@ Estado actual del Registry (`mibici-equipo07-p3-segmentos`):
 |---|---|
 | Un experimento por proyecto y runs con nombre descriptivo | Experimento `mibici-equipo07` (`EXPERIMENTO_MLFLOW` en `config.py`); cada run lleva el nombre del enfoque (por ejemplo, `p1-xgb-poisson`), nunca el nombre aleatorio |
 | Registrar lo necesario para reproducir el run | Parámetros con el rango de fechas, `data_version` (hash del manifiesto), semilla, partición e hiperparámetros del modelo |
-| Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run; en la Fase 2, P1 y P3 usan `question`, `stage_of_work` y `fase` |
+| Ligar el run con su código y su pregunta | Etiquetas `commit`, `pregunta` (`P1`, `P2`, `P3`) y `equipo` en cada run; en la Fase 2, para cada pregunta se usan `question`, `stage_of_work` y `fase` |
 | Búsqueda de hiperparámetros trazable | Un run padre por búsqueda y un run hijo por trial (Optuna con semilla fija); el candidato final apunta a su búsqueda con `busqueda_run_id` |
-| Un modelo oficial por pregunta (hoy P1 y P3) | Model Registry con alias `champion` (y `challenger`), no con etapas, que MLflow dejó obsoletas (ver [Cargar el modelo registrado](#cargar-el-modelo-registrado)); cada versión lleva en sus etiquetas el commit, `data_version` y el run de origen |
+| Un modelo oficial por pregunta | Model Registry con alias `champion` (y `challenger`), no con etapas, que MLflow dejó obsoletas (ver [Cargar el modelo registrado](#cargar-el-modelo-registrado)); cada versión lleva en sus etiquetas el commit, `data_version` y el run de origen |
 | Métricas con el conjunto en el nombre | P1 y P2: `valid_mae`, `test_mae`, `test_ap_riesgo`, etc. P3: `train_silueta`, `valid_ari`, etc. (P3 no usa test) |
 | Sin credenciales ni datos personales en MLflow | La URL del servidor vive en `.env` (no versionado) o en el secret de GitHub; `usuario_id`, género y año de nacimiento no entran a ninguna tabla de modelado |
 | Elegir el modelo sin usar test | La selección se hace con el conjunto de validación; test solo se reporta |
@@ -844,7 +1028,7 @@ Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programac
 | Integrante | Herramienta | Para qué se usó |
 |---|---|---|
 | Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
-| Fernando Arreola Treviño (P2) | Claude Code, con el modelo Claude Sonnet 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks |
+| Fernando Arreola Treviño (P2) | Claude Code, con los modelos Claude Sonnet 5.5 y Claude Opus 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks. Emn la fase 2: etiquetas y artefactos de los runs de P2, búsqueda con Optuna, registro en el Model Registry y la documentación de esta fase |
 | Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P3, métricas con el conjunto en el nombre, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
 
 En las tres preguntas, la formulación del problema, la elección de variables, modelos y métricas, los criterios de aceptación, la ejecución con los datos reales, la validación de los resultados y los commits y Pull Requests son de cada integrante, que revisó y es responsable del contenido. Por acuerdo del equipo, esta declaración vive aquí y no en los mensajes de commit.
