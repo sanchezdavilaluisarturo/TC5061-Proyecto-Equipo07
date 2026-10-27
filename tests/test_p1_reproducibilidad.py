@@ -21,6 +21,17 @@ MODELOS = [
 ]
 
 
+@pytest.fixture
+def mlflow_temporal(tmp_path, monkeypatch):
+    """MLflow en una base SQLite temporal; al terminar regresa la URI que había."""
+    monkeypatch.chdir(tmp_path)
+    anterior = mlflow.get_tracking_uri()
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path / 'mlflow.db'}")
+    mlflow.set_experiment("p1-reproducibilidad")
+    yield
+    mlflow.set_tracking_uri(anterior)
+
+
 def entrenar_y_evaluar(clave, hiperparametros, conjuntos, semilla=cfg.SEMILLA):
     """Entrena con train y regresa las métricas y predicciones en valid."""
     modelo = p1_construir_modelo(clave, semilla=semilla, hiperparametros=hiperparametros)
@@ -46,3 +57,21 @@ def test_p1_otra_semilla_cambia_el_modelo_con_muestreo():
         "xgb_optuna", HIPERPARAMETROS_CON_AZAR, conjuntos, semilla=7
     )
     assert not np.array_equal(prediccion_42, prediccion_7)
+
+
+def buscar(clave: str, conjuntos, n_trials: int = 3) -> optuna.Study:
+    """Corre la búsqueda de P1 dentro de un run padre, como lo hace `tuning_p1.buscar`."""
+    with mlflow.start_run(run_name=f"p1-{clave}-optuna-busqueda"):
+        return tuning_p1.p1_buscar(clave, conjuntos["train"], conjuntos["valid"], n_trials, 0)
+
+
+@pytest.mark.parametrize("clave", ["xgb", "hgb"])
+def test_p1_busqueda_con_optuna_es_reproducible(clave, mlflow_temporal):
+    conjuntos = conjuntos_sinteticos()
+    estudio_1 = buscar(clave, conjuntos)
+    estudio_2 = buscar(clave, conjuntos)
+    # Mismos hiperparámetros propuestos en cada trial y mismo valid_mae
+    assert [t.params for t in estudio_1.trials] == [t.params for t in estudio_2.trials]
+    assert [t.value for t in estudio_1.trials] == [t.value for t in estudio_2.trials]
+    assert estudio_1.best_trial.number == estudio_2.best_trial.number
+    assert estudio_1.best_params == estudio_2.best_params
