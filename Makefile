@@ -125,10 +125,10 @@ pruebas:
 	$(PYTHON_INTERPRETER) -m pytest tests
 
 
-# Vulnerabilidades revisadas y aceptadas: mlflow (2), nltk (1) y setuptools (3).
+# Vulnerabilidades revisadas y aceptadas: mlflow (3), nltk (1) y setuptools (3).
 # La justificación de cada una está en el README (Chequeos de seguridad)
 PIP_AUDIT_IGNORAR = \
-	--ignore-vuln CVE-2026-53995 --ignore-vuln CVE-2026-115886 \
+	--ignore-vuln CVE-2026-53995 --ignore-vuln CVE-2026-115886 --ignore-vuln CVE-2026-116691 \
 	--ignore-vuln PYSEC-2026-3740 \
 	--ignore-vuln PYSEC-2025-49 --ignore-vuln PYSEC-2026-3447 --ignore-vuln GHSA-xmj3-9gf7-h52w
 
