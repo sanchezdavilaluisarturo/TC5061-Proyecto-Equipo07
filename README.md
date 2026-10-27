@@ -1028,6 +1028,26 @@ El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el 
 3. `make seguridad`, que falla si bandit encuentra algo o si aparece una vulnerabilidad no aceptada.
 4. Sube `reports/seguridad/` como artefacto `reportes-seguridad`, descargable desde la pestaña *Actions* del PR.
 
+### Evidencias
+
+| Evidencia | Dónde |
+|---|---|
+| Reporte de bandit | [`reports/seguridad/bandit.json`](reports/seguridad/bandit.json) |
+| Reporte de pip-audit | [`reports/seguridad/pip_audit.json`](reports/seguridad/pip_audit.json) |
+| Reportes de DeepChecks por pregunta | `reports/validacion/` (ver [Hallazgos por pregunta](#hallazgos-por-pregunta)) |
+
+Ejecución de `make pruebas`:
+
+![Ejecución de make pruebas: 109 pruebas recolectadas y avance por archivo](reports/evidencias/make_pruebas_01.png)
+
+![Ejecución de make pruebas: 109 passed](reports/evidencias/make_pruebas_02.png)
+
+Ejecución de `make seguridad`:
+
+![Ejecución de make seguridad: reporte JSON de bandit](reports/evidencias/make_seguridad_01.png)
+
+![Ejecución de make seguridad: resultado de bandit y de pip-audit](reports/evidencias/make_seguridad_02.png)
+
 ## Estructura de carpetas
 
 ```
