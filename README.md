@@ -982,6 +982,52 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 | P2 | _Pendiente (rama `testing/p2`)_ | | |
 | P3 | _Pendiente (rama `testing/p3`)_ | | |
 
+### Chequeos de seguridad
+
+| Revisión | Herramienta o práctica | Resultado |
+|---|---|---|
+| Código | bandit 1.9.4 sobre `tc5061_proyecto_equipo07/` | Sin hallazgos; 7 avisos de severidad baja justificados con `# nosec` |
+| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 4 paquetes actualizados y 6 vulnerabilidades aceptadas |
+| Datos sensibles | `.gitignore`, `.env` y secret de GitHub | No se versionan credenciales, datos ni modelos |
+
+**bandit** analiza el código sin ejecutarlo y busca patrones inseguros (contraseñas en el código, `eval`, `pickle`, `subprocess` con shell, etc.). No se corre sobre `tests/` porque marca cada `assert`, que es como PyTest verifica los resultados. Los 7 avisos son las llamadas a `git rev-parse` de `p1_commit_actual`, `p2_commit_actual` y `p3_commit_actual` (B404, B603 y B607), que etiquetan cada run con su commit: los argumentos son fijos, no se usa shell y no entra ningún dato del usuario. Al correrlo, bandit imprime `nosec encountered ... but no failed test` en esas líneas; es un aviso conocido de bandit con llamadas de varias líneas y el resultado sigue siendo `No issues identified`.
+
+**pip-audit** compara las versiones de `requirements.txt` con las bases públicas de vulnerabilidades (PyPI, OSV y GitHub). La primera ejecución encontró 55 en 8 paquetes. Se actualizó lo que no afecta al código existente (la suite completa pasa con las versiones nuevas):
+
+| Paquete | Versión anterior | Versión nueva | Vulnerabilidades corregidas |
+|---|---|---|---:|
+| `pillow` (vía `matplotlib`) | 12.3.0 | 13.0.0 | 37 |
+| `filelock` | 4.1.1 | 4.2.1 | 6 |
+| `certifi` | 2026.7.22 | 2026.10.19 | 2 |
+| `gitpython` (vía `mlflow`) | 3.2.0 | 3.2.1 | 1 |
+
+Las restantes se revisaron y se aceptan; están en `PIP_AUDIT_IGNORAR` del `Makefile`, así que cualquier vulnerabilidad nueva hace fallar `make seguridad`:
+
+| Paquete | Vulnerabilidad | Por qué se acepta |
+|---|---|---|
+| `mlflow` 3.16.0 | CVE-2026-53995, CVE-2026-115886 | Afectan al servidor de tracking (endpoints sin autenticación). El repositorio usa MLflow como cliente y `make mlflow-local` solo escucha en `127.0.0.1`; subir a 3.17 cambiaría la versión con la que se registraron los runs y modelos de las fases anteriores |
+| `nltk` 3.10.3 | PYSEC-2026-3740 | Llega por `evidently`, el proyecto no la usa y no existe versión corregida |
+| `setuptools` 70.3.0 | PYSEC-2025-49, PYSEC-2026-3447, GHSA-xmj3-9gf7-h52w | Aplican al descargar, construir o instalar paquetes de fuentes no confiables, que el proyecto no hace. Se fijó en `<71` desde el entorno original por compatibilidad |
+
+pip-audit reporta "8 ignored" porque cuenta dos veces las dos primeras de `setuptools`.
+
+**Datos sensibles:**
+
+- `.gitignore` excluye `.env`, `data/`, `models/*`, `*.pkl`, `*.joblib`, `mlruns/`, `mlartifacts/` y `mlflow.db`.
+- `.env.example` solo trae la URL del servidor de MLflow; el `.env` real no se versiona y se carga con `python-dotenv`.
+- En GitHub Actions la URL llega como secret del repositorio (`MLFLOW_TRACKING_URI`) y no se muestra en los logs.
+- Las columnas personales de los viajes no entran a ninguna tabla de modelado (ver [Privacidad](#privacidad)).
+- Se revisó el historial de todas las ramas buscando contraseñas, tokens, llaves y archivos `.env`, `.pem` o `.db`, sin hallazgos.
+
+### Integración continua
+
+El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el módulo, las pruebas, `requirements.txt`, el `Makefile` o los workflows:
+
+1. `ruff format --check` y `ruff check`.
+2. `pytest tests -q`.
+3. `make seguridad`, que falla si bandit encuentra algo o si aparece una vulnerabilidad no aceptada.
+4. Sube `reports/seguridad/` como artefacto `reportes-seguridad`, descargable desde la pestaña *Actions* del PR.
+
 ## Estructura de carpetas
 
 ```
