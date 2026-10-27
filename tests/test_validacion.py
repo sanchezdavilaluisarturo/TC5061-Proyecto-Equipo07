@@ -33,6 +33,15 @@ def validar(tabla: pd.DataFrame, carpeta, **opciones) -> pd.DataFrame:
     )
 
 
+def resultado_de(resumen: pd.DataFrame, chequeo: str) -> str:
+    return resumen.loc[resumen["chequeo"] == chequeo, "resultado"].iloc[0]
+
+
+def detectado(resumen: pd.DataFrame, chequeo: str) -> bool:
+    """DeepChecks reporta algunos problemas como WARN y otros como FAIL; ambos cuentan."""
+    return resultado_de(resumen, chequeo) in ("WARN", "FAIL")
+
+
 def test_tabla_limpia_pasa_y_deja_los_reportes(tmp_path):
     resumen = validar(tabla_sintetica(), tmp_path)
     assert (resumen.loc[resumen["critico"], "resultado"] == "PASS").all()
@@ -48,3 +57,35 @@ def test_fechas_de_prueba_dentro_de_train_hacen_fallar(tmp_path):
         validar(tabla, tmp_path)
     # el reporte queda escrito aunque falle, para documentar el problema
     assert (tmp_path / "prueba_resumen.csv").exists()
+
+
+def test_detecta_duplicados_como_hallazgo(tmp_path):
+    tabla = tabla_sintetica()
+    tabla = pd.concat([tabla, tabla.iloc[:20]], ignore_index=True)
+    resumen = validar(tabla, tmp_path)
+    assert detectado(resumen, "Data Duplicates")
+    assert not resumen.loc[resumen["chequeo"] == "Data Duplicates", "critico"].iloc[0]
+
+
+def test_detecta_nulos(tmp_path):
+    tabla = tabla_sintetica()
+    tabla.loc[:9, "rezago"] = np.nan
+    assert detectado(validar(tabla, tmp_path), "PercentOfNulls")
+
+
+def test_umbral_de_nulos_permite_los_esperados(tmp_path):
+    tabla = tabla_sintetica()
+    tabla.loc[:9, "rezago"] = np.nan  # 2.5 % de la columna, como los primeros días de rezago
+    assert resultado_de(validar(tabla, tmp_path, umbral_nulos=0.05), "PercentOfNulls") == "PASS"
+
+
+def test_detecta_categoria_nueva_en_prueba(tmp_path):
+    tabla = tabla_sintetica()
+    tabla.loc[N_TRAIN:, "zona"] = "TLQ"
+    assert detectado(validar(tabla, tmp_path), "New Category Train Test")
+
+
+def test_un_chequeo_declarado_critico_detiene_la_ejecucion(tmp_path):
+    tabla = pd.concat([tabla_sintetica(), tabla_sintetica().iloc[:20]], ignore_index=True)
+    with pytest.raises(ValueError, match="Data Duplicates"):
+        validar(tabla, tmp_path, criticos=("Data Duplicates",))
