@@ -89,3 +89,21 @@ def test_un_chequeo_declarado_critico_detiene_la_ejecucion(tmp_path):
     tabla = pd.concat([tabla_sintetica(), tabla_sintetica().iloc[:20]], ignore_index=True)
     with pytest.raises(ValueError, match="Data Duplicates"):
         validar(tabla, tmp_path, criticos=("Data Duplicates",))
+
+
+def test_falla_con_mensaje_claro_si_falta_una_columna(tmp_path):
+    with pytest.raises(ValueError, match="Faltan columnas"):
+        validar(tabla_sintetica().drop(columns="zona"), tmp_path)
+
+
+def test_falla_si_un_conjunto_no_tiene_filas(tmp_path):
+    with pytest.raises(ValueError, match="valid"):
+        validar(tabla_sintetica(), tmp_path, conjuntos=("train", "valid"))
+
+
+def test_muestrear_es_reproducible_y_respeta_tablas_chicas():
+    tabla = tabla_sintetica()
+    assert validacion.muestrear(tabla, 50).equals(validacion.muestrear(tabla, 50))
+    assert len(validacion.muestrear(tabla, 50)) == 50
+    assert validacion.muestrear(tabla, None) is tabla
+    assert validacion.muestrear(tabla, 10_000) is tabla
