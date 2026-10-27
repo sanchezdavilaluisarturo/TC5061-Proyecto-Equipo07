@@ -52,3 +52,16 @@ def test_p1_entre_conjuntos_quedan_al_menos_24_horas(particion_de_las_horas):
     rango = particion_de_las_horas.groupby("conjunto", observed=True)["hora"].agg(["min", "max"])
     assert rango.loc["valid", "min"] - rango.loc["train", "max"] > BRECHA
     assert rango.loc["test", "min"] - rango.loc["valid", "max"] > BRECHA
+
+
+def test_p1_particion_conserva_el_indice_y_las_cuatro_categorias():
+    horas = pd.Series([FRONTERA_VALID - 2 * BRECHA, FRONTERA_TEST], index=[10, 20])
+    resultado = features.p1_asignar_particion(horas)
+    assert list(resultado.index) == [10, 20]
+    assert list(resultado.cat.categories) == ["train", "valid", "test", "brecha"]
+
+
+def test_p1_particion_de_una_serie_vacia_regresa_vacia():
+    resultado = features.p1_asignar_particion(pd.Series([], dtype="datetime64[ns]"))
+    assert resultado.empty
+    assert list(resultado.cat.categories) == ["train", "valid", "test", "brecha"]
