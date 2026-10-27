@@ -1,6 +1,6 @@
 # Las tres preguntas del proyecto (P1, P2 y P3) en una sola acción.
 #
-# - En cada PR que toca el módulo o las pruebas corre la calidad (ruff y pytest, sin datos).
+# - En cada PR que toca el módulo o las pruebas corre la calidad (ruff, pytest y seguridad, sin datos).
 # - A mano (Run workflow) corre la calidad una vez y luego llama, en paralelo, a la acción de
 #   cada pregunta: p1.yml, p2.yml y p3.yml. Cada una también se puede correr sola.
 #
@@ -79,6 +79,15 @@ jobs:
       - name: Pruebas
         # Corre todo `tests/`: P1 y P2 solo agregan sus archivos (test_p1_*.py, test_p2_*.py)
         run: pytest tests -q
+      - name: Seguridad (bandit sobre el código y pip-audit sobre requirements.txt)
+        run: make seguridad
+      - name: Subir reportes de seguridad
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportes-seguridad
+          path: reports/seguridad/
+          if-no-files-found: warn
 
   # Las acciones de cada pregunta solo corren a mano, no en los PR
   p1:
