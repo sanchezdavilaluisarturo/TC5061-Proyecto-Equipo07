@@ -36,3 +36,13 @@ def test_p1_misma_semilla_da_las_mismas_predicciones_y_metricas(clave, hiperpara
     metricas_2, prediccion_2 = entrenar_y_evaluar(clave, hiperparametros, conjuntos)
     np.testing.assert_array_equal(prediccion_1, prediccion_2)
     assert metricas_1 == metricas_2
+
+
+def test_p1_otra_semilla_cambia_el_modelo_con_muestreo():
+    """Contraste: si la semilla no llegara al modelo, la prueba anterior pasaría sin probar nada."""
+    conjuntos = conjuntos_sinteticos()
+    _, prediccion_42 = entrenar_y_evaluar("xgb_optuna", HIPERPARAMETROS_CON_AZAR, conjuntos)
+    _, prediccion_7 = entrenar_y_evaluar(
+        "xgb_optuna", HIPERPARAMETROS_CON_AZAR, conjuntos, semilla=7
+    )
+    assert not np.array_equal(prediccion_42, prediccion_7)
