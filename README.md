@@ -919,6 +919,69 @@ Estado actual del Registry (`mibici-equipo07-p3-segmentos`):
 
 > **Al crear un experimento nuevo en este servidor, usar `artifact_location="mlflow-artifacts:/<nombre>"`.** Sin esa opción el servidor asigna una ruta local suya (`/home/ec2-user/mlflow/artifacts/...`) y la subida de artefactos falla con `Errno 45`. El servidor es MLflow 3.16.1 y el `requirements.txt` fija el cliente en 3.16.0.
 
+## Pruebas y chequeos de calidad
+
+Las pruebas, la validación de datos y los chequeos de seguridad corren con un comando cada uno y no necesitan el servidor de MLflow. Las pruebas no descargan datos; la validación de cada pregunta sí usa su tabla de `data/processed/`.
+
+| Comando | Qué corre | Qué deja |
+|---|---|---|
+| `make pruebas` | PyTest sobre `tests/` (equivale a `pytest tests`) | Resultado en la terminal |
+| `make seguridad` | bandit sobre el código y pip-audit sobre `requirements.txt` | `reports/seguridad/bandit.json` y `pip_audit.json` |
+| `make validar-p1`, `validar-p2`, `validar-p3` | DeepChecks sobre la tabla de modelado de cada pregunta (cada una agrega su target en su rama) | Reportes HTML y resumen CSV en `reports/validacion/` |
+
+### Organización de las pruebas
+
+Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Las de P1 y P3 siguen el prefijo de la pregunta (`test_p1_*.py`); las comunes no llevan prefijo.
+
+| Archivo | Qué prueba | Pruebas |
+|---|---|---:|
+| `test_validacion.py` | Módulo común de validación con DeepChecks | 10 |
+| `test_config.py` | Variables de entorno de `config.py` y convención de prefijos | 15 |
+| `test_run.py` | Despachador del MLflow Project (`modeling/run.py`) | 9 |
+| `test_p1_features.py` | Target y variables de P1 | 5 |
+| `test_p1_modelado.py` | Transformer de nivel, baseline, métricas y modelos de P1 | 14 |
+| `test_tuning_p1.py` | Búsqueda de P1 con Optuna | 7 |
+| `test_registro_p1.py` | Registro de P1 en el Model Registry | 4 |
+| `test_dataset.py` | Carga, partición y validación de P3 (`dataset.py`) | 10 |
+| `test_features.py` | Features de P3 | 5 |
+| `test_modeling.py` | Entrenamiento y predicción de P3 | 17 |
+| `test_tuning_p3.py` | Búsqueda de P3 con Optuna | 6 |
+| `test_registro_p3.py` | Registro de P3 en el Model Registry | 7 |
+
+### Validación de datos con DeepChecks
+
+`tc5061_proyecto_equipo07/validacion.py` es común a las tres preguntas: cada una llama a `validar_tabla` con su tabla de modelado, su columna de partición, su target, sus variables categóricas y su columna de fecha. Corre dos suites:
+
+| Suite | Sobre qué | Chequeos |
+|---|---|---|
+| Integridad | Toda la tabla | Nulos, nulos mixtos, duplicados, tipos mixtos, caracteres especiales, columnas de un solo valor y etiquetas en conflicto |
+| Train-test | Un par de conjuntos (por defecto `train` y `test`) | Leakage temporal (fechas solapadas y filas repetidas), categorías nuevas en prueba, drift de las features y del target |
+
+Las condiciones se dividen en dos tipos:
+
+- **Críticas:** indican un bug del pipeline y detienen la ejecución con error si no pasan. Por defecto son las dos de leakage temporal, porque con partición temporal ninguna fecha de prueba puede estar en entrenamiento. Cada pregunta puede agregar las suyas.
+- **Hallazgos:** describen una característica real de los datos (drift esperado, nulos de los rezagos) y se documentan sin detener nada.
+
+Los reportes se escriben siempre, aunque falle una condición crítica, para que quede evidencia del problema. En las tablas de millones de filas se usa una muestra con la semilla del proyecto. `tests/test_validacion.py` comprueba con tablas sintéticas que se detecten duplicados, nulos, categorías nuevas y fechas solapadas.
+
+#### Reproducibilidad del entrenamiento
+
+Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMILLA = 42` en `config.py`) y verifica que las predicciones y métricas coincidan.
+
+| Pregunta | Prueba |
+|---|---|
+| P1 | _Pendiente (rama `testing/p1`)_ |
+| P2 | _Pendiente (rama `testing/p2`)_ |
+| P3 | _Pendiente (rama `testing/p3`)_ |
+
+#### Hallazgos por pregunta
+
+| Pregunta | Tabla validada | Hallazgos | Reportes |
+|---|---|---|---|
+| P1 | _Pendiente (rama `testing/p1`)_ | | |
+| P2 | _Pendiente (rama `testing/p2`)_ | | |
+| P3 | _Pendiente (rama `testing/p3`)_ | | |
+
 ## Estructura de carpetas
 
 ```
