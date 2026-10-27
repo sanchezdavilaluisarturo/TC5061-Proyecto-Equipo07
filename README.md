@@ -67,9 +67,9 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 | `P3_EXPERIMENTO` | P3: experimento de MLflow | `mibici-equipo07` (el de `config.py`) |
 | `P3_SEMILLA`, `P3_K_MINIMO`, `P3_K_MAXIMO`, `P3_MIN_SALIDAS_TRAIN`, `P3_MIN_SALIDAS_VALID`, `P3_COMPONENTES`, `P3_SEMILLAS_BUSQUEDA` | Parámetros del modelo de P3 | `42`, `2`, `10`, `1000`, `300`, `3,4,5,6,8,10`, `5` |
 
-**Pruebas:** `pytest tests`.
+**Pruebas y chequeos:** `make pruebas` y `make seguridad`; ver [Pruebas y chequeos de calidad](#pruebas-y-chequeos-de-calidad).
 
-**GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff` y `pytest`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
+**GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff`, `pytest` y `make seguridad`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
 **MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`). En la Fase 2, P2 agrega la búsqueda `p2_xgb_optuna_busqueda` (con sus runs `trial_N`), los candidatos `p2-xgb` y `p2-xgb-optuna`, y el modelo registrado `mibici-equipo07-p2-riesgo` (alias `champion` y `challenger`).
 
@@ -430,7 +430,7 @@ Reglas aplicadas por `dataset.limpiar` y documentadas en `0.03-lasd-limpieza-p3`
 | Modelado | scikit-learn y XGBoost (`modeling/`) | Un baseline sencillo por pregunta antes de los candidatos, para medir cuánto aporta cada modelo | Huyen (2022) |
 | Experimentos | MLflow Tracking, servidor del equipo (https://mlflow.equipo7mlops.com) | Parámetros, métricas, etiquetas (equipo, pregunta, commit), artefactos y modelo en un solo lugar compartido | Treveil et al. (2020); MLflow (s.f.-c) |
 | Código y colaboración | Cookiecutter Data Science + Git/GitHub (ramas, PR y revisión) | Estructura estándar y cambios revisados antes de integrarse | Wilson (2022) |
-| Automatización | Makefile + GitHub Actions | Calidad (ruff y pytest) en cada PR y entrenamiento de cada pregunta con un comando | Treveil et al. (2020) |
+| Automatización | Makefile + GitHub Actions | Calidad (ruff, pytest y seguridad) en cada PR y entrenamiento de cada pregunta con un comando | Treveil et al. (2020) |
 
 Etapas por pregunta (limpieza, agregaciones, features, entrenamiento y evaluación): [Diseño del pipeline de ML](references/pipeline-ml.md).
 
@@ -1078,9 +1078,13 @@ Ejecución de `make seguridad`:
 │   ├── fuentes-datos.csv     <- URLs, registros y SHA-256 de los archivos del portal
 │   ├── tiempos-p1.md         <- Tiempos medidos de los modelos de P1 y límites de la búsqueda
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
-├── reports/figures/   <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
-├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3), plots
-├── tests/             <- Pruebas (pytest) del módulo
+├── reports/
+│   ├── figures/       <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
+│   ├── validacion/    <- Reportes de DeepChecks de cada pregunta (HTML y resumen CSV)
+│   ├── seguridad/     <- Reportes de bandit y pip-audit (JSON)
+│   └── evidencias/    <- Capturas de la ejecución de pruebas y chequeos
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3), plots, validacion
+├── tests/             <- Pruebas (pytest) del módulo y de la validación con DeepChecks
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
 │   ├── p1.yml                         <- Acción de P1: entrenamiento y registro en MLflow
@@ -1099,9 +1103,10 @@ Ejecución de `make seguridad`:
 - `main` está protegida: todo cambio entra por Pull Request con al menos una revisión aprobada.
 - `EDA` es la rama de integración del equipo. Cada integrante trabaja en su rama (`feat/<tema>`, `fix/<tema>`, `docs/<tema>`) creada desde `EDA`, abre un PR hacia `EDA` y, al cerrar cada entrega, se abre un PR `EDA → main`.
 - En la Fase 2 la rama de integración es `mlflow_run` (creada desde `main`): las ramas de cada pregunta (`tuning/p1`, `tuning/p2`, `tuning/p3`) salen de ella y vuelven por PR.
+- En la entrega de pruebas y seguridad la rama de integración es `calidad_pruebas` (creada desde `main`), que trae el módulo de validación y los chequeos de seguridad: las ramas de cada pregunta (`testing/p1`, `testing/p2`, `testing/p3`) salen de ella y vuelven por PR, y `calidad_pruebas` entra a `main` por PR.
 - Commits con [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/) en español, sin alcance entre paréntesis y mencionando la pregunta: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `build:`, `ci:`, `style:`, `chore:`.
 - Cada integrante abre al menos un PR y revisa al menos uno de otro integrante.
-- En cada PR, GitHub Actions corre `ruff` y `pytest` (`TC5061-Proyecto-Equipo07.yml`).
+- En cada PR, GitHub Actions corre `ruff`, `pytest` y `make seguridad` (`TC5061-Proyecto-Equipo07.yml`).
 - El código entra a `EDA` siempre por PR. En el cierre de cada entrega, los ajustes de documentación (README, `references/` y diagramas) se suben directo a `EDA`.
 
 ## Buenas prácticas
@@ -1120,6 +1125,7 @@ Ejecución de `make seguridad`:
 | Configuración en un solo lugar | Rutas, rango de fechas, fronteras de la partición, semilla y parámetros en `config.py` |
 | Dependencias fijas y entorno reproducible | `requirements.txt` con versiones fijadas; instalación desde un clon limpio en *Instalación* |
 | Ningún dato, modelo, carpeta de MLflow ni credencial en Git | `.gitignore` excluye `data/`, `models/*`, `*.pkl`, `*.joblib`, `mlruns/`, `mlartifacts/`, `mlflow.db` y `.env` |
+| Pruebas, validación de datos y seguridad automáticas | `make pruebas`, `make seguridad` y `make validar-pN`; el job `calidad` corre pruebas y seguridad en cada PR (ver [Pruebas y chequeos de calidad](#pruebas-y-chequeos-de-calidad)) |
 | Todo cambio entra a `main` por PR revisado | Rama protegida (ver *Flujo de trabajo con Git*) |
 
 ## Equipo
