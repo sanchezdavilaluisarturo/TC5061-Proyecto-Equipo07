@@ -987,7 +987,7 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 | Revisión | Herramienta o práctica | Resultado |
 |---|---|---|
 | Código | bandit 1.9.4 sobre `tc5061_proyecto_equipo07/` | Sin hallazgos; 7 avisos de severidad baja justificados con `# nosec` |
-| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 4 paquetes actualizados y 6 vulnerabilidades aceptadas |
+| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 4 paquetes actualizados y 7 vulnerabilidades aceptadas (una publicada durante la entrega y detectada por el CI) |
 | Datos sensibles | `.gitignore`, `.env` y secret de GitHub | No se versionan credenciales, datos ni modelos |
 
 **bandit** analiza el código sin ejecutarlo y busca patrones inseguros (contraseñas en el código, `eval`, `pickle`, `subprocess` con shell, etc.). No se corre sobre `tests/` porque marca cada `assert`, que es como PyTest verifica los resultados. Los 7 avisos son las llamadas a `git rev-parse` de `p1_commit_actual`, `p2_commit_actual` y `p3_commit_actual` (B404, B603 y B607), que etiquetan cada run con su commit: los argumentos son fijos, no se usa shell y no entra ningún dato del usuario. Al correrlo, bandit imprime `nosec encountered ... but no failed test` en esas líneas; es un aviso conocido de bandit con llamadas de varias líneas y el resultado sigue siendo `No issues identified`.
@@ -1006,10 +1006,21 @@ Las restantes se revisaron y se aceptan; están en `PIP_AUDIT_IGNORAR` del `Make
 | Paquete | Vulnerabilidad | Por qué se acepta |
 |---|---|---|
 | `mlflow` 3.16.0 | CVE-2026-53995, CVE-2026-115886 | Afectan al servidor de tracking (endpoints sin autenticación). El repositorio usa MLflow como cliente y `make mlflow-local` solo escucha en `127.0.0.1`; subir a 3.17 cambiaría la versión con la que se registraron los runs y modelos de las fases anteriores |
+| `mlflow` 3.16.0 | CVE-2026-116691 | Solo afecta a `mlflow.crewai.autolog()`, que puede enviar la API key de un agente de CrewAI a las trazas. El proyecto no instala CrewAI ni usa `autolog` (ver [Vulnerabilidad detectada por el CI](#vulnerabilidad-detectada-por-el-ci)) |
 | `nltk` 3.10.3 | PYSEC-2026-3740 | Llega por `evidently`, el proyecto no la usa y no existe versión corregida |
 | `setuptools` 70.3.0 | PYSEC-2025-49, PYSEC-2026-3447, GHSA-xmj3-9gf7-h52w | Aplican al descargar, construir o instalar paquetes de fuentes no confiables, que el proyecto no hace. Se fijó en `<71` desde el entorno original por compatibilidad |
 
-pip-audit reporta "8 ignored" porque cuenta dos veces las dos primeras de `setuptools`.
+pip-audit reporta "9 ignored" porque cuenta dos veces las dos primeras de `setuptools`.
+
+#### Vulnerabilidad detectada por el CI
+
+El 27 de octubre de 2026, el job `calidad` del PR #23 falló en `make seguridad`: pip-audit encontró `CVE-2026-116691` en `mlflow` 3.16.0, una vulnerabilidad publicada después de la primera revisión (el día anterior el mismo comando pasaba). Ruff y las pruebas pasaron; el PR quedó detenido solo por esa vulnerabilidad.
+
+Se revisó el aviso (GHSA-j7qq-vr8c-xvw3): afecta a `mlflow.crewai.autolog()` con agentes de CrewAI. En el repositorio no aparece `crewai` en `requirements.txt` ni hay llamadas a `autolog` en el código, los notebooks o el `MLproject`, así que se aceptó y se agregó a `PIP_AUDIT_IGNORAR`. La versión corregida (3.17.0) también corrige las otras dos de `mlflow`; queda como mejora después de la entrega, cuando se puedan volver a probar el registro y la carga de los modelos.
+
+![Check de calidad en rojo en el PR #23](reports/evidencias/ci_calidad_falla.png)
+
+![Log del paso de seguridad con la vulnerabilidad de mlflow](reports/evidencias/ci_calidad_falla_log.png)
 
 **Datos sensibles:**
 
