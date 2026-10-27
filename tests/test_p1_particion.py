@@ -31,3 +31,24 @@ def conjunto_de(hora: pd.Timestamp) -> str:
 )
 def test_p1_cada_hora_cae_en_su_conjunto_en_las_fronteras(hora, esperado):
     assert conjunto_de(hora) == esperado
+
+
+@pytest.fixture
+def particion_de_las_horas() -> pd.DataFrame:
+    """Todas las horas de servicio de los meses alrededor de las dos fronteras."""
+    horas = features.p1_horas_de_servicio("2024-09", "2025-10").to_series(index=None)
+    return pd.DataFrame({"hora": horas, "conjunto": features.p1_asignar_particion(horas)})
+
+
+def test_p1_los_conjuntos_no_se_traslapan_y_respetan_el_orden(particion_de_las_horas):
+    rango = particion_de_las_horas.groupby("conjunto", observed=True)["hora"].agg(["min", "max"])
+    assert set(rango.index) == {"train", "valid", "test", "brecha"}
+    assert rango.loc["train", "max"] < rango.loc["valid", "min"] < rango.loc["test", "min"]
+    assert rango.loc["valid", "max"] < rango.loc["test", "min"]
+
+
+def test_p1_entre_conjuntos_quedan_al_menos_24_horas(particion_de_las_horas):
+    """Con horizonte de 24 h, la etiqueta de la última hora de un conjunto no cruza al siguiente."""
+    rango = particion_de_las_horas.groupby("conjunto", observed=True)["hora"].agg(["min", "max"])
+    assert rango.loc["valid", "min"] - rango.loc["train", "max"] > BRECHA
+    assert rango.loc["test", "min"] - rango.loc["valid", "max"] > BRECHA
