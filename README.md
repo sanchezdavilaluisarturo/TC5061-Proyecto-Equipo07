@@ -931,7 +931,7 @@ Las pruebas, la validación de datos y los chequeos de seguridad corren con un c
 
 ### Organización de las pruebas
 
-Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Las de P1 y P3 siguen el prefijo de la pregunta (`test_p1_*.py`); las comunes no llevan prefijo. `tests/conftest.py` fija `OMP_NUM_THREADS=1` solo durante las pruebas: con unos cientos de filas, XGBoost, HistGradientBoosting y K-Means gastaban más tiempo coordinando todos los hilos del CPU que calculando (en WSL2 con 16 hilos, la suite pasó de 8:24 a 1:23 min). No afecta `make train` ni `mlflow run`.
+Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Todos los archivos de P3 llevan el prefijo de la pregunta (`test_p3_*.py`: `dataset`, `features`, `modeling`, `particion`, `evaluacion`, `reproducibilidad`, `tuning`, `registro` y `validacion`); los de P1 combinan prefijo (`test_p1_*.py`) y sufijo (`test_tuning_p1.py`, `test_registro_p1.py`); los comunes (`test_config.py`, `test_run.py`, `test_validacion.py`) no llevan identificador. Todo lo de las features de P3 vive en un solo archivo, `test_p3_features.py`. `tests/conftest.py` fija `OMP_NUM_THREADS=1` solo durante las pruebas: con unos cientos de filas, XGBoost, HistGradientBoosting y K-Means gastaban más tiempo coordinando todos los hilos del CPU que calculando (en WSL2 con 16 hilos, la suite pasó de 8:24 a 1:23 min). No afecta `make train` ni `mlflow run`.
 
 | Archivo | Qué prueba | Pruebas |
 |---|---|---:|
@@ -946,13 +946,12 @@ Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos
 | `test_p1_evaluacion.py` | MAE de P1 por hora, por estación y por zona | 5 |
 | `test_p1_validacion.py` | Revisiones de la tabla completa de P1 y comando `p1-validar` | 8 |
 | `test_registro_p1.py` | Registro de P1 en el Model Registry | 4 |
-| `test_dataset.py` | Carga, partición y validación de P3 (`dataset.py`) | 10 |
-| `test_features.py` | Features de P3 | 5 |
-| `test_modeling.py` | Entrenamiento y predicción de P3 | 17 |
-| `test_tuning_p3.py` | Búsqueda de P3 con Optuna | 6 |
-| `test_registro_p3.py` | Registro de P3 en el Model Registry: versión, linaje, alias (champion y challenger), carga por alias y errores (run sin terminar, sin modelo, métricas sin conjunto, alias inexistente, sin servidor) | 13 |
+| `test_p3_dataset.py` | Carga, partición y validación de P3 (`dataset.py`) | 10 |
+| `test_p3_modeling.py` | Entrenamiento y predicción de P3 | 17 |
+| `test_p3_tuning.py` | Búsqueda de P3 con Optuna | 6 |
+| `test_p3_registro.py` | Registro de P3 en el Model Registry: versión, linaje, alias (champion y challenger), carga por alias y errores (run sin terminar, sin modelo, métricas sin conjunto, alias inexistente, sin servidor) | 13 |
 | `test_p3_particion.py` | Partición temporal de P3: sin viajes sin conjunto, orden, brecha mínima de 24 h, fronteras al nanosegundo, serie vacía y fronteras de la configuración | 10 |
-| `test_p3_features.py` | Perfil de estaciones de P3: solo laboral o solo fin de semana, horas sin servicio, umbrales de salidas en el límite y sin fuga de valid, test ni brecha, y periodos sin un tipo de día (regresión del `KeyError`) | 12 |
+| `test_p3_features.py` | Features de P3: variables de tiempo, esquema del perfil de estaciones, tabla de estaciones, demanda estación-hora y viajes por mes; y casos límite del perfil (solo laboral o solo fin de semana, horas sin servicio, umbrales de salidas, sin fuga de valid, test ni brecha, y periodos sin un tipo de día, regresión del `KeyError`) | 17 |
 | `test_p3_evaluacion.py` | Criterios de aceptación de P3 en sus bordes, selección con empates, promedio por semilla (peor caso en tamaño mínimo) y métricas del modelo | 16 |
 | `test_p3_reproducibilidad.py` | Misma semilla, mismos grupos y métricas en P3 (baseline, alternativo y Optuna); con otra semilla cambian | 6 |
 | `test_p3_validacion.py` | Revisiones de la tabla completa de P3 y comando `p3-validar` | 14 |
@@ -1074,7 +1073,13 @@ Reportes en `reports/validacion/`: `p1_tabla_completa.csv`, y por comparación `
 | train | 17,987,077 | 500,000 | 2.8 % |
 | valid | 4,520,744 | 500,000 | 11.1 % |
 
-Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_integridad.html`, `p3_train_valid_train_test.html` y `p3_train_valid_resumen.csv`.
+Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_integridad.html`, `p3_train_valid_train_test.html` y `p3_train_valid_resumen.csv`. Los HTML se abren en el navegador y necesitan internet para cargar sus gráficas.
+
+![make validar-p3: revisiones sobre la tabla completa y muestra de cada conjunto](reports/evidencias/validar_p3_01.png)
+
+![make validar-p3: resumen de DeepChecks en train vs valid](reports/evidencias/validar_p3_02.png)
+
+![Reporte de DeepChecks train vs valid de P3: estaciones nuevas](reports/evidencias/deepchecks_p3_hallazgos.png)
 
 **Bug encontrado por las pruebas y corregido.** Al escribir `test_p3_features.py` apareció un caso límite: `p3_perfil_de_estaciones` lanzaba `KeyError` si en todo el periodo que recibía no había un solo viaje en día laboral o un solo viaje en fin de semana (por ejemplo, una tabla de pocas filas, todas de lunes). La causa era `conteo.xs(es_laboral, level="laboral")`, que falla cuando el nivel no tiene esa clave. Ahora se selecciona el bloque con una máscara sobre el índice y se rellena con ceros al reindexar por estación, así que el perfil del tipo de día que falta queda en 0.
 
@@ -1147,6 +1152,8 @@ El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el 
 | Reporte de pip-audit | [`reports/seguridad/pip_audit.json`](reports/seguridad/pip_audit.json) |
 | Reportes de DeepChecks por pregunta | `reports/validacion/` (ver [Hallazgos por pregunta](#hallazgos-por-pregunta)) |
 | Validación de P1 | [Validación de P1](#validación-de-p1) |
+| Validación de P3 | [Validación de P3](#validación-de-p3) |
+| Pruebas de P3 | [Evidencias de P3](#evidencias-de-p3) |
 | CI que detectó una vulnerabilidad | [Vulnerabilidad detectada por el CI](#vulnerabilidad-detectada-por-el-ci) |
 
 Ejecución de `make pruebas`:
@@ -1154,6 +1161,7 @@ Ejecución de `make pruebas`:
 ![Ejecución de make pruebas: pruebas recolectadas y avance por archivo](reports/evidencias/make_pruebas_01.png)
 
 ![Ejecución de make pruebas: resultado final](reports/evidencias/make_pruebas_02.png)
+
 
 Ejecución de `make seguridad`:
 
@@ -1164,6 +1172,14 @@ Ejecución de `make seguridad`:
 Job `calidad` en verde en el PR #23 (ruff, pytest y seguridad):
 
 ![Check de calidad en verde en el PR #23](reports/evidencias/ci_calidad_ok.png)
+
+#### Evidencias de P3
+
+Pruebas de P3 (`pytest tests/test_p3_*.py -v`: partición, features, evaluación, reproducibilidad y validación, con sus casos límite):
+
+![Pruebas de P3 con nombre de cada caso](reports/evidencias/pruebas_p3_01.png)
+
+Las capturas de `make pruebas` y `make seguridad` de la suite completa cubren las tres preguntas, así que se toman al integrar P1, P2 y P3 (ver arriba).
 
 ## Estructura de carpetas
 
