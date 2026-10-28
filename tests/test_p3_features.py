@@ -26,9 +26,18 @@ def viajes(*filas: tuple[str, int, int]) -> pd.DataFrame:
     )
 
 
-# Los fixtures de abajo traen siempre al menos un viaje laboral y uno de fin de semana: si en todo
-# el periodo faltara uno de los dos tipos de día, `p3_perfil_de_estaciones` lanza KeyError.
-# Con los años de viajes reales no ocurre; ver el hallazgo en el README.
+def test_p3_periodo_sin_fin_de_semana_deja_en_cero_todo_el_perfil_de_fin_de_semana():
+    """Regresión: antes lanzaba KeyError si el periodo no tenía ningún viaje de ese tipo de día."""
+    perfil = features.p3_perfil_de_estaciones(p3_viajes_laborales().query("origen_id == 2"))
+    assert (perfil[FINES] == 0).all(axis=None)
+    assert perfil.loc[2, "lab_h09"] == pytest.approx(1.0)
+
+
+def test_p3_periodo_sin_dias_laborales_deja_en_cero_todo_el_perfil_laboral():
+    perfil = features.p3_perfil_de_estaciones(viajes(("2024-01-13 11:00", 1, 2)))  # solo sábado
+    assert (perfil[LABORALES] == 0).all(axis=None)
+    assert perfil.loc[1, "fin_h11"] == pytest.approx(1.0)
+    assert list(perfil.columns[: len(LABORALES) + len(FINES)]) == LABORALES + FINES
 
 
 def test_p3_estacion_solo_de_fin_de_semana_deja_en_cero_el_perfil_laboral():

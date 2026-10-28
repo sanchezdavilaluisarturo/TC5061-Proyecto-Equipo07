@@ -59,7 +59,10 @@ def p3_perfil_de_estaciones(viajes_periodo: pd.DataFrame) -> pd.DataFrame:
     estaciones_ids = conteo.index.get_level_values("estacion").unique()
 
     def perfil(es_laboral, prefijo):
-        bloque = conteo.xs(es_laboral, level="laboral").reindex(estaciones_ids, fill_value=0)
+        # Máscara en lugar de `xs`: si el periodo no tiene ningún día de este tipo, `xs` lanza
+        # KeyError; con la máscara el bloque queda vacío y el reindex lo rellena con ceros
+        del_tipo = conteo[conteo.index.get_level_values("laboral") == es_laboral]
+        bloque = del_tipo.droplevel("laboral").reindex(estaciones_ids, fill_value=0)
         proporcion = bloque.div(bloque.sum(axis=1).replace(0, np.nan), axis=0).fillna(0)
         proporcion.columns = [f"{prefijo}_h{hora:02d}" for hora in proporcion.columns]
         return proporcion
