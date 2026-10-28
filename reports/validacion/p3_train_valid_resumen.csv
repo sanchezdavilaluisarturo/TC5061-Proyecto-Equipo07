@@ -1,0 +1,15 @@
+suite,chequeo,condicion,resultado,detalle,critico
+integridad,Data Duplicates,Duplicate data ratio is less or equal to 0%,WARN,Found 0.0054% duplicate data,False
+integridad,PercentOfNulls,Percent of null values in each column is not greater than 0%,PASS,Passed for 2 relevant columns,False
+integridad,Mixed Nulls,Number of different null types is less or equal to 1,PASS,Passed for 4 relevant columns,False
+integridad,Mixed Data Types,Rare data types in column are either more than 10% or less than 1% of the data,PASS,"4 columns passed: found 0 columns with negligible types mix, and 4 columns without any types mix",False
+integridad,Special Characters,Ratio of samples containing solely special character is less or equal to 0.1%,PASS,Passed for 4 relevant columns,False
+integridad,Single Value in Column,Does not contain only a single value,PASS,Passed for 4 relevant columns,False
+integridad,Conflicting Labels - Train Dataset,,ERROR,Check is irrelevant for regression tasks,False
+train vs valid,New Category Train Test,Number of new category values is less or equal to 0,FAIL,"Found 2 features with number of new categories above threshold: 
+{'destino_id': 9, 'origen_id': 9}",False
+train vs valid,Date Train-Test Leakage (overlap),Date leakage ratio is less or equal to 0%,PASS,No leaked dates found,True
+train vs valid,Date Train-Test Leakage (duplicates),Date leakage ratio is less or equal to 0%,PASS,No leaked dates found,True
+train vs valid,Feature Drift,categorical drift score < 0.2 and numerical drift score < 0.2,PASS,"Passed for 2 columns out of 2 columns.
+Found column ""destino_id"" has the highest categorical drift score: 0.03",False
+train vs valid,Label Drift,Label drift score < 0.15,PASS,Label's drift score Kolmogorov-Smirnov is 0.02,False
