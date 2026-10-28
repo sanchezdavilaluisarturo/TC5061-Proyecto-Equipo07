@@ -75,6 +75,12 @@ features-p1:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p1-features
 
 
+## Validación de P1 con DeepChecks sobre la tabla de features (reportes en reports/validacion)
+.PHONY: validar-p1
+validar-p1:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p1-validar
+
+
 ## Make P2 features (limpieza propia de P2, etiqueta de riesgo y variables por estación-bin)
 .PHONY: features-p2
 features-p2:

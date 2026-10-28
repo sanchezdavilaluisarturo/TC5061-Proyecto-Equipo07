@@ -257,6 +257,10 @@ P1_PARAMETROS_XGB = {
 }
 # Filas que se muestrean para los diagnósticos caros (curva de aprendizaje e importancia)
 P1_MUESTRA_DIAGNOSTICO = 200_000
+# Validación con DeepChecks (`make validar-p1`): filas por conjunto y nulos tolerados por columna.
+# DeepChecks ya muestrea 100,000 filas para nulos y drift; la justificación está en el README
+P1_MUESTRA_VALIDACION = 500_000
+P1_UMBRAL_NULOS = 0.05
 # Nombre del run, etapa y familia de cada modelo (etiquetas `stage_of_work` y `model_family`)
 P1_MODELOS = {
     "baseline": ("p1-baseline-promedio-4sem", "baseline", "promedio_historico"),
