@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import features
 
 UNA_SEMANA = 7 * features.P1_HORAS_POR_DIA  # posiciones de la malla en una semana
@@ -152,3 +153,27 @@ def test_p1_calendario_conserva_el_indice_y_usa_enteros_pequenos():
     tabla = features.p1_variables_calendario(horas)
     assert list(tabla.index) == [7, 9]
     assert (tabla.dtypes == "int8").all()
+
+
+def test_p1_horas_de_servicio_tiene_20_por_dia_y_nunca_las_de_madrugada():
+    horas = features.p1_horas_de_servicio("2024-02", "2024-02")  # febrero bisiesto: 29 días
+    assert len(horas) == 29 * features.P1_HORAS_POR_DIA
+    assert not horas.hour.isin(cfg.HORAS_SIN_SERVICIO).any()
+    assert (pd.Series(horas.date).value_counts() == features.P1_HORAS_POR_DIA).all()
+
+
+def test_p1_horas_de_servicio_cubre_el_mes_completo():
+    horas = features.p1_horas_de_servicio("2024-01", "2024-03")
+    assert horas[0] == pd.Timestamp("2024-01-01 00:00")
+    assert horas[-1] == pd.Timestamp("2024-03-31 23:00")
+    assert horas.is_monotonic_increasing and horas.is_unique
+
+
+def test_p1_meses_sin_datos_detecta_el_mes_faltante():
+    assert features.p1_meses_sin_datos(["2024-01", "2024-03"], "2024-01", "2024-03") == ["2024-02"]
+
+
+def test_p1_meses_sin_datos_vacio_cuando_el_rango_esta_completo():
+    periodos = pd.period_range("2024-01", "2024-03", freq="M")  # también acepta Period
+    assert features.p1_meses_sin_datos(periodos, "2024-01", "2024-03") == []
+    assert features.p1_meses_sin_datos(["2024-01"], "2024-01", "2024-01") == []
