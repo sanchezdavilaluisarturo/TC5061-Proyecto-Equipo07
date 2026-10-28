@@ -6,6 +6,8 @@ import pytest
 
 from tc5061_proyecto_equipo07 import features
 
+UNA_SEMANA = 7 * features.P1_HORAS_POR_DIA  # posiciones de la malla en una semana
+
 
 def p1_viajes_dos_semanas() -> pd.DataFrame:
     """Estación 1 desde el lunes 2024-01-08; estación 2 abre el 2024-01-15 (una semana después)."""
@@ -39,7 +41,9 @@ def p1_estaciones() -> pd.DataFrame:
 
 @pytest.fixture
 def tabla() -> pd.DataFrame:
-    return features.p1_tabla_modelado(p1_viajes_dos_semanas(), p1_estaciones(), "2024-01", "2024-01")
+    return features.p1_tabla_modelado(
+        p1_viajes_dos_semanas(), p1_estaciones(), "2024-01", "2024-01"
+    )
 
 
 def fila(tabla: pd.DataFrame, estacion: int, hora: str) -> pd.Series:
@@ -80,3 +84,39 @@ def test_p1_dias_festivos_incluye_lunes_movibles():
         assert pd.Timestamp(dia) in festivos
     assert pd.Timestamp("2020-02-10") not in festivos
     assert pd.Timestamp("2025-10-01") not in features.p1_dias_festivos([2025])
+
+
+def p1_malla_cinco_semanas() -> tuple[np.ndarray, int]:
+    """Una estación con 5 semanas de horas en 0 y la posición a revisar en la quinta semana."""
+    matriz = np.zeros((1, 5 * UNA_SEMANA), dtype="float32")
+    return matriz, 4 * UNA_SEMANA + 3
+
+
+def test_p1_promedio_usa_la_misma_hora_de_las_semanas_anteriores():
+    matriz, posicion = p1_malla_cinco_semanas()
+    for semana, viajes in enumerate([4, 3, 2, 1], start=1):
+        matriz[0, posicion - semana * UNA_SEMANA] = viajes
+    promedio = features.p1_promedio_misma_hora(matriz, semanas=4)
+    assert promedio[0, posicion] == pytest.approx(2.5)
+
+
+def test_p1_promedio_ignora_las_semanas_sin_dato():
+    matriz, posicion = p1_malla_cinco_semanas()
+    for semana, viajes in enumerate([4, 3, 2, 1], start=1):
+        matriz[0, posicion - semana * UNA_SEMANA] = viajes
+    matriz[0, posicion - 2 * UNA_SEMANA] = np.nan  # la estación no operaba esa semana
+    promedio = features.p1_promedio_misma_hora(matriz, semanas=4)
+    assert promedio[0, posicion] == pytest.approx((4 + 2 + 1) / 3)
+
+
+def test_p1_promedio_sin_semanas_anteriores_es_nan():
+    matriz, _ = p1_malla_cinco_semanas()
+    promedio = features.p1_promedio_misma_hora(matriz, semanas=4)
+    assert np.isnan(promedio[0, :UNA_SEMANA]).all()  # primera semana: no hay historia
+
+
+def test_p1_promedio_no_usa_la_hora_que_se_predice():
+    matriz, posicion = p1_malla_cinco_semanas()
+    sin_cambio = features.p1_promedio_misma_hora(matriz, semanas=4)[0, posicion]
+    matriz[0, posicion] = 100  # el target de esa hora no debe entrar a su propia variable
+    assert features.p1_promedio_misma_hora(matriz, semanas=4)[0, posicion] == sin_cambio
