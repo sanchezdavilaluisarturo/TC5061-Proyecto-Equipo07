@@ -120,3 +120,35 @@ def test_p1_promedio_no_usa_la_hora_que_se_predice():
     sin_cambio = features.p1_promedio_misma_hora(matriz, semanas=4)[0, posicion]
     matriz[0, posicion] = 100  # el target de esa hora no debe entrar a su propia variable
     assert features.p1_promedio_misma_hora(matriz, semanas=4)[0, posicion] == sin_cambio
+
+
+def calendario(*horas: str) -> pd.DataFrame:
+    return features.p1_variables_calendario(pd.Series(pd.to_datetime(list(horas))))
+
+
+def test_p1_calendario_marca_el_fin_de_semana():
+    tabla = calendario(
+        "2024-01-05 08:00", "2024-01-06 08:00", "2024-01-07 08:00", "2024-01-08 08:00"
+    )
+    assert tabla["dia_semana"].tolist() == [4, 5, 6, 0]  # viernes, sábado, domingo, lunes
+    assert tabla["es_fin_de_semana"].tolist() == [0, 1, 1, 0]
+
+
+def test_p1_calendario_marca_todo_el_dia_festivo_y_no_el_siguiente():
+    # 2024-02-05 es el primer lunes de febrero (Día de la Constitución)
+    tabla = calendario("2024-02-05 00:00", "2024-02-05 23:00", "2024-02-06 08:00")
+    assert tabla["es_festivo"].tolist() == [1, 1, 0]
+
+
+def test_p1_calendario_en_el_cambio_de_anio():
+    tabla = calendario("2024-12-31 23:00", "2025-01-01 00:00")
+    assert tabla["mes"].tolist() == [12, 1]
+    assert tabla["hora"].tolist() == [23, 0]
+    assert tabla["es_festivo"].tolist() == [0, 1]  # el festivo del año nuevo también se calcula
+
+
+def test_p1_calendario_conserva_el_indice_y_usa_enteros_pequenos():
+    horas = pd.Series(pd.to_datetime(["2024-03-01 08:00", "2024-03-02 18:00"]), index=[7, 9])
+    tabla = features.p1_variables_calendario(horas)
+    assert list(tabla.index) == [7, 9]
+    assert (tabla.dtypes == "int8").all()
