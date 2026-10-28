@@ -635,10 +635,11 @@ def p3_validar(muestra: int = cfg.P3_MUESTRA_VALIDACION):
             "La tabla de P3 no pasa las revisiones completas; ver p3_tabla_completa.csv"
         )
 
-    # Se descartan la brecha y las columnas que solo identifican o repiten el tiempo: con
-    # viaje_id, fin_del_viaje y periodo_archivo, DeepChecks reportaría drift del calendario
+    # P3 no usa test y la brecha no entra a ningún conjunto. Se descartan también las columnas
+    # que solo identifican o repiten el tiempo: con viaje_id, fin_del_viaje y periodo_archivo,
+    # DeepChecks reportaría drift del calendario
     usados = modelado.loc[
-        modelado["particion"] != "brecha",
+        modelado["particion"].isin(["train", "valid"]),
         ["particion", "inicio_del_viaje", "origen_id", "destino_id", "duracion_min"],
     ].reset_index(drop=True)
     del modelado
