@@ -3,8 +3,8 @@
 import numpy as np
 import pandas as pd
 import pytest
-from test_modeling import p3_limpios_sinteticos
-from test_tuning_p3 import estaciones_sinteticas
+from test_p3_modeling import p3_limpios_sinteticos
+from test_p3_tuning import estaciones_sinteticas
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import dataset, features, validacion

@@ -3,8 +3,8 @@
 from loguru import logger
 import mlflow
 import pytest
-from test_modeling import COLUMNAS, p3_x_con_tres_grupos
-from test_tuning_p3 import base_sintetica, preparar_experimento_local
+from test_p3_modeling import COLUMNAS, p3_x_con_tres_grupos
+from test_p3_tuning import base_sintetica, preparar_experimento_local
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07.modeling import registro_p3, train

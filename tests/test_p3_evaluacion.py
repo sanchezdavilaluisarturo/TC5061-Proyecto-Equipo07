@@ -2,7 +2,7 @@
 
 import pandas as pd
 import pytest
-from test_tuning_p3 import base_sintetica
+from test_p3_tuning import base_sintetica
 
 from tc5061_proyecto_equipo07.modeling import train
 
