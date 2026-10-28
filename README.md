@@ -952,11 +952,11 @@ Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos
 | `test_tuning_p3.py` | Búsqueda de P3 con Optuna | 6 |
 | `test_registro_p3.py` | Registro de P3 en el Model Registry: versión, linaje, alias (champion y challenger), carga por alias y errores (run sin terminar, sin modelo, métricas sin conjunto, alias inexistente, sin servidor) | 13 |
 | `test_p3_particion.py` | Partición temporal de P3: sin viajes sin conjunto, orden, brecha mínima de 24 h, fronteras al nanosegundo, serie vacía y fronteras de la configuración | 10 |
-| `test_p3_features.py` | Perfil de estaciones de P3: solo laboral o solo fin de semana, horas sin servicio, umbrales de salidas en el límite y sin fuga de valid, test ni brecha | 10 |
+| `test_p3_features.py` | Perfil de estaciones de P3: solo laboral o solo fin de semana, horas sin servicio, umbrales de salidas en el límite y sin fuga de valid, test ni brecha, y periodos sin un tipo de día (regresión del `KeyError`) | 12 |
 | `test_p3_evaluacion.py` | Criterios de aceptación de P3 en sus bordes, selección con empates, promedio por semilla (peor caso en tamaño mínimo) y métricas del modelo | 16 |
 | `test_p3_reproducibilidad.py` | Misma semilla, mismos grupos y métricas en P3 (baseline, alternativo y Optuna); con otra semilla cambian | 6 |
 | `test_p3_validacion.py` | Revisiones de la tabla completa de P3 y comando `p3-validar` | 14 |
-| **Total** | | **216** |
+| **Total** | | **218** |
 
 ### Validación de datos con DeepChecks
 
@@ -1076,7 +1076,11 @@ Reportes en `reports/validacion/`: `p1_tabla_completa.csv`, y por comparación `
 
 Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_integridad.html`, `p3_train_valid_train_test.html` y `p3_train_valid_resumen.csv`.
 
-**Limitación conocida de las pruebas.** Al escribir `test_p3_features.py` apareció un caso límite: `p3_perfil_de_estaciones` lanza `KeyError` si en todo el periodo que recibe no hay un solo viaje en día laboral o un solo viaje en fin de semana (por ejemplo, una tabla de unas pocas filas, todas de lunes). Con los años de viajes reales de train y valid no ocurre, y las pruebas usan datos con ambos tipos de día. Queda registrado como mejora pendiente: rellenar con ceros el bloque que falte en lugar de fallar.
+**Bug encontrado por las pruebas y corregido.** Al escribir `test_p3_features.py` apareció un caso límite: `p3_perfil_de_estaciones` lanzaba `KeyError` si en todo el periodo que recibía no había un solo viaje en día laboral o un solo viaje en fin de semana (por ejemplo, una tabla de pocas filas, todas de lunes). La causa era `conteo.xs(es_laboral, level="laboral")`, que falla cuando el nivel no tiene esa clave. Ahora se selecciona el bloque con una máscara sobre el índice y se rellena con ceros al reindexar por estación, así que el perfil del tipo de día que falta queda en 0.
+
+- **Impacto:** nulo en los resultados del proyecto. Con los años de viajes reales de train y valid siempre hay ambos tipos de día, y el cambio no altera ningún valor cuando existen. Solo cambia el caso que antes terminaba en error.
+- **Pruebas de regresión:** `test_p3_periodo_sin_fin_de_semana_deja_en_cero_todo_el_perfil_de_fin_de_semana` y `test_p3_periodo_sin_dias_laborales_deja_en_cero_todo_el_perfil_laboral`. Se comprobó que fallan con el código anterior y pasan con el nuevo.
+- **Dónde:** `tc5061_proyecto_equipo07/features.py`, función `p3_perfil_de_estaciones`.
 
 ### Chequeos de seguridad
 
