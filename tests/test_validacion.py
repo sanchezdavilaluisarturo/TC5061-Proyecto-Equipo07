@@ -50,6 +50,16 @@ def test_tabla_limpia_pasa_y_deja_los_reportes(tmp_path):
         assert (tmp_path / f"prueba_{sufijo}").exists()
 
 
+def test_volver_a_validar_reemplaza_los_reportes_sin_dejar_copias(tmp_path):
+    validar(tabla_sintetica(), tmp_path)
+    validar(tabla_sintetica(semilla=1), tmp_path)
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "prueba_integridad.html",
+        "prueba_resumen.csv",
+        "prueba_train_test.html",
+    ]
+
+
 def test_fechas_de_prueba_dentro_de_train_hacen_fallar(tmp_path):
     tabla = tabla_sintetica()
     tabla.loc[N_TRAIN : N_TRAIN + 9, "fecha"] = tabla.loc[:9, "fecha"].to_numpy()

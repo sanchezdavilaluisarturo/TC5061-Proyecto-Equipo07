@@ -931,22 +931,27 @@ Las pruebas, la validación de datos y los chequeos de seguridad corren con un c
 
 ### Organización de las pruebas
 
-Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Las de P1 y P3 siguen el prefijo de la pregunta (`test_p1_*.py`); las comunes no llevan prefijo.
+Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Las de P1 y P3 siguen el prefijo de la pregunta (`test_p1_*.py`); las comunes no llevan prefijo. `tests/conftest.py` fija `OMP_NUM_THREADS=1` solo durante las pruebas: con unos cientos de filas, XGBoost, HistGradientBoosting y K-Means gastaban más tiempo coordinando todos los hilos del CPU que calculando (en WSL2 con 16 hilos, la suite pasó de 8:24 a 1:23 min). No afecta `make train` ni `mlflow run`.
 
 | Archivo | Qué prueba | Pruebas |
 |---|---|---:|
-| `test_validacion.py` | Módulo común de validación con DeepChecks | 10 |
+| `test_validacion.py` | Módulo común de validación con DeepChecks | 11 |
 | `test_config.py` | Variables de entorno de `config.py` y convención de prefijos | 15 |
 | `test_run.py` | Despachador del MLflow Project (`modeling/run.py`) | 9 |
-| `test_p1_features.py` | Target y variables de P1 | 5 |
+| `test_p1_features.py` | Target, rezagos, promedio de semanas, calendario, malla de horas y meses sin datos de P1 | 17 |
+| `test_p1_particion.py` | Partición temporal de P1: fronteras exactas, brecha de 24 h y orden de los conjuntos | 12 |
 | `test_p1_modelado.py` | Transformer de nivel, baseline, métricas y modelos de P1 | 14 |
 | `test_tuning_p1.py` | Búsqueda de P1 con Optuna | 7 |
+| `test_p1_reproducibilidad.py` | Misma semilla, mismas predicciones y métricas en P1; búsqueda de Optuna reproducible | 7 |
+| `test_p1_evaluacion.py` | MAE de P1 por hora, por estación y por zona | 5 |
+| `test_p1_validacion.py` | Revisiones de la tabla completa de P1 y comando `p1-validar` | 8 |
 | `test_registro_p1.py` | Registro de P1 en el Model Registry | 4 |
 | `test_dataset.py` | Carga, partición y validación de P3 (`dataset.py`) | 10 |
 | `test_features.py` | Features de P3 | 5 |
 | `test_modeling.py` | Entrenamiento y predicción de P3 | 17 |
 | `test_tuning_p3.py` | Búsqueda de P3 con Optuna | 6 |
 | `test_registro_p3.py` | Registro de P3 en el Model Registry | 7 |
+| **Total** | | **154** |
 
 ### Validación de datos con DeepChecks
 
@@ -970,7 +975,7 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 
 | Pregunta | Prueba |
 |---|---|
-| P1 | _Pendiente (rama `testing/p1`)_ |
+| P1 | `tests/test_p1_reproducibilidad.py`: baseline, HGB, XGBoost y XGBoost con hiperparámetros de Optuna (con `subsample` y `colsample_bytree`, que usan azar) dan predicciones y métricas idénticas al entrenar dos veces. Una prueba de contraste verifica que con otra semilla las predicciones cambian (la semilla sí controla el azar), y la búsqueda de Optuna corrida dos veces da los mismos trials y el mismo mejor trial |
 | P2 | _Pendiente (rama `testing/p2`)_ |
 | P3 | _Pendiente (rama `testing/p3`)_ |
 
@@ -978,9 +983,56 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 
 | Pregunta | Tabla validada | Hallazgos | Reportes |
 |---|---|---|---|
-| P1 | _Pendiente (rama `testing/p1`)_ | | |
+| P1 | `p1_demanda_estacion_hora.parquet` (16,103,922 filas) | 109 estaciones nuevas en test (9 en valid) y drift de `dias_desde_apertura`; nulos solo en los rezagos (< 0.5 %); sin leakage temporal ni drift del target | [Validación de P1](#validación-de-p1) |
 | P2 | _Pendiente (rama `testing/p2`)_ | | |
 | P3 | _Pendiente (rama `testing/p3`)_ | | |
+
+#### Validación de P1
+
+`make validar-p1` (comando `p1-validar` de `features.py`) valida la tabla de modelado de P1 (16,103,922 filas y 17 columnas, 0.72 GB en memoria) en dos niveles y tarda unos 30 segundos.
+
+**1. Revisiones sobre la tabla completa.** Un solo caso basta para invalidar la tabla, así que se cuentan con pandas sobre todas las filas. Son críticas: si alguna falla, el comando se detiene antes de DeepChecks y deja `p1_tabla_completa.csv`.
+
+| Revisión | Filas con problema | Resultado |
+|---|---:|---|
+| Llave estación-hora duplicada (`origen_id`, `hora_inicio`) | 0 | PASS |
+| Target `viajes` nulo | 0 | PASS |
+| Target `viajes` negativo | 0 | PASS |
+| Horas de valid no posteriores a la última de train | 0 | PASS |
+| Horas de test no posteriores a la última de valid | 0 | PASS |
+
+**2. DeepChecks** con el módulo común, en dos comparaciones: `p1_train_valid` (lo que vio el modelo contra el conjunto con el que Optuna eligió) y `p1_train_test` (contra el conjunto del reporte final). Las horas en `brecha` se excluyen. El target es `viajes`, la fecha `hora_inicio` (para el leakage temporal) y el umbral de nulos es de 5 % (`P1_UMBRAL_NULOS`). Las categóricas son `zona` y `origen_id`: `origen_id` es un identificador numérico, pero se declara categórica para que DeepChecks reporte las estaciones que aparecen en valid o test sin estar en train; el costo es que su gráfica de drift es menos legible.
+
+| Chequeo | train vs valid | train vs test | Lectura |
+|---|---|---|---|
+| Leakage de fechas (traslape y filas repetidas), crítico | PASS | PASS | Ninguna fecha de evaluación aparece en entrenamiento |
+| Nulos | PASS | PASS | Solo en los rezagos: `viajes_rezago_1d` 0.08 %, `viajes_rezago_7d` y `viajes_promedio_4sem` 0.44 %. Son las primeras horas de cada estación, sin historia; HGB y XGBoost manejan los nulos de forma nativa |
+| Duplicados, nulos mixtos, tipos mixtos, caracteres especiales y columnas de un solo valor | PASS | PASS | Sin problemas de integridad |
+| Drift del target (`viajes`, Kolmogorov-Smirnov) | 0.009 | 0.04 | Sin drift: la distribución de viajes por estación-hora es estable entre conjuntos |
+| **Estaciones nuevas** (`origen_id`) | 9 | 109 | Hallazgo. Coincide con el EDA (109 estaciones sin viajes en entrenamiento). La mitigación ya está implementada y probada: `P1NivelEstacion` les asigna el nivel del sistema (`test_p1_estacion_nueva_recibe_nivel_del_sistema`), y su error se puede vigilar con `p1_peores_estaciones` |
+| **Drift de `dias_desde_apertura`** (Kolmogorov-Smirnov) | 0.75 | 0.73 | Hallazgo esperado por construcción: la variable crece con el tiempo, así que valid y test siempre tienen valores mayores que train. Los árboles no extrapolan y después del máximo de train la tratan como constante. Mejora pendiente: acotarla o usar una versión relativa |
+| Conflicting Labels | ERROR | ERROR | No aplica: DeepChecks lo omite en regresión (*Check is irrelevant for regression tasks*). Se queda en el módulo común porque sí aplica a la clasificación de P2 |
+
+**Por qué una muestra de 500,000 filas por conjunto** (`P1_MUESTRA_VALIDACION`):
+
+| Conjunto | Filas | Muestra | % |
+|---|---:|---:|---:|
+| train | 10,531,227 | 500,000 | 4.7 % |
+| valid | 2,673,888 | 500,000 | 18.7 % |
+| test | 2,884,207 | 500,000 | 17.3 % |
+
+1. DeepChecks ya muestrea internamente: 100,000 filas para nulos y drift y 1,000,000 para el traslape de fechas. Pasarle los 16.1 millones de filas no hace más exactos esos chequeos, solo más lentos.
+2. Con 500,000 filas, el margen de error de cualquier porcentaje estimado (por ejemplo, el de nulos) es de ±0.14 puntos porcentuales al 95 % de confianza.
+3. La muestra se toma con la semilla del proyecto, así que los reportes se pueden reproducir.
+4. Lo que no admite muestra (llave, target y orden de los conjuntos) se revisa sobre la tabla completa.
+
+Reportes en `reports/validacion/`: `p1_tabla_completa.csv`, y por comparación `p1_train_valid_*` y `p1_train_test_*` (`_integridad.html`, `_train_test.html` y `_resumen.csv`). Los HTML se abren en el navegador y necesitan internet para cargar sus gráficas.
+
+![make validar-p1: revisiones sobre la tabla completa y muestra de cada conjunto](reports/evidencias/validar_p1_01.png)
+
+![make validar-p1: hallazgos de DeepChecks en train vs valid y train vs test](reports/evidencias/validar_p1_02.png)
+
+![Reporte de DeepChecks train vs test de P1: chequeos que no pasaron y estaciones nuevas](reports/evidencias/deepchecks_p1_hallazgos.png)
 
 ### Chequeos de seguridad
 
@@ -1046,18 +1098,24 @@ El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el 
 | Reporte de bandit | [`reports/seguridad/bandit.json`](reports/seguridad/bandit.json) |
 | Reporte de pip-audit | [`reports/seguridad/pip_audit.json`](reports/seguridad/pip_audit.json) |
 | Reportes de DeepChecks por pregunta | `reports/validacion/` (ver [Hallazgos por pregunta](#hallazgos-por-pregunta)) |
+| Validación de P1 | [Validación de P1](#validación-de-p1) |
+| CI que detectó una vulnerabilidad | [Vulnerabilidad detectada por el CI](#vulnerabilidad-detectada-por-el-ci) |
 
 Ejecución de `make pruebas`:
 
-![Ejecución de make pruebas: 109 pruebas recolectadas y avance por archivo](reports/evidencias/make_pruebas_01.png)
+![Ejecución de make pruebas: pruebas recolectadas y avance por archivo](reports/evidencias/make_pruebas_01.png)
 
-![Ejecución de make pruebas: 109 passed](reports/evidencias/make_pruebas_02.png)
+![Ejecución de make pruebas: resultado final](reports/evidencias/make_pruebas_02.png)
 
 Ejecución de `make seguridad`:
 
 ![Ejecución de make seguridad: reporte JSON de bandit](reports/evidencias/make_seguridad_01.png)
 
 ![Ejecución de make seguridad: resultado de bandit y de pip-audit](reports/evidencias/make_seguridad_02.png)
+
+Job `calidad` en verde en el PR #23 (ruff, pytest y seguridad):
+
+![Check de calidad en verde en el PR #23](reports/evidencias/ci_calidad_ok.png)
 
 ## Estructura de carpetas
 
