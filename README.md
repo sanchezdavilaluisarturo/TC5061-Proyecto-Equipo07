@@ -950,8 +950,13 @@ Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos
 | `test_features.py` | Features de P3 | 5 |
 | `test_modeling.py` | Entrenamiento y predicción de P3 | 17 |
 | `test_tuning_p3.py` | Búsqueda de P3 con Optuna | 6 |
-| `test_registro_p3.py` | Registro de P3 en el Model Registry | 7 |
-| **Total** | | **154** |
+| `test_registro_p3.py` | Registro de P3 en el Model Registry: versión, linaje, alias (champion y challenger), carga por alias y errores (run sin terminar, sin modelo, métricas sin conjunto, alias inexistente, sin servidor) | 13 |
+| `test_p3_particion.py` | Partición temporal de P3: sin viajes sin conjunto, orden, brecha mínima de 24 h, fronteras al nanosegundo, serie vacía y fronteras de la configuración | 10 |
+| `test_p3_features.py` | Perfil de estaciones de P3: solo laboral o solo fin de semana, horas sin servicio, umbrales de salidas en el límite y sin fuga de valid, test ni brecha | 10 |
+| `test_p3_evaluacion.py` | Criterios de aceptación de P3 en sus bordes, selección con empates, promedio por semilla (peor caso en tamaño mínimo) y métricas del modelo | 16 |
+| `test_p3_reproducibilidad.py` | Misma semilla, mismos grupos y métricas en P3 (baseline, alternativo y Optuna); con otra semilla cambian | 6 |
+| `test_p3_validacion.py` | Revisiones de la tabla completa de P3 y comando `p3-validar` | 14 |
+| **Total** | | **216** |
 
 ### Validación de datos con DeepChecks
 
@@ -977,7 +982,7 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 |---|---|
 | P1 | `tests/test_p1_reproducibilidad.py`: baseline, HGB, XGBoost y XGBoost con hiperparámetros de Optuna (con `subsample` y `colsample_bytree`, que usan azar) dan predicciones y métricas idénticas al entrenar dos veces. Una prueba de contraste verifica que con otra semilla las predicciones cambian (la semilla sí controla el azar), y la búsqueda de Optuna corrida dos veces da los mismos trials y el mismo mejor trial |
 | P2 | _Pendiente (rama `testing/p2`)_ |
-| P3 | _Pendiente (rama `testing/p3`)_ |
+| P3 | `tests/test_p3_reproducibilidad.py`: el baseline, el modelo alternativo (PCA + K-Means) y la búsqueda de Optuna dan los mismos grupos, métricas, configuración elegida y trials al correr dos veces con la misma semilla. Las pruebas usan estaciones con horas al azar: con grupos bien separados K-Means converge igual con cualquier semilla y el contraste no demostraría nada. Con otra semilla cambian la inercia y los grupos del baseline, las semillas de la rejilla del alternativo y los trials de Optuna |
 
 #### Hallazgos por pregunta
 
@@ -985,7 +990,7 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 |---|---|---|---|
 | P1 | `p1_demanda_estacion_hora.parquet` (16,103,922 filas) | 109 estaciones nuevas en test (9 en valid) y drift de `dias_desde_apertura`; nulos solo en los rezagos (< 0.5 %); sin leakage temporal ni drift del target | [Validación de P1](#validación-de-p1) |
 | P2 | _Pendiente (rama `testing/p2`)_ | | |
-| P3 | _Pendiente (rama `testing/p3`)_ | | |
+| P3 | `viajes_modelado_2020-01_2026-09.parquet` (27,026,645 filas) | 9 estaciones nuevas en valid (origen y destino); 0.0054 % de viajes duplicados; sin nulos, sin leakage temporal y sin drift de features ni de duración | [Validación de P3](#validación-de-p3) |
 
 #### Validación de P1
 
@@ -1033,6 +1038,45 @@ Reportes en `reports/validacion/`: `p1_tabla_completa.csv`, y por comparación `
 ![make validar-p1: hallazgos de DeepChecks en train vs valid y train vs test](reports/evidencias/validar_p1_02.png)
 
 ![Reporte de DeepChecks train vs test de P1: chequeos que no pasaron y estaciones nuevas](reports/evidencias/deepchecks_p1_hallazgos.png)
+
+#### Validación de P3
+
+`make validar-p3` (comando `p3-validar` de `features.py`) valida la tabla de viajes de modelado de P3 (27,026,645 filas y 7 columnas, 1.22 GB en memoria) en dos niveles y tarda unos 16 segundos. Es la tabla de la que salen los perfiles de las estaciones; la que se valida es la de viajes y no la de perfiles porque ahí es donde pueden entrar viajes repetidos, fechas fuera de orden o estaciones sin nomenclatura.
+
+**1. Revisiones sobre la tabla completa.** Son críticas: si alguna falla, el comando se detiene antes de DeepChecks y deja `p3_tabla_completa.csv`.
+
+| Revisión | Filas con problema | Resultado |
+|---|---:|---|
+| `viaje_id` repetido | 0 | PASS |
+| Fechas o estaciones nulas | 0 | PASS |
+| Duración nula o no positiva | 0 | PASS |
+| Duración mayor a 1,440 min (24 h) | 0 | PASS |
+| Fin del viaje anterior al inicio | 0 | PASS |
+| Viajes de valid no posteriores al último de train | 0 | PASS |
+| Origen o destino fuera de la nomenclatura de estaciones | 0 | PASS |
+
+**2. DeepChecks** con el módulo común, comparando `train` contra `valid` (`p3_train_valid`). P3 no usa test, así que ni test ni la brecha entran, ni en la comparación ni en la suite de integridad. Las columnas son `inicio_del_viaje` (fecha, para el leakage temporal), `origen_id` y `destino_id` (categóricas, para que DeepChecks reporte las estaciones nuevas) y `duracion_min`. P3 es no supervisado y no tiene target: `duracion_min` hace de etiqueta para que corran los chequeos de etiqueta. Se descartan `viaje_id`, `fin_del_viaje` y `periodo_archivo` porque solo identifican o repiten el calendario y DeepChecks reportaría drift de lo que es el paso del tiempo. El umbral de nulos es 0 % (`P3_UMBRAL_NULOS`).
+
+| Chequeo | train vs valid | Lectura |
+|---|---|---|
+| Leakage de fechas (traslape y filas repetidas), crítico | PASS | Ninguna fecha de valid aparece en entrenamiento |
+| Nulos, nulos mixtos, tipos mixtos, caracteres especiales y columnas de un solo valor | PASS | Sin problemas de integridad |
+| Drift de las variables (`origen_id`, `destino_id`) | PASS | El mayor es `destino_id`, 0.03 (umbral 0.2): las estaciones se usan con una distribución parecida en train y en valid |
+| Drift de la etiqueta (`duracion_min`, Kolmogorov-Smirnov) | PASS | 0.02 (umbral 0.15): la duración de los viajes es estable entre periodos |
+| **Estaciones nuevas** (`origen_id` y `destino_id`) | FAIL | Hallazgo: 9 estaciones aparecen en valid sin estar en train (las mismas 9 que en P1). La prueba de estabilidad ya las excluye: reasigna solo las estaciones comunes a train y valid (`P3Baseline.comunes`) |
+| **Duplicados** | WARN | Hallazgo: 0.0054 % de las filas de la muestra se repiten. No son el mismo viaje, porque `viaje_id` no se repite en la tabla completa; son viajes distintos con el mismo inicio al minuto, origen, destino y duración, que es lo esperable cuando se descarta el identificador |
+| Conflicting Labels | ERROR | No aplica: DeepChecks lo omite en regresión (*Check is irrelevant for regression tasks*). Se queda en el módulo común porque sí aplica a la clasificación de P2 |
+
+**Muestra de 500,000 filas por conjunto** (`P3_MUESTRA_VALIDACION`, mismas razones que en P1: DeepChecks ya muestrea internamente y la muestra usa la semilla del proyecto):
+
+| Conjunto | Filas | Muestra | % |
+|---|---:|---:|---:|
+| train | 17,987,077 | 500,000 | 2.8 % |
+| valid | 4,520,744 | 500,000 | 11.1 % |
+
+Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_integridad.html`, `p3_train_valid_train_test.html` y `p3_train_valid_resumen.csv`.
+
+**Limitación conocida de las pruebas.** Al escribir `test_p3_features.py` apareció un caso límite: `p3_perfil_de_estaciones` lanza `KeyError` si en todo el periodo que recibe no hay un solo viaje en día laboral o un solo viaje en fin de semana (por ejemplo, una tabla de unas pocas filas, todas de lunes). Con los años de viajes reales de train y valid no ocurre, y las pruebas usan datos con ambos tipos de día. Queda registrado como mejora pendiente: rellenar con ceros el bloque que falte en lugar de fallar.
 
 ### Chequeos de seguridad
 
