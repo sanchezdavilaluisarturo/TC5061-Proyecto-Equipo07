@@ -203,3 +203,6 @@ models/*
 !models/.gitkeep
 *.pkl
 *.joblib
+
+# Metadatos de Windows al copiar archivos a WSL
+*:Zone.Identifier

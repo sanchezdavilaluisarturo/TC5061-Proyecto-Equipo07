@@ -10,6 +10,8 @@ estaciones_train.parquet y demanda_estacion_hora.parquet en data/processed/.
 Uso: python -m tc5061_proyecto_equipo07.features p1-features | p2-features | p3-features
 """
 
+import time
+
 from loguru import logger
 import numpy as np
 import pandas as pd
@@ -18,7 +20,7 @@ from sklearn.utils.validation import check_is_fitted
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
-from tc5061_proyecto_equipo07 import dataset
+from tc5061_proyecto_equipo07 import dataset, validacion
 
 app = typer.Typer()
 
@@ -497,6 +499,80 @@ def p1_features(mes_inicio: str = cfg.MES_INICIO, mes_fin: str = cfg.MES_FIN):
     logger.info(f"Viajes en horas sin servicio (fuera de P1): {len(limpios) - esperados}")
     logger.info(f"Estación-horas y viajes por conjunto:\n{por_conjunto.to_string()}")
     logger.success(f"{cfg.RUTA_P1_DEMANDA.name}: {len(tabla)} filas y {en_tabla} viajes")
+
+
+def p1_revisar_tabla_completa(tabla: pd.DataFrame) -> pd.DataFrame:
+    """Revisiones que no admiten muestra: llave, target y orden de los conjuntos.
+
+    Un solo caso basta para invalidar la tabla, así que se cuentan sobre todas las filas.
+    """
+    usados = tabla[tabla["particion"] != "brecha"]
+    faltan = {"train", "valid", "test"} - set(usados["particion"].astype(str).unique())
+    if faltan:
+        raise ValueError(f"La tabla de P1 no tiene filas de {sorted(faltan)}")
+    fin = usados.groupby("particion", observed=True)["hora_inicio"].max()
+    hora, conjunto = usados["hora_inicio"], usados["particion"]
+    valid_antes = (conjunto == "valid") & (hora <= fin["train"])
+    test_antes = (conjunto == "test") & (hora <= fin["valid"])
+    problemas = {
+        "llave estación-hora duplicada": tabla.duplicated(["origen_id", "hora_inicio"]).sum(),
+        "target viajes nulo": tabla["viajes"].isna().sum(),
+        "target viajes negativo": (tabla["viajes"] < 0).sum(),
+        "horas de valid no posteriores a train": valid_antes.sum(),
+        "horas de test no posteriores a valid": test_antes.sum(),
+    }
+    revision = pd.DataFrame(
+        {"revision": list(problemas), "filas_con_problema": [int(n) for n in problemas.values()]}
+    )
+    revision["resultado"] = np.where(revision["filas_con_problema"] == 0, "PASS", "FAIL")
+    return revision
+
+
+@app.command()
+def p1_validar(muestra: int = cfg.P1_MUESTRA_VALIDACION):
+    """Valida la tabla de P1: revisiones sobre la tabla completa y DeepChecks sobre una muestra."""
+    if not cfg.RUTA_P1_DEMANDA.exists():
+        raise FileNotFoundError(f"Falta {cfg.RUTA_P1_DEMANDA.name}; ejecutar `make features-p1`")
+    inicio = time.perf_counter()
+    carpeta = validacion.VALIDACION_DIR
+    carpeta.mkdir(parents=True, exist_ok=True)
+    tabla = pd.read_parquet(cfg.RUTA_P1_DEMANDA)
+    memoria = tabla.memory_usage(deep=True).sum() / 1e9
+    logger.info(f"{cfg.RUTA_P1_DEMANDA.name}: {len(tabla)} filas, {memoria:.2f} GB en memoria")
+
+    revision = p1_revisar_tabla_completa(tabla)
+    revision.to_csv(carpeta / "p1_tabla_completa.csv", index=False)
+    logger.info(f"Revisiones sobre la tabla completa:\n{revision.to_string(index=False)}")
+    if (revision["resultado"] == "FAIL").any():
+        raise ValueError(
+            "La tabla de P1 no pasa las revisiones completas; ver p1_tabla_completa.csv"
+        )
+
+    # Las horas en `brecha` no entran a entrenar ni evaluar; se liberan antes de copiar la tabla
+    usados = tabla[tabla["particion"] != "brecha"].reset_index(drop=True)
+    del tabla
+    usados["particion"] = usados["particion"].astype(str)
+    for conjunto, filas in usados["particion"].value_counts().items():
+        tomadas = min(muestra, filas)
+        logger.info(f"Muestra de {conjunto}: {tomadas} de {filas} filas ({tomadas / filas:.1%})")
+
+    # origen_id como categórica: DeepChecks reporta las estaciones que aparecen solo en prueba
+    for comparado in ("valid", "test"):
+        validacion.validar_tabla(
+            f"p1_train_{comparado}",
+            usados,
+            "particion",
+            "viajes",
+            ["origen_id", "zona"],
+            "hora_inicio",
+            conjuntos=("train", comparado),
+            umbral_nulos=cfg.P1_UMBRAL_NULOS,
+            muestra=muestra,
+            carpeta=carpeta,
+        )
+    logger.success(
+        f"Validación de P1 en {(time.perf_counter() - inicio) / 60:.1f} min ({carpeta})"
+    )
 
 
 @app.command()

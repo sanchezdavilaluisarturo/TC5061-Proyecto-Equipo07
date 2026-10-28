@@ -137,9 +137,12 @@ def validar_tabla(
         armar_dataset(entrenamiento, target, categoricas, fecha),
         armar_dataset(prueba, target, categoricas, fecha),
     )
-    # connected=True carga plotly desde CDN: el HTML pesa KB en lugar de MB
-    integridad.save_as_html(str(carpeta / f"{nombre}_integridad.html"), connected=True)
-    train_test.save_as_html(str(carpeta / f"{nombre}_train_test.html"), connected=True)
+    # connected=True carga plotly desde CDN: el HTML pesa KB en lugar de MB. DeepChecks no
+    # sobrescribe (crearía "<nombre> (1).html"), así que se borra el reporte anterior
+    for suite, sufijo in ((integridad, "integridad"), (train_test, "train_test")):
+        ruta = carpeta / f"{nombre}_{sufijo}.html"
+        ruta.unlink(missing_ok=True)
+        suite.save_as_html(str(ruta), connected=True)
 
     resumen = pd.concat(
         [

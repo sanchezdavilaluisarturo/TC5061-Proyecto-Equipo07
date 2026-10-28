@@ -1,0 +1,6 @@
+revision,filas_con_problema,resultado
+llave estación-hora duplicada,0,PASS
+target viajes nulo,0,PASS
+target viajes negativo,0,PASS
+horas de valid no posteriores a train,0,PASS
+horas de test no posteriores a valid,0,PASS

@@ -4,7 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import features
+
+UNA_SEMANA = 7 * features.P1_HORAS_POR_DIA  # posiciones de la malla en una semana
 
 
 def p1_viajes_dos_semanas() -> pd.DataFrame:
@@ -39,7 +42,9 @@ def p1_estaciones() -> pd.DataFrame:
 
 @pytest.fixture
 def tabla() -> pd.DataFrame:
-    return features.p1_tabla_modelado(p1_viajes_dos_semanas(), p1_estaciones(), "2024-01", "2024-01")
+    return features.p1_tabla_modelado(
+        p1_viajes_dos_semanas(), p1_estaciones(), "2024-01", "2024-01"
+    )
 
 
 def fila(tabla: pd.DataFrame, estacion: int, hora: str) -> pd.Series:
@@ -80,3 +85,95 @@ def test_p1_dias_festivos_incluye_lunes_movibles():
         assert pd.Timestamp(dia) in festivos
     assert pd.Timestamp("2020-02-10") not in festivos
     assert pd.Timestamp("2025-10-01") not in features.p1_dias_festivos([2025])
+
+
+def p1_malla_cinco_semanas() -> tuple[np.ndarray, int]:
+    """Una estación con 5 semanas de horas en 0 y la posición a revisar en la quinta semana."""
+    matriz = np.zeros((1, 5 * UNA_SEMANA), dtype="float32")
+    return matriz, 4 * UNA_SEMANA + 3
+
+
+def test_p1_promedio_usa_la_misma_hora_de_las_semanas_anteriores():
+    matriz, posicion = p1_malla_cinco_semanas()
+    for semana, viajes in enumerate([4, 3, 2, 1], start=1):
+        matriz[0, posicion - semana * UNA_SEMANA] = viajes
+    promedio = features.p1_promedio_misma_hora(matriz, semanas=4)
+    assert promedio[0, posicion] == pytest.approx(2.5)
+
+
+def test_p1_promedio_ignora_las_semanas_sin_dato():
+    matriz, posicion = p1_malla_cinco_semanas()
+    for semana, viajes in enumerate([4, 3, 2, 1], start=1):
+        matriz[0, posicion - semana * UNA_SEMANA] = viajes
+    matriz[0, posicion - 2 * UNA_SEMANA] = np.nan  # la estación no operaba esa semana
+    promedio = features.p1_promedio_misma_hora(matriz, semanas=4)
+    assert promedio[0, posicion] == pytest.approx((4 + 2 + 1) / 3)
+
+
+def test_p1_promedio_sin_semanas_anteriores_es_nan():
+    matriz, _ = p1_malla_cinco_semanas()
+    promedio = features.p1_promedio_misma_hora(matriz, semanas=4)
+    assert np.isnan(promedio[0, :UNA_SEMANA]).all()  # primera semana: no hay historia
+
+
+def test_p1_promedio_no_usa_la_hora_que_se_predice():
+    matriz, posicion = p1_malla_cinco_semanas()
+    sin_cambio = features.p1_promedio_misma_hora(matriz, semanas=4)[0, posicion]
+    matriz[0, posicion] = 100  # el target de esa hora no debe entrar a su propia variable
+    assert features.p1_promedio_misma_hora(matriz, semanas=4)[0, posicion] == sin_cambio
+
+
+def calendario(*horas: str) -> pd.DataFrame:
+    return features.p1_variables_calendario(pd.Series(pd.to_datetime(list(horas))))
+
+
+def test_p1_calendario_marca_el_fin_de_semana():
+    tabla = calendario(
+        "2024-01-05 08:00", "2024-01-06 08:00", "2024-01-07 08:00", "2024-01-08 08:00"
+    )
+    assert tabla["dia_semana"].tolist() == [4, 5, 6, 0]  # viernes, sábado, domingo, lunes
+    assert tabla["es_fin_de_semana"].tolist() == [0, 1, 1, 0]
+
+
+def test_p1_calendario_marca_todo_el_dia_festivo_y_no_el_siguiente():
+    # 2024-02-05 es el primer lunes de febrero (Día de la Constitución)
+    tabla = calendario("2024-02-05 00:00", "2024-02-05 23:00", "2024-02-06 08:00")
+    assert tabla["es_festivo"].tolist() == [1, 1, 0]
+
+
+def test_p1_calendario_en_el_cambio_de_anio():
+    tabla = calendario("2024-12-31 23:00", "2025-01-01 00:00")
+    assert tabla["mes"].tolist() == [12, 1]
+    assert tabla["hora"].tolist() == [23, 0]
+    assert tabla["es_festivo"].tolist() == [0, 1]  # el festivo del año nuevo también se calcula
+
+
+def test_p1_calendario_conserva_el_indice_y_usa_enteros_pequenos():
+    horas = pd.Series(pd.to_datetime(["2024-03-01 08:00", "2024-03-02 18:00"]), index=[7, 9])
+    tabla = features.p1_variables_calendario(horas)
+    assert list(tabla.index) == [7, 9]
+    assert (tabla.dtypes == "int8").all()
+
+
+def test_p1_horas_de_servicio_tiene_20_por_dia_y_nunca_las_de_madrugada():
+    horas = features.p1_horas_de_servicio("2024-02", "2024-02")  # febrero bisiesto: 29 días
+    assert len(horas) == 29 * features.P1_HORAS_POR_DIA
+    assert not horas.hour.isin(cfg.HORAS_SIN_SERVICIO).any()
+    assert (pd.Series(horas.date).value_counts() == features.P1_HORAS_POR_DIA).all()
+
+
+def test_p1_horas_de_servicio_cubre_el_mes_completo():
+    horas = features.p1_horas_de_servicio("2024-01", "2024-03")
+    assert horas[0] == pd.Timestamp("2024-01-01 00:00")
+    assert horas[-1] == pd.Timestamp("2024-03-31 23:00")
+    assert horas.is_monotonic_increasing and horas.is_unique
+
+
+def test_p1_meses_sin_datos_detecta_el_mes_faltante():
+    assert features.p1_meses_sin_datos(["2024-01", "2024-03"], "2024-01", "2024-03") == ["2024-02"]
+
+
+def test_p1_meses_sin_datos_vacio_cuando_el_rango_esta_completo():
+    periodos = pd.period_range("2024-01", "2024-03", freq="M")  # también acepta Period
+    assert features.p1_meses_sin_datos(periodos, "2024-01", "2024-03") == []
+    assert features.p1_meses_sin_datos(["2024-01"], "2024-01", "2024-01") == []
