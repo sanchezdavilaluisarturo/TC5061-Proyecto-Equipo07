@@ -1092,7 +1092,7 @@ Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_inte
 | Revisión | Herramienta o práctica | Resultado |
 |---|---|---|
 | Código | bandit 1.9.4 sobre `tc5061_proyecto_equipo07/` | Sin hallazgos; 7 avisos de severidad baja justificados con `# nosec` |
-| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 4 paquetes actualizados y 7 vulnerabilidades aceptadas (una publicada durante la entrega y detectada por el CI) |
+| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 5 paquetes actualizados y 7 vulnerabilidades aceptadas. Dos avisos se publicaron durante la entrega y los detectó el CI: el de `mlflow` se aceptó y los 3 de `tornado` se corrigieron actualizando |
 | Datos sensibles | `.gitignore`, `.env` y secret de GitHub | No se versionan credenciales, datos ni modelos |
 
 **bandit** analiza el código sin ejecutarlo y busca patrones inseguros (contraseñas en el código, `eval`, `pickle`, `subprocess` con shell, etc.). No se corre sobre `tests/` porque marca cada `assert`, que es como PyTest verifica los resultados. Los 7 avisos son las llamadas a `git rev-parse` de `p1_commit_actual`, `p2_commit_actual` y `p3_commit_actual` (B404, B603 y B607), que etiquetan cada run con su commit: los argumentos son fijos, no se usa shell y no entra ningún dato del usuario. Al correrlo, bandit imprime `nosec encountered ... but no failed test` en esas líneas; es un aviso conocido de bandit con llamadas de varias líneas y el resultado sigue siendo `No issues identified`.
@@ -1105,6 +1105,7 @@ Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_inte
 | `filelock` | 4.1.1 | 4.2.1 | 6 |
 | `certifi` | 2026.7.22 | 2026.10.19 | 2 |
 | `gitpython` (vía `mlflow`) | 3.2.0 | 3.2.1 | 1 |
+| `tornado` (vía Jupyter) | 6.5.10 | 6.6 | 3 (publicadas durante la entrega; ver [Segunda vulnerabilidad detectada por el CI](#segunda-vulnerabilidad-detectada-por-el-ci-tornado)) |
 
 Las restantes se revisaron y se aceptan; están en `PIP_AUDIT_IGNORAR` del `Makefile`, así que cualquier vulnerabilidad nueva hace fallar `make seguridad`:
 
@@ -1126,6 +1127,26 @@ Se revisó el aviso (GHSA-j7qq-vr8c-xvw3): afecta a `mlflow.crewai.autolog()` co
 ![Check de calidad en rojo en el PR #23](reports/evidencias/ci_calidad_falla.png)
 
 ![Log del paso de seguridad con la vulnerabilidad de mlflow](reports/evidencias/ci_calidad_falla_log.png)
+
+#### Segunda vulnerabilidad detectada por el CI: tornado
+
+El 28 de octubre de 2026, el job `calidad` volvió a fallar en `make seguridad`. Bandit salió limpio (`No issues identified`); falló la segunda pasada de pip-audit, que termina con código 2 si encuentra algo que no está en `PIP_AUDIT_IGNORAR`:
+
+| Paquete | Vulnerabilidades | Corregidas en |
+|---|---|---|
+| `tornado` 6.5.10 | CVE-2026-116577, CVE-2026-115927 y CVE-2026-116578 | 6.6 |
+
+Igual que la de `mlflow`, se publicó después de la primera revisión: unas horas antes el mismo comando pasaba. `tornado` no es una dependencia directa; llega por Jupyter (`notebook`, `jupyterlab`, `ipykernel`, `jupyter_server`), que solo se usan en los notebooks, y el proyecto no levanta ningún servidor tornado.
+
+**Decisión: actualizar, no aceptar.** A diferencia de `mlflow`, aquí sí existe una versión corregida y subirla no afecta nada de lo ya entregado:
+
+- `requirements.txt` pasa de `tornado==6.5.10` a `tornado==6.6`.
+- `pip check` no reporta conflictos con las versiones que fijan Jupyter y el resto de dependencias.
+- La suite completa pasa con la versión nueva (218 pruebas).
+- `make seguridad` termina con `No known vulnerabilities found, 9 ignored` y `reports/seguridad/pip_audit.json` quedó actualizado.
+- No se agregó nada a `PIP_AUDIT_IGNORAR`: la vulnerabilidad se corrige en lugar de justificarse.
+
+Como pip-audit consulta bases de datos que se actualizan a diario, un `requirements.txt` que pasa hoy puede fallar mañana sin cambiar una línea. Por eso conviene volver a correr `make seguridad` justo antes de entregar.
 
 **Datos sensibles:**
 
