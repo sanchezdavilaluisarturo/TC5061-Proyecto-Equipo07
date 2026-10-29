@@ -694,7 +694,7 @@ tomli==2.5.0
     # via pip-audit
 tomli-w==1.2.0
     # via pip-audit
-tornado==6.5.10
+tornado==6.6
     # via
     #   ipykernel
     #   jupyter-client

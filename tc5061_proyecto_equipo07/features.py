@@ -59,7 +59,10 @@ def p3_perfil_de_estaciones(viajes_periodo: pd.DataFrame) -> pd.DataFrame:
     estaciones_ids = conteo.index.get_level_values("estacion").unique()
 
     def perfil(es_laboral, prefijo):
-        bloque = conteo.xs(es_laboral, level="laboral").reindex(estaciones_ids, fill_value=0)
+        # Máscara en lugar de `xs`: si el periodo no tiene ningún día de este tipo, `xs` lanza
+        # KeyError; con la máscara el bloque queda vacío y el reindex lo rellena con ceros
+        del_tipo = conteo[conteo.index.get_level_values("laboral") == es_laboral]
+        bloque = del_tipo.droplevel("laboral").reindex(estaciones_ids, fill_value=0)
         proporcion = bloque.div(bloque.sum(axis=1).replace(0, np.nan), axis=0).fillna(0)
         proporcion.columns = [f"{prefijo}_h{hora:02d}" for hora in proporcion.columns]
         return proporcion
@@ -572,6 +575,97 @@ def p1_validar(muestra: int = cfg.P1_MUESTRA_VALIDACION):
         )
     logger.success(
         f"Validación de P1 en {(time.perf_counter() - inicio) / 60:.1f} min ({carpeta})"
+    )
+
+
+def p3_revisar_tabla_completa(
+    modelado: pd.DataFrame, estaciones: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Revisiones de P3 que no admiten muestra: llave, duración, fechas, catálogo y orden.
+
+    Un solo viaje basta para invalidar la tabla, así que se cuentan sobre todas las filas.
+    P3 no usa test, pero la tabla lo trae: solo se exige que train y valid existan.
+    """
+    usados = modelado[modelado["particion"] != "brecha"]
+    faltan = {"train", "valid"} - set(usados["particion"].astype(str).unique())
+    if faltan:
+        raise ValueError(f"La tabla de P3 no tiene viajes de {sorted(faltan)}")
+    fin_train = usados.loc[usados["particion"] == "train", "inicio_del_viaje"].max()
+    duracion = modelado["duracion_min"]
+    nulos = modelado[["inicio_del_viaje", "fin_del_viaje", "origen_id", "destino_id"]].isna()
+    problemas = {
+        "viaje_id repetido": modelado["viaje_id"].duplicated().sum(),
+        "fechas o estaciones nulas": nulos.any(axis=1).sum(),
+        "duración nula o no positiva": (duracion.isna() | (duracion <= 0)).sum(),
+        f"duración mayor a {cfg.DURACION_MAXIMA_MIN} min": (
+            duracion > cfg.DURACION_MAXIMA_MIN
+        ).sum(),
+        "fin anterior al inicio": (modelado["fin_del_viaje"] < modelado["inicio_del_viaje"]).sum(),
+        "viajes de valid no posteriores a train": (
+            (usados["particion"] == "valid") & (usados["inicio_del_viaje"] <= fin_train)
+        ).sum(),
+    }
+    if estaciones is not None:
+        catalogo = estaciones["id"]
+        problemas["origen o destino fuera del catálogo"] = (
+            ~(modelado["origen_id"].isin(catalogo) & modelado["destino_id"].isin(catalogo))
+        ).sum()
+    revision = pd.DataFrame(
+        {"revision": list(problemas), "filas_con_problema": [int(n) for n in problemas.values()]}
+    )
+    revision["resultado"] = np.where(revision["filas_con_problema"] == 0, "PASS", "FAIL")
+    return revision
+
+
+@app.command()
+def p3_validar(muestra: int = cfg.P3_MUESTRA_VALIDACION):
+    """Valida la tabla de P3: revisiones sobre la tabla completa y DeepChecks de train vs valid."""
+    ruta = dataset.p3_ruta_viajes_modelado()
+    if not ruta.exists():
+        raise FileNotFoundError(f"Falta {ruta.name}; ejecutar `make features-p3`")
+    inicio = time.perf_counter()
+    carpeta = validacion.VALIDACION_DIR
+    carpeta.mkdir(parents=True, exist_ok=True)
+    modelado = pd.read_parquet(ruta)
+    memoria = modelado.memory_usage(deep=True).sum() / 1e9
+    logger.info(f"{ruta.name}: {len(modelado)} filas, {memoria:.2f} GB en memoria")
+
+    revision = p3_revisar_tabla_completa(modelado, dataset.p3_cargar_estaciones())
+    revision.to_csv(carpeta / "p3_tabla_completa.csv", index=False)
+    logger.info(f"Revisiones sobre la tabla completa:\n{revision.to_string(index=False)}")
+    if (revision["resultado"] == "FAIL").any():
+        raise ValueError(
+            "La tabla de P3 no pasa las revisiones completas; ver p3_tabla_completa.csv"
+        )
+
+    # P3 no usa test y la brecha no entra a ningún conjunto. Se descartan también las columnas
+    # que solo identifican o repiten el tiempo: con viaje_id, fin_del_viaje y periodo_archivo,
+    # DeepChecks reportaría drift del calendario
+    usados = modelado.loc[
+        modelado["particion"].isin(["train", "valid"]),
+        ["particion", "inicio_del_viaje", "origen_id", "destino_id", "duracion_min"],
+    ].reset_index(drop=True)
+    del modelado
+    usados["particion"] = usados["particion"].astype(str)
+    for conjunto, filas in usados["particion"].value_counts().items():
+        tomadas = min(muestra, filas)
+        logger.info(f"Muestra de {conjunto}: {tomadas} de {filas} filas ({tomadas / filas:.1%})")
+
+    # P3 compara train con valid; origen_id y destino_id como categóricas reportan estaciones nuevas
+    validacion.validar_tabla(
+        "p3_train_valid",
+        usados,
+        "particion",
+        "duracion_min",
+        ["origen_id", "destino_id"],
+        "inicio_del_viaje",
+        conjuntos=("train", "valid"),
+        umbral_nulos=cfg.P3_UMBRAL_NULOS,
+        muestra=muestra,
+        carpeta=carpeta,
+    )
+    logger.success(
+        f"Validación de P3 en {(time.perf_counter() - inicio) / 60:.1f} min ({carpeta})"
     )
 
 
