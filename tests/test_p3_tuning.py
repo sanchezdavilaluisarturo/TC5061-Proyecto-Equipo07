@@ -4,7 +4,7 @@ import numpy as np
 import optuna
 import pandas as pd
 import pytest
-from test_modeling import p3_limpios_sinteticos
+from test_p3_modeling import p3_limpios_sinteticos
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import dataset

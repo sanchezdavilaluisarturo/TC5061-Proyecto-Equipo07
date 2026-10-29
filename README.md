@@ -931,7 +931,7 @@ Las pruebas, la validación de datos y los chequeos de seguridad corren con un c
 
 ### Organización de las pruebas
 
-Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Las de P1 y P3 siguen el prefijo de la pregunta (`test_p1_*.py`); las comunes no llevan prefijo. `tests/conftest.py` fija `OMP_NUM_THREADS=1` solo durante las pruebas: con unos cientos de filas, XGBoost, HistGradientBoosting y K-Means gastaban más tiempo coordinando todos los hilos del CPU que calculando (en WSL2 con 16 hilos, la suite pasó de 8:24 a 1:23 min). No afecta `make train` ni `mlflow run`.
+Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Todos los archivos de P3 llevan el prefijo de la pregunta (`test_p3_*.py`: `dataset`, `features`, `modeling`, `particion`, `evaluacion`, `reproducibilidad`, `tuning`, `registro` y `validacion`); los de P1 combinan prefijo (`test_p1_*.py`) y sufijo (`test_tuning_p1.py`, `test_registro_p1.py`); los comunes (`test_config.py`, `test_run.py`, `test_validacion.py`) no llevan identificador. Todo lo de las features de P3 vive en un solo archivo, `test_p3_features.py`. `tests/conftest.py` fija `OMP_NUM_THREADS=1` solo durante las pruebas: con unos cientos de filas, XGBoost, HistGradientBoosting y K-Means gastaban más tiempo coordinando todos los hilos del CPU que calculando (en WSL2 con 16 hilos, la suite pasó de 8:24 a 1:23 min). No afecta `make train` ni `mlflow run`.
 
 | Archivo | Qué prueba | Pruebas |
 |---|---|---:|
@@ -946,12 +946,16 @@ Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos
 | `test_p1_evaluacion.py` | MAE de P1 por hora, por estación y por zona | 5 |
 | `test_p1_validacion.py` | Revisiones de la tabla completa de P1 y comando `p1-validar` | 8 |
 | `test_registro_p1.py` | Registro de P1 en el Model Registry | 4 |
-| `test_dataset.py` | Carga, partición y validación de P3 (`dataset.py`) | 10 |
-| `test_features.py` | Features de P3 | 5 |
-| `test_modeling.py` | Entrenamiento y predicción de P3 | 17 |
-| `test_tuning_p3.py` | Búsqueda de P3 con Optuna | 6 |
-| `test_registro_p3.py` | Registro de P3 en el Model Registry | 7 |
-| **Total** | | **154** |
+| `test_p3_dataset.py` | Carga, partición y validación de P3 (`dataset.py`) | 10 |
+| `test_p3_modeling.py` | Entrenamiento y predicción de P3 | 17 |
+| `test_p3_tuning.py` | Búsqueda de P3 con Optuna | 6 |
+| `test_p3_registro.py` | Registro de P3 en el Model Registry: versión, linaje, alias (champion y challenger), carga por alias y errores (run sin terminar, sin modelo, métricas sin conjunto, alias inexistente, sin servidor) | 13 |
+| `test_p3_particion.py` | Partición temporal de P3: sin viajes sin conjunto, orden, brecha mínima de 24 h, fronteras al nanosegundo, serie vacía y fronteras de la configuración | 10 |
+| `test_p3_features.py` | Features de P3: variables de tiempo, esquema del perfil de estaciones, tabla de estaciones, demanda estación-hora y viajes por mes; y casos límite del perfil (solo laboral o solo fin de semana, horas sin servicio, umbrales de salidas, sin fuga de valid, test ni brecha, y periodos sin un tipo de día, regresión del `KeyError`) | 17 |
+| `test_p3_evaluacion.py` | Criterios de aceptación de P3 en sus bordes, selección con empates, promedio por semilla (peor caso en tamaño mínimo) y métricas del modelo | 16 |
+| `test_p3_reproducibilidad.py` | Misma semilla, mismos grupos y métricas en P3 (baseline, alternativo y Optuna); con otra semilla cambian | 6 |
+| `test_p3_validacion.py` | Revisiones de la tabla completa de P3 y comando `p3-validar` | 14 |
+| **Total** | | **218** |
 
 ### Validación de datos con DeepChecks
 
@@ -977,7 +981,7 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 |---|---|
 | P1 | `tests/test_p1_reproducibilidad.py`: baseline, HGB, XGBoost y XGBoost con hiperparámetros de Optuna (con `subsample` y `colsample_bytree`, que usan azar) dan predicciones y métricas idénticas al entrenar dos veces. Una prueba de contraste verifica que con otra semilla las predicciones cambian (la semilla sí controla el azar), y la búsqueda de Optuna corrida dos veces da los mismos trials y el mismo mejor trial |
 | P2 | _Pendiente (rama `testing/p2`)_ |
-| P3 | _Pendiente (rama `testing/p3`)_ |
+| P3 | `tests/test_p3_reproducibilidad.py`: el baseline, el modelo alternativo (PCA + K-Means) y la búsqueda de Optuna dan los mismos grupos, métricas, configuración elegida y trials al correr dos veces con la misma semilla. Las pruebas usan estaciones con horas al azar: con grupos bien separados K-Means converge igual con cualquier semilla y el contraste no demostraría nada. Con otra semilla cambian la inercia y los grupos del baseline, las semillas de la rejilla del alternativo y los trials de Optuna |
 
 #### Hallazgos por pregunta
 
@@ -985,7 +989,7 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 |---|---|---|---|
 | P1 | `p1_demanda_estacion_hora.parquet` (16,103,922 filas) | 109 estaciones nuevas en test (9 en valid) y drift de `dias_desde_apertura`; nulos solo en los rezagos (< 0.5 %); sin leakage temporal ni drift del target | [Validación de P1](#validación-de-p1) |
 | P2 | _Pendiente (rama `testing/p2`)_ | | |
-| P3 | _Pendiente (rama `testing/p3`)_ | | |
+| P3 | `viajes_modelado_2020-01_2026-09.parquet` (27,026,645 filas) | 9 estaciones nuevas en valid (origen y destino); 0.0054 % de viajes duplicados; sin nulos, sin leakage temporal y sin drift de features ni de duración | [Validación de P3](#validación-de-p3) |
 
 #### Validación de P1
 
@@ -1034,12 +1038,61 @@ Reportes en `reports/validacion/`: `p1_tabla_completa.csv`, y por comparación `
 
 ![Reporte de DeepChecks train vs test de P1: chequeos que no pasaron y estaciones nuevas](reports/evidencias/deepchecks_p1_hallazgos.png)
 
+#### Validación de P3
+
+`make validar-p3` (comando `p3-validar` de `features.py`) valida la tabla de viajes de modelado de P3 (27,026,645 filas y 7 columnas, 1.22 GB en memoria) en dos niveles y tarda unos 16 segundos. Es la tabla de la que salen los perfiles de las estaciones; la que se valida es la de viajes y no la de perfiles porque ahí es donde pueden entrar viajes repetidos, fechas fuera de orden o estaciones sin nomenclatura.
+
+**1. Revisiones sobre la tabla completa.** Son críticas: si alguna falla, el comando se detiene antes de DeepChecks y deja `p3_tabla_completa.csv`.
+
+| Revisión | Filas con problema | Resultado |
+|---|---:|---|
+| `viaje_id` repetido | 0 | PASS |
+| Fechas o estaciones nulas | 0 | PASS |
+| Duración nula o no positiva | 0 | PASS |
+| Duración mayor a 1,440 min (24 h) | 0 | PASS |
+| Fin del viaje anterior al inicio | 0 | PASS |
+| Viajes de valid no posteriores al último de train | 0 | PASS |
+| Origen o destino fuera de la nomenclatura de estaciones | 0 | PASS |
+
+**2. DeepChecks** con el módulo común, comparando `train` contra `valid` (`p3_train_valid`). P3 no usa test, así que ni test ni la brecha entran, ni en la comparación ni en la suite de integridad. Las columnas son `inicio_del_viaje` (fecha, para el leakage temporal), `origen_id` y `destino_id` (categóricas, para que DeepChecks reporte las estaciones nuevas) y `duracion_min`. P3 es no supervisado y no tiene target: `duracion_min` hace de etiqueta para que corran los chequeos de etiqueta. Se descartan `viaje_id`, `fin_del_viaje` y `periodo_archivo` porque solo identifican o repiten el calendario y DeepChecks reportaría drift de lo que es el paso del tiempo. El umbral de nulos es 0 % (`P3_UMBRAL_NULOS`).
+
+| Chequeo | train vs valid | Lectura |
+|---|---|---|
+| Leakage de fechas (traslape y filas repetidas), crítico | PASS | Ninguna fecha de valid aparece en entrenamiento |
+| Nulos, nulos mixtos, tipos mixtos, caracteres especiales y columnas de un solo valor | PASS | Sin problemas de integridad |
+| Drift de las variables (`origen_id`, `destino_id`) | PASS | El mayor es `destino_id`, 0.03 (umbral 0.2): las estaciones se usan con una distribución parecida en train y en valid |
+| Drift de la etiqueta (`duracion_min`, Kolmogorov-Smirnov) | PASS | 0.02 (umbral 0.15): la duración de los viajes es estable entre periodos |
+| **Estaciones nuevas** (`origen_id` y `destino_id`) | FAIL | Hallazgo: 9 estaciones aparecen en valid sin estar en train (las mismas 9 que en P1). La prueba de estabilidad ya las excluye: reasigna solo las estaciones comunes a train y valid (`P3Baseline.comunes`) |
+| **Duplicados** | WARN | Hallazgo: 0.0054 % de las filas de la muestra se repiten. No son el mismo viaje, porque `viaje_id` no se repite en la tabla completa; son viajes distintos con el mismo inicio al minuto, origen, destino y duración, que es lo esperable cuando se descarta el identificador |
+| Conflicting Labels | ERROR | No aplica: DeepChecks lo omite en regresión (*Check is irrelevant for regression tasks*). Se queda en el módulo común porque sí aplica a la clasificación de P2 |
+
+**Muestra de 500,000 filas por conjunto** (`P3_MUESTRA_VALIDACION`, mismas razones que en P1: DeepChecks ya muestrea internamente y la muestra usa la semilla del proyecto):
+
+| Conjunto | Filas | Muestra | % |
+|---|---:|---:|---:|
+| train | 17,987,077 | 500,000 | 2.8 % |
+| valid | 4,520,744 | 500,000 | 11.1 % |
+
+Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_integridad.html`, `p3_train_valid_train_test.html` y `p3_train_valid_resumen.csv`. Los HTML se abren en el navegador y necesitan internet para cargar sus gráficas.
+
+![make validar-p3: revisiones sobre la tabla completa y muestra de cada conjunto](reports/evidencias/validar_p3_01.png)
+
+![make validar-p3: resumen de DeepChecks en train vs valid](reports/evidencias/validar_p3_02.png)
+
+![Reporte de DeepChecks train vs valid de P3: estaciones nuevas](reports/evidencias/deepchecks_p3_hallazgos.png)
+
+**Bug encontrado por las pruebas y corregido.** Al escribir `test_p3_features.py` apareció un caso límite: `p3_perfil_de_estaciones` lanzaba `KeyError` si en todo el periodo que recibía no había un solo viaje en día laboral o un solo viaje en fin de semana (por ejemplo, una tabla de pocas filas, todas de lunes). La causa era `conteo.xs(es_laboral, level="laboral")`, que falla cuando el nivel no tiene esa clave. Ahora se selecciona el bloque con una máscara sobre el índice y se rellena con ceros al reindexar por estación, así que el perfil del tipo de día que falta queda en 0.
+
+- **Impacto:** nulo en los resultados del proyecto. Con los años de viajes reales de train y valid siempre hay ambos tipos de día, y el cambio no altera ningún valor cuando existen. Solo cambia el caso que antes terminaba en error.
+- **Pruebas de regresión:** `test_p3_periodo_sin_fin_de_semana_deja_en_cero_todo_el_perfil_de_fin_de_semana` y `test_p3_periodo_sin_dias_laborales_deja_en_cero_todo_el_perfil_laboral`. Se comprobó que fallan con el código anterior y pasan con el nuevo.
+- **Dónde:** `tc5061_proyecto_equipo07/features.py`, función `p3_perfil_de_estaciones`.
+
 ### Chequeos de seguridad
 
 | Revisión | Herramienta o práctica | Resultado |
 |---|---|---|
 | Código | bandit 1.9.4 sobre `tc5061_proyecto_equipo07/` | Sin hallazgos; 7 avisos de severidad baja justificados con `# nosec` |
-| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 4 paquetes actualizados y 7 vulnerabilidades aceptadas (una publicada durante la entrega y detectada por el CI) |
+| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 5 paquetes actualizados y 7 vulnerabilidades aceptadas. Dos avisos se publicaron durante la entrega y los detectó el CI: el de `mlflow` se aceptó y los 3 de `tornado` se corrigieron actualizando |
 | Datos sensibles | `.gitignore`, `.env` y secret de GitHub | No se versionan credenciales, datos ni modelos |
 
 **bandit** analiza el código sin ejecutarlo y busca patrones inseguros (contraseñas en el código, `eval`, `pickle`, `subprocess` con shell, etc.). No se corre sobre `tests/` porque marca cada `assert`, que es como PyTest verifica los resultados. Los 7 avisos son las llamadas a `git rev-parse` de `p1_commit_actual`, `p2_commit_actual` y `p3_commit_actual` (B404, B603 y B607), que etiquetan cada run con su commit: los argumentos son fijos, no se usa shell y no entra ningún dato del usuario. Al correrlo, bandit imprime `nosec encountered ... but no failed test` en esas líneas; es un aviso conocido de bandit con llamadas de varias líneas y el resultado sigue siendo `No issues identified`.
@@ -1052,6 +1105,7 @@ Reportes en `reports/validacion/`: `p1_tabla_completa.csv`, y por comparación `
 | `filelock` | 4.1.1 | 4.2.1 | 6 |
 | `certifi` | 2026.7.22 | 2026.10.19 | 2 |
 | `gitpython` (vía `mlflow`) | 3.2.0 | 3.2.1 | 1 |
+| `tornado` (vía Jupyter) | 6.5.10 | 6.6 | 3 (publicadas durante la entrega; ver [Segunda vulnerabilidad detectada por el CI](#segunda-vulnerabilidad-detectada-por-el-ci-tornado)) |
 
 Las restantes se revisaron y se aceptan; están en `PIP_AUDIT_IGNORAR` del `Makefile`, así que cualquier vulnerabilidad nueva hace fallar `make seguridad`:
 
@@ -1073,6 +1127,26 @@ Se revisó el aviso (GHSA-j7qq-vr8c-xvw3): afecta a `mlflow.crewai.autolog()` co
 ![Check de calidad en rojo en el PR #23](reports/evidencias/ci_calidad_falla.png)
 
 ![Log del paso de seguridad con la vulnerabilidad de mlflow](reports/evidencias/ci_calidad_falla_log.png)
+
+#### Segunda vulnerabilidad detectada por el CI: tornado
+
+El 28 de octubre de 2026, el job `calidad` volvió a fallar en `make seguridad`. Bandit salió limpio (`No issues identified`); falló la segunda pasada de pip-audit, que termina con código 2 si encuentra algo que no está en `PIP_AUDIT_IGNORAR`:
+
+| Paquete | Vulnerabilidades | Corregidas en |
+|---|---|---|
+| `tornado` 6.5.10 | CVE-2026-116577, CVE-2026-115927 y CVE-2026-116578 | 6.6 |
+
+Igual que la de `mlflow`, se publicó después de la primera revisión: unas horas antes el mismo comando pasaba. `tornado` no es una dependencia directa; llega por Jupyter (`notebook`, `jupyterlab`, `ipykernel`, `jupyter_server`), que solo se usan en los notebooks, y el proyecto no levanta ningún servidor tornado.
+
+**Decisión: actualizar, no aceptar.** A diferencia de `mlflow`, aquí sí existe una versión corregida y subirla no afecta nada de lo ya entregado:
+
+- `requirements.txt` pasa de `tornado==6.5.10` a `tornado==6.6`.
+- `pip check` no reporta conflictos con las versiones que fijan Jupyter y el resto de dependencias.
+- La suite completa pasa con la versión nueva (218 pruebas).
+- `make seguridad` termina con `No known vulnerabilities found, 9 ignored` y `reports/seguridad/pip_audit.json` quedó actualizado.
+- No se agregó nada a `PIP_AUDIT_IGNORAR`: la vulnerabilidad se corrige en lugar de justificarse.
+
+Como pip-audit consulta bases de datos que se actualizan a diario, un `requirements.txt` que pasa hoy puede fallar mañana sin cambiar una línea. Por eso conviene volver a correr `make seguridad` justo antes de entregar.
 
 **Datos sensibles:**
 
@@ -1099,6 +1173,8 @@ El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el 
 | Reporte de pip-audit | [`reports/seguridad/pip_audit.json`](reports/seguridad/pip_audit.json) |
 | Reportes de DeepChecks por pregunta | `reports/validacion/` (ver [Hallazgos por pregunta](#hallazgos-por-pregunta)) |
 | Validación de P1 | [Validación de P1](#validación-de-p1) |
+| Validación de P3 | [Validación de P3](#validación-de-p3) |
+| Pruebas de P3 | [Evidencias de P3](#evidencias-de-p3) |
 | CI que detectó una vulnerabilidad | [Vulnerabilidad detectada por el CI](#vulnerabilidad-detectada-por-el-ci) |
 
 Ejecución de `make pruebas`:
@@ -1106,6 +1182,7 @@ Ejecución de `make pruebas`:
 ![Ejecución de make pruebas: pruebas recolectadas y avance por archivo](reports/evidencias/make_pruebas_01.png)
 
 ![Ejecución de make pruebas: resultado final](reports/evidencias/make_pruebas_02.png)
+
 
 Ejecución de `make seguridad`:
 
@@ -1116,6 +1193,14 @@ Ejecución de `make seguridad`:
 Job `calidad` en verde en el PR #23 (ruff, pytest y seguridad):
 
 ![Check de calidad en verde en el PR #23](reports/evidencias/ci_calidad_ok.png)
+
+#### Evidencias de P3
+
+Pruebas de P3 (`pytest tests/test_p3_*.py -v`: partición, features, evaluación, reproducibilidad y validación, con sus casos límite):
+
+![Pruebas de P3 con nombre de cada caso](reports/evidencias/pruebas_p3_01.png)
+
+Las capturas de `make pruebas` y `make seguridad` de la suite completa cubren las tres preguntas, así que se toman al integrar P1, P2 y P3 (ver arriba).
 
 ## Estructura de carpetas
 
