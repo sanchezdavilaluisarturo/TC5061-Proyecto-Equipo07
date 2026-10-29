@@ -84,7 +84,7 @@ def test_p2_limpieza_aplica_las_tres_reglas():
     assert limpios.index.tolist() == [0]
 
 
-def test_p2_intervalo_redondea_al_bin_y_manda_horas_sin_servicio_al_ultimo_bin_de_las_0():
+def test_p2_intervalo_manda_horas_sin_servicio_al_bin_de_las_0():
     ts = pd.Series(
         pd.to_datetime(
             ["2024-01-08 08:40", "2024-01-08 00:45", "2024-01-08 01:10", "2024-01-08 04:59"]
@@ -117,7 +117,7 @@ def test_p2_cambios_rellena_con_ceros_los_bins_sin_actividad():
     assert fila.loc[(1, pd.Timestamp("2024-01-08 06:00"))].tolist() == [0, 0]
 
 
-def test_p2_suma_acumulada_reinicia_en_cada_dia_de_servicio_y_quita_dias_sin_viajes():
+def test_p2_suma_acumulada_reinicia_cada_dia_de_servicio():
     cambios = pd.DataFrame(
         {
             "estacion": [1, 1, 1, 2, 2],
@@ -187,7 +187,7 @@ def test_p2_clase_de_riesgo_con_alfa_exacto_y_ambos_eventos():
     assert "clase" not in cambios.columns
 
 
-def test_p2_ventana_retrospectiva_suma_los_ultimos_k_bins_del_mismo_dia():
+def test_p2_ventana_suma_los_ultimos_k_bins_del_dia():
     cambios = pd.DataFrame(
         {
             "estacion": [1] * 5,
@@ -199,7 +199,7 @@ def test_p2_ventana_retrospectiva_suma_los_ultimos_k_bins_del_mismo_dia():
     assert features.p2_ventana(cambios, "neto", 1).tolist() == [1, 2, 3, 4, 5]
 
 
-def test_p2_construir_caracteristicas_etiqueta_la_ventana_antes_de_vaciarse():
+def test_p2_etiqueta_la_ventana_antes_de_vaciarse():
     tabla = features.p2_construir_caracteristicas(
         p2_viajes_de_una_manana(), p2_estaciones(), bin_min=30, h_bins=4, alfa=0.5
     )
