@@ -3,11 +3,11 @@ Incluye la elección de umbrales de clasificación"""
 
 import numpy as np
 import pytest
+from test_p2_modelado import p2_conjuntos_sinteticos
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07.modeling import train
 from tc5061_proyecto_equipo07.modeling.predict import p2_decidir_clase
-from test_p2_modelado import p2_conjuntos_sinteticos
 
 
 def test_p2_decidir_clase_compara_cada_riesgo_con_su_umbral():

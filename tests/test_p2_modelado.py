@@ -11,6 +11,8 @@ from xgboost import XGBClassifier
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07.modeling import train
 
+FILAS_POR_DIA = 20
+
 
 def p2_tabla_sintetica(n: int = 600, semilla: int = 0) -> pd.DataFrame:
     """Variables de P2 con las tres clases: el flujo neto reciente anticipa el riesgo."""
@@ -31,6 +33,52 @@ def p2_tabla_sintetica(n: int = 600, semilla: int = 0) -> pd.DataFrame:
         tabla[columna] = np.clip(base + rng.normal(scale=0.1, size=n), 0, 0.49)
     tabla["dia"] = pd.Timestamp("2025-01-01") + pd.to_timedelta(np.arange(n) // 20, "D")
     return tabla
+
+
+def p2_cambios_sinteticos(filas_por_conjunto: int = 300) -> pd.DataFrame:
+    """Tabla con las columnas de `features p2-features` y 15 días en train, valid y test.
+
+    Los días de train terminan antes de la brecha de FRONTERA_VALID, así que ninguna fila se
+    descarta. La historia "hasta ayer" no viene en la tabla: la agrega p2_preparar_conjuntos.
+    """
+    inicios = [
+        pd.Timestamp(cfg.FRONTERA_VALID) - pd.Timedelta(days=30),
+        pd.Timestamp(cfg.FRONTERA_VALID),
+        pd.Timestamp(cfg.FRONTERA_TEST),
+    ]
+    tabla = p2_tabla_sintetica(len(inicios) * filas_por_conjunto, semilla=1)
+    i = np.arange(filas_por_conjunto)
+    partes = []
+    for k, inicio in enumerate(inicios):
+        parte = tabla.iloc[k * filas_por_conjunto : (k + 1) * filas_por_conjunto].copy()
+        parte["dia"] = inicio + pd.to_timedelta(i // FILAS_POR_DIA, "D")
+        parte["estacion"] = 1 + (i % FILAS_POR_DIA) // 5
+        parte["hora_idx"] = 10 + i % 5
+        parte["es_fin_semana"] = (parte["dia"].dt.dayofweek >= 5).astype(int)
+        partes.append(parte)
+    columnas = cfg.P2_FEATURES_SIN_HISTORICO + ["clase", "estacion", "dia", "hora_idx"]
+    return pd.concat(partes, ignore_index=True)[columnas]
+
+
+@pytest.fixture
+def figuras_temporales(tmp_path, monkeypatch):
+    """Figuras en una carpeta temporal y sin ventana gráfica."""
+    plt.switch_backend("Agg")
+    monkeypatch.setattr(cfg, "FIGURES_DIR", tmp_path)
+    return tmp_path
+
+
+@pytest.fixture
+def cambios_en_disco(tmp_path, monkeypatch):
+    """p2-entrenar lee la tabla sintética desde un parquet temporal y deja figuras en tmp_path."""
+    plt.switch_backend("Agg")
+    monkeypatch.setattr(cfg, "FIGURES_DIR", tmp_path)
+    ruta = tmp_path / "p2_cambios_estacion_bin.parquet"
+    p2_cambios_sinteticos().to_parquet(ruta, index=False)
+    # El valor por defecto de `ruta` se fija al importar: se cambia la función, no cfg
+    leer = train.p2_cargar_cambios
+    monkeypatch.setattr(train, "p2_cargar_cambios", lambda: leer(ruta))
+    return tmp_path
 
 
 def p2_conjuntos_sinteticos(n: int = 900) -> dict[str, pd.DataFrame]:
@@ -97,6 +145,20 @@ def test_p2_parametros_del_baseline_son_sus_umbrales():
     }
 
 
+def test_p2_parametros_de_hgb_incluyen_config_min_samples_leaf_e_iteraciones():
+    tabla = p2_tabla_sintetica()
+    variables = cfg.P2_FEATURES_CON_HISTORICO
+    modelo = train.p2_construir_modelo("hgb", min_samples_leaf=50, hiperparametros={"max_iter": 5})
+    modelo.fit(tabla[variables], tabla["clase"])
+
+    parametros = train.p2_parametros_modelo("hgb", modelo, {"umbrales": {1: 0.3, 2: 0.4}})
+    assert {f"modelo_{nombre}" for nombre in cfg.P2_PARAMETROS_HGB} <= set(parametros)
+    assert parametros["modelo_max_iter"] == 5
+    assert parametros["modelo_min_samples_leaf"] == 50
+    assert parametros["modelo_n_iter"] == 5  # sin early_stopping hace todas las iteraciones
+    assert (parametros["umbral_sin_bicis"], parametros["umbral_sin_anclajes"]) == (0.3, 0.4)
+
+
 def test_p2_parametros_de_xgb_no_repiten_los_de_la_busqueda():
     modelo = train.p2_construir_modelo("xgb_optuna", hiperparametros={"max_leaves": 7})
     parametros = train.p2_parametros_modelo(
@@ -141,24 +203,24 @@ def test_p2_entrenar_rechaza_candidatos_de_optuna_antes_de_leer_datos():
         )
 
 
-@pytest.fixture
-def figuras_temporales(tmp_path, monkeypatch):
-    """Figuras en una carpeta temporal y sin ventana gráfica."""
-    plt.switch_backend("Agg")
-    monkeypatch.setattr(cfg, "FIGURES_DIR", tmp_path)
-    return tmp_path
+def test_p2_entrenar_deja_la_comparacion_de_los_tres_modelos(cambios_en_disco, monkeypatch):
+    def no_registrar(*args, **kwargs):
+        raise AssertionError("Con registrar=False no se debe escribir en MLflow")
 
-
-@pytest.mark.parametrize("clave", ["baseline", "hgb", "xgb"])
-def test_p2_ajustar_y_evaluar_deja_metricas_y_artefactos(clave, figuras_temporales):
-    conjuntos = p2_conjuntos_sinteticos()
-    metricas = train.p2_ajustar_y_evaluar(
-        clave, conjuntos["fit"], conjuntos["val"], conjuntos["test"], {}, False, 20
+    monkeypatch.setattr(train, "p2_registrar_run", no_registrar)
+    train.p2_entrenar(
+        modelos="baseline,hgb,xgb", peso_historico=20, min_samples_leaf=20, registrar=False
     )
-    assert "valid_ap_riesgo" in metricas and "test_f1_sin_bicis" in metricas
-    assert all(np.isfinite(v) for v in metricas.values())
-    for archivo in ("matriz_confusion.png", "matriz_confusion.json", "curva_pr.png"):
-        assert (figuras_temporales / f"p2_{clave}_{archivo}").exists()
+
+    comparacion = pd.read_csv(cambios_en_disco / "p2_comparacion_modelos.csv", index_col=0)
+    assert set(comparacion.index) == {"baseline-historico", "hgb", "xgb"}
+    # El orden es el de selección: valid, no test
+    assert comparacion["valid_ap_riesgo"].is_monotonic_decreasing
+    assert {"valid_ap_riesgo", "test_ap_riesgo", "segundos_entrenamiento"} <= set(comparacion)
+    assert np.isfinite(comparacion.to_numpy()).all()
+    for clave in ("baseline", "hgb", "xgb"):
+        for archivo in ("matriz_confusion.png", "matriz_confusion.json", "curva_pr.png"):
+            assert (cambios_en_disco / f"p2_{clave}_{archivo}").exists()
 
 
 def test_p2_candidato_aprende_mas_que_el_azar(figuras_temporales):
