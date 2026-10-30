@@ -59,7 +59,7 @@ def test_defectos_de_p3_coinciden_con_los_acordados():
 
 
 def p3_funciones_de(ruta: Path) -> list[str]:
-    arbol = ast.parse(ruta.read_text())
+    arbol = ast.parse(ruta.read_text(encoding="utf-8"))
     return [n.name for n in arbol.body if isinstance(n, ast.FunctionDef)]
 
 

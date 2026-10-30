@@ -71,7 +71,7 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 
 **GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff`, `pytest` y `make seguridad`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
-**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`). En la Fase 2, P2 agrega la búsqueda `p2_xgb_optuna_busqueda` (con sus runs `trial_N`), los candidatos `p2-xgb` y `p2-xgb-optuna`, y el modelo registrado `mibici-equipo07-p2-riesgo` (alias `champion` y `challenger`).
+**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`). En la Fase 2, P2 agrega la búsqueda `p2-xgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p2-xgb` y `p2-xgb-optuna`, y el modelo registrado `mibici-equipo07-p2-riesgo` (alias `champion` y `challenger`).
 
 ## Ejecución con MLflow Project
 
@@ -931,13 +931,13 @@ Las pruebas, la validación de datos y los chequeos de seguridad corren con un c
 
 ### Organización de las pruebas
 
-Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Todos los archivos de P3 llevan el prefijo de la pregunta (`test_p3_*.py`: `dataset`, `features`, `modeling`, `particion`, `evaluacion`, `reproducibilidad`, `tuning`, `registro` y `validacion`); los de P1 combinan prefijo (`test_p1_*.py`) y sufijo (`test_tuning_p1.py`, `test_registro_p1.py`); los comunes (`test_config.py`, `test_run.py`, `test_validacion.py`) no llevan identificador. Todo lo de las features de P3 vive en un solo archivo, `test_p3_features.py`. `tests/conftest.py` fija `OMP_NUM_THREADS=1` solo durante las pruebas: con unos cientos de filas, XGBoost, HistGradientBoosting y K-Means gastaban más tiempo coordinando todos los hilos del CPU que calculando (en WSL2 con 16 hilos, la suite pasó de 8:24 a 1:23 min). No afecta `make train` ni `mlflow run`.
+Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos y sin red. Todos los archivos de P3 llevan el prefijo de la pregunta (`test_p3_*.py`: `dataset`, `features`, `modeling`, `particion`, `evaluacion`, `reproducibilidad`, `tuning`, `registro` y `validacion`); los de P1 y P2 combinan prefijo (`test_p1_*.py`, `test_p2_*.py`) y sufijo (`test_tuning_p1.py`, `test_registro_p1.py`, `test_tuning_p2.py`, `test_registro_p2.py`); los comunes (`test_config.py`, `test_run.py`, `test_validacion.py`) no llevan identificador. Todo lo de las features de P3 vive en un solo archivo, `test_p3_features.py`. `tests/conftest.py` fija `OMP_NUM_THREADS=1` solo durante las pruebas: con unos cientos de filas, XGBoost, HistGradientBoosting y K-Means gastaban más tiempo coordinando todos los hilos del CPU que calculando (en WSL2 con 16 hilos, la suite pasó de 8:24 a 1:23 min). No afecta `make train` ni `mlflow run`.
 
 | Archivo | Qué prueba | Pruebas |
 |---|---|---:|
 | `test_validacion.py` | Módulo común de validación con DeepChecks | 11 |
 | `test_config.py` | Variables de entorno de `config.py` y convención de prefijos | 15 |
-| `test_run.py` | Despachador del MLflow Project (`modeling/run.py`) | 9 |
+| `test_run.py` | Despachador del MLflow Project (`modeling/run.py`) | 11 |
 | `test_p1_features.py` | Target, rezagos, promedio de semanas, calendario, malla de horas y meses sin datos de P1 | 17 |
 | `test_p1_particion.py` | Partición temporal de P1: fronteras exactas, brecha de 24 h y orden de los conjuntos | 12 |
 | `test_p1_modelado.py` | Transformer de nivel, baseline, métricas y modelos de P1 | 14 |
@@ -946,6 +946,14 @@ Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos
 | `test_p1_evaluacion.py` | MAE de P1 por hora, por estación y por zona | 5 |
 | `test_p1_validacion.py` | Revisiones de la tabla completa de P1 y comando `p1-validar` | 8 |
 | `test_registro_p1.py` | Registro de P1 en el Model Registry | 4 |
+| `test_p2_features.py` | Limpieza de P2, bloques sin actividad, suma acumulada por día de servicio, ventana futura sin cruzar de día, clase de riesgo y conservación de viajes | 14 |
+| `test_p2_particion.py` | Partición temporal de P2 en las fronteras exactas e historia sin fuga: no usa el día actual ni el futuro, se separa por hora y su frecuencia global sale solo de train | 6 |
+| `test_p2_modelado.py` | Baseline, construcción de modelos, parámetros de cada run, tabla comparativa, nombres de runs y comando `p2-entrenar` | 15 |
+| `test_tuning_p2.py` | Búsqueda de P2 con Optuna: espacio de búsqueda, muestra solo de train, runs padre, hijos y candidato | 10 |
+| `test_p2_reproducibilidad.py` | Misma semilla, mismas probabilidades, umbrales y métricas en P2; búsqueda de Optuna reproducible; con otra semilla cambian | 7 |
+| `test_p2_evaluacion.py` | Clase por umbrales, umbral que maximiza el F1, métricas y umbrales elegidos en validación | 6 |
+| `test_p2_validacion.py` | Revisiones de la tabla completa de P2 y comando `p2-validar` | 9 |
+| `test_registro_p2.py` | Registro de P2 en el Model Registry: linaje, alias (champion y challenger), carga por alias y errores (run sin terminar, sin modelo, de otra pregunta, sin servidor) | 11 |
 | `test_p3_dataset.py` | Carga, partición y validación de P3 (`dataset.py`) | 10 |
 | `test_p3_modeling.py` | Entrenamiento y predicción de P3 | 17 |
 | `test_p3_tuning.py` | Búsqueda de P3 con Optuna | 6 |
@@ -955,7 +963,7 @@ Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos
 | `test_p3_evaluacion.py` | Criterios de aceptación de P3 en sus bordes, selección con empates, promedio por semilla (peor caso en tamaño mínimo) y métricas del modelo | 16 |
 | `test_p3_reproducibilidad.py` | Misma semilla, mismos grupos y métricas en P3 (baseline, alternativo y Optuna); con otra semilla cambian | 6 |
 | `test_p3_validacion.py` | Revisiones de la tabla completa de P3 y comando `p3-validar` | 14 |
-| **Total** | | **218** |
+| **Total** | | **298** |
 
 ### Validación de datos con DeepChecks
 
@@ -980,7 +988,7 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 | Pregunta | Prueba |
 |---|---|
 | P1 | `tests/test_p1_reproducibilidad.py`: baseline, HGB, XGBoost y XGBoost con hiperparámetros de Optuna (con `subsample` y `colsample_bytree`, que usan azar) dan predicciones y métricas idénticas al entrenar dos veces. Una prueba de contraste verifica que con otra semilla las predicciones cambian (la semilla sí controla el azar), y la búsqueda de Optuna corrida dos veces da los mismos trials y el mismo mejor trial |
-| P2 | _Pendiente (rama `testing/p2`)_ |
+| P2 | `tests/test_p2_reproducibilidad.py`: HGB, XGBoost y XGBoost con hiperparámetros de Optuna (con `subsample` y `colsample_bytree`, que usan azar) dan las mismas probabilidades, umbrales y métricas al entrenar dos veces. La búsqueda de Optuna corrida dos veces también es reproducible. Con otra semilla cambian el modelo con muestreo, la muestra de train de la búsqueda y las configuraciones que prueba. El baseline no entra en estas pruebas porque solo calcula frecuencias, sin azar |
 | P3 | `tests/test_p3_reproducibilidad.py`: el baseline, el modelo alternativo (PCA + K-Means) y la búsqueda de Optuna dan los mismos grupos, métricas, configuración elegida y trials al correr dos veces con la misma semilla. Las pruebas usan estaciones con horas al azar: con grupos bien separados K-Means converge igual con cualquier semilla y el contraste no demostraría nada. Con otra semilla cambian la inercia y los grupos del baseline, las semillas de la rejilla del alternativo y los trials de Optuna |
 
 #### Hallazgos por pregunta
@@ -988,7 +996,7 @@ Cada pregunta tiene una prueba que entrena dos veces con la misma semilla (`SEMI
 | Pregunta | Tabla validada | Hallazgos | Reportes |
 |---|---|---|---|
 | P1 | `p1_demanda_estacion_hora.parquet` (16,103,922 filas) | 109 estaciones nuevas en test (9 en valid) y drift de `dias_desde_apertura`; nulos solo en los rezagos (< 0.5 %); sin leakage temporal ni drift del target | [Validación de P1](#validación-de-p1) |
-| P2 | _Pendiente (rama `testing/p2`)_ | | |
+| P2 | `p2_cambios_estacion_bin.parquet`, con la historia (28,812,242 filas sin la brecha) | 109 estaciones nuevas en test (9 en valid) y drift de `hist_sin_bicis` e `hist_sin_anclajes`; sin nulos, sin leakage temporal y sin etiquetas en conflicto | [Validación de P2](#validación-de-p2) |
 | P3 | `viajes_modelado_2020-01_2026-09.parquet` (27,026,645 filas) | 9 estaciones nuevas en valid (origen y destino); 0.0054 % de viajes duplicados; sin nulos, sin leakage temporal y sin drift de features ni de duración | [Validación de P3](#validación-de-p3) |
 
 #### Validación de P1
@@ -1037,6 +1045,55 @@ Reportes en `reports/validacion/`: `p1_tabla_completa.csv`, y por comparación `
 ![make validar-p1: hallazgos de DeepChecks en train vs valid y train vs test](reports/evidencias/validar_p1_02.png)
 
 ![Reporte de DeepChecks train vs test de P1: chequeos que no pasaron y estaciones nuevas](reports/evidencias/deepchecks_p1_hallazgos.png)
+
+#### Validación de P2
+
+`make validar-p2` (comando `p2-validar` de `features.py`) valida la tabla de P2 (28,812,242 filas y 21 columnas, unos 2.5 GB en memoria) en dos niveles y tarda unos 2 minutos. Se valida la tabla con la que se entrena: primero se calcula la historia con `p2_preparar_conjuntos`, y las filas en `brecha` no entran. En esta sección, `train` es el conjunto `p2_fit`.
+
+**1. Revisiones sobre la tabla completa.** Son críticas: si alguna falla, el comando se detiene antes de DeepChecks y deja `p2_tabla_completa.csv`.
+
+| Revisión | Filas con problema | Resultado |
+|---|---:|---|
+| Llave estación-día-bin duplicada | 0 | PASS |
+| Clase fuera de 0, 1 y 2 | 0 | PASS |
+| Historia nula o fuera de [0, 1] | 0 | PASS |
+| Días de valid no posteriores a train | 0 | PASS |
+| Días de test no posteriores a valid | 0 | PASS |
+
+**2. DeepChecks** con el módulo común, en dos comparaciones: `p2_train_valid` (lo que vio el modelo contra el conjunto con el que se eligen modelo, hiperparámetros y umbrales) y `p2_train_test` (contra el conjunto del reporte final). El target es `clase`, la fecha `dia` (para el leakage temporal) y el umbral de nulos es 0 %. `estacion` se declara categórica para que DeepChecks reporte las estaciones nuevas. `hora_idx` se descarta porque ya está en `hora_sin` y `hora_cos`.
+
+| Chequeo | train vs valid | train vs test | Lectura |
+|---|---|---|---|
+| Leakage de fechas (traslape y filas repetidas), crítico | PASS | PASS | Ninguna fecha de evaluación aparece en entrenamiento |
+| Nulos, nulos mixtos, duplicados, tipos mixtos, caracteres especiales y columnas de un solo valor | PASS | PASS | Sin problemas de integridad |
+| Conflicting Labels | PASS | PASS | 0 %. A diferencia de P1 y P3, aquí sí aplica porque P2 es clasificación: filas idénticas no tienen clases distintas |
+| Drift del target (`clase`, Cramér's V) | 0.007 | 0.02 | PASS, pero no significa que la frecuencia del riesgo sea estable. Más del 97 % de los bloques son *sin riesgo*, así que esta medida casi no reacciona a cambios en las clases raras (ver la tabla siguiente) |
+| **Estaciones nuevas** (`estacion`) | 9 | 109 | Hallazgo. Es el mismo número que en P1 (9.05 % de las filas de test). `estacion` no es variable del modelo y su historia arranca en la frecuencia global y se ajusta con sus propios días (`test_p2_historia_suaviza_hacia_la_frecuencia_global`). Tienen menos riesgo que las demás (0.30 % contra 1.91 % en test), y los resultados de la Fase 2 no están desglosados para ellas |
+| **Drift de `hist_sin_bicis` y `hist_sin_anclajes`** (Kolmogorov-Smirnov) | 0.27 y 0.28 | 0.28 y 0.27 | Hallazgo esperado por construcción, ver abajo |
+
+Frecuencia de cada clase por conjunto, medida sobre todas las filas:
+
+| Conjunto | Sin riesgo | Sin bicis | Sin anclajes | Con riesgo |
+|---|---:|---:|---:|---:|
+| train | 97.629 % | 1.192 % | 1.179 % | 2.371 % |
+| valid | 97.353 % | 1.372 % | 1.275 % | 2.647 % |
+| test | 98.235 % | 0.736 % | 1.029 % | 1.765 % |
+
+**Por qué hay drift en la historia.** Son frecuencias acumuladas, suavizadas hacia la global con `P2_PESO_HISTORICO = 20` días, así que su forma cambia conforme se juntan días. Al principio todas las estaciones están cerca de la frecuencia global. Después, la mayoría baja a casi cero y unas pocas se separan hacia arriba. Es lo que muestran los datos: la mediana de `hist_sin_bicis` baja de 0.00110 en train a 0.00043 en test, mientras que el promedio casi no cambia (0.00932 y 0.01023) y la desviación estándar sube (0.0347 y 0.0405). `hist_sin_anclajes` se comporta igual. No indica fuga: `test_p2_historia_no_usa_la_etiqueta_del_dia_actual_ni_del_futuro` comprueba que la historia solo usa días previos.
+
+**Muestra de 500,000 filas por conjunto** (`P2_MUESTRA_VALIDACION`, mismas razones que en P1: DeepChecks ya muestrea internamente y la muestra usa la semilla del proyecto). La suite de integridad usa una muestra de ese mismo tamaño de toda la tabla.
+
+| Conjunto | Filas | Muestra | % |
+|---|---:|---:|---:|
+| train | 18,902,160 | 500,000 | 2.6 % |
+| valid | 4,785,372 | 500,000 | 10.4 % |
+| test | 5,124,710 | 500,000 | 9.8 % |
+
+Reportes en `reports/validacion/`: `p2_tabla_completa.csv`, y por comparación `p2_train_valid_*` y `p2_train_test_*` (`_integridad.html`, `_train_test.html` y `_resumen.csv`). Los HTML se abren en el navegador y necesitan internet para cargar sus gráficas.
+
+![make validar-p2: revisiones sobre la tabla completa y hallazgos de DeepChecks](reports/evidencias/validar_p2.png)
+
+![Reporte de DeepChecks train vs test de P2: estaciones nuevas y drift de la historia](reports/evidencias/deepchecks_p2_hallazgos.png)
 
 #### Validación de P3
 
@@ -1173,7 +1230,9 @@ El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el 
 | Reporte de pip-audit | [`reports/seguridad/pip_audit.json`](reports/seguridad/pip_audit.json) |
 | Reportes de DeepChecks por pregunta | `reports/validacion/` (ver [Hallazgos por pregunta](#hallazgos-por-pregunta)) |
 | Validación de P1 | [Validación de P1](#validación-de-p1) |
+| Validación de P2 | [Validación de P2](#validación-de-p2) |
 | Validación de P3 | [Validación de P3](#validación-de-p3) |
+| Pruebas de P2 | [Evidencias de P2](#evidencias-de-p2) |
 | Pruebas de P3 | [Evidencias de P3](#evidencias-de-p3) |
 | CI que detectó una vulnerabilidad | [Vulnerabilidad detectada por el CI](#vulnerabilidad-detectada-por-el-ci) |
 
@@ -1193,6 +1252,14 @@ Ejecución de `make seguridad`:
 Job `calidad` en verde en el PR #23 (ruff, pytest y seguridad):
 
 ![Check de calidad en verde en el PR #23](reports/evidencias/ci_calidad_ok.png)
+
+#### Evidencias de P2
+
+Pruebas de P2 (`pytest tests/test_p2_*.py tests/test_tuning_p2.py tests/test_registro_p2.py -v` en bash):
+
+![Pruebas de P2 con nombre de cada caso](reports/evidencias/pruebas_p2_01.png)
+
+![Pruebas de P2 con nombre de cada caso](reports/evidencias/pruebas_p2_02.png)
 
 #### Evidencias de P3
 
