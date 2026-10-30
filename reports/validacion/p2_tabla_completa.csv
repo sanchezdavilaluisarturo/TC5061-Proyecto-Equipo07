@@ -1,0 +1,6 @@
+revision,filas_con_problema,resultado
+llave estación-día-bin duplicada,0,PASS
+"clase fuera de 0, 1 y 2",0,PASS
+"historia fuera de [0, 1]",0,PASS
+días de valid no posteriores a train,0,PASS
+días de test no posteriores a valid,0,PASS
