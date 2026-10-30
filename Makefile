@@ -81,6 +81,12 @@ validar-p1:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p1-validar
 
 
+## Validación de P2 con DeepChecks sobre la tabla de features (reportes en reports/validacion)
+.PHONY: validar-p2
+validar-p2:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p2-validar
+
+
 ## Validación de P3 con DeepChecks sobre la tabla de modelado (reportes en reports/validacion)
 .PHONY: validar-p3
 validar-p3:

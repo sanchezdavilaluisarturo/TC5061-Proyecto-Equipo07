@@ -377,6 +377,9 @@ P2_BUSQUEDA = {"xgb": {"n_trials": 15, "fraccion_train": 0.1, "timeout_min": 60}
 
 P2_MODELO_REGISTRADO = "mibici-equipo07-p2-riesgo"
 
+# Validación con DeepChecks (`make validar-p2`): filas por conjunto
+P2_MUESTRA_VALIDACION = 500_000
+
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
 try:

@@ -1038,5 +1038,84 @@ def p2_preparar_conjuntos(
     return fit, val, test
 
 
+def p2_tabla_validacion(cambios: pd.DataFrame) -> pd.DataFrame:
+    """fit, valid y test en una sola tabla con la columna `particion`, ya con la historia.
+
+    Se valida lo mismo con lo que se entrena; los días en `brecha` no entran.
+    """
+    conjuntos = p2_preparar_conjuntos(cambios)
+    columnas = cfg.P2_FEATURES_CON_HISTORICO + ["clase", "estacion", "dia", "hora_idx"]
+    return pd.concat(
+        [c[columnas].assign(particion=n) for n, c in zip(["train", "valid", "test"], conjuntos)],
+        ignore_index=True,
+    )
+
+
+def p2_revisar_tabla_completa(tabla: pd.DataFrame) -> pd.DataFrame:
+    """Revisiones que no admiten muestra: llave, clase, historia y orden de los conjuntos.
+
+    Un solo caso basta para invalidar la tabla, así que se cuentan sobre todas las filas.
+    """
+    faltan = {"train", "valid", "test"} - set(tabla["particion"].astype(str).unique())
+    if faltan:
+        raise ValueError(f"La tabla de P2 no tiene filas de {sorted(faltan)}")
+    fin = tabla.groupby("particion", observed=True)["dia"].max()
+    dia, conjunto = tabla["dia"], tabla["particion"]
+    duplicadas = tabla.duplicated(["estacion", "dia", "hora_idx"])
+    historia = tabla[["hist_sin_bicis", "hist_sin_anclajes"]]
+    historia_rota = (historia.isna() | (historia < 0) | (historia > 1)).any(axis=1)
+    valid_antes = (conjunto == "valid") & (dia <= fin["train"])
+    test_antes = (conjunto == "test") & (dia <= fin["valid"])
+    problemas = {
+        "llave estación-día-bin duplicada": duplicadas.sum(),
+        "clase fuera de 0, 1 y 2": (~tabla["clase"].isin([0, 1, 2])).sum(),
+        "historia fuera de [0, 1]": historia_rota.sum(),
+        "días de valid no posteriores a train": valid_antes.sum(),
+        "días de test no posteriores a valid": test_antes.sum(),
+    }
+    revision = pd.DataFrame(
+        {"revision": list(problemas), "filas_con_problema": [int(n) for n in problemas.values()]}
+    )
+    revision["resultado"] = np.where(revision["filas_con_problema"] == 0, "PASS", "FAIL")
+    return revision
+
+
+@app.command()
+def p2_validar(muestra: int = cfg.P2_MUESTRA_VALIDACION):
+    """Valida fit, valid y test de P2 (con la historia): revisiones completas y DeepChecks."""
+    if not cfg.RUTA_P2_CAMBIOS.exists():
+        raise FileNotFoundError(f"Falta {cfg.RUTA_P2_CAMBIOS.name}; ejecutar `make features-p2`")
+    inicio = time.perf_counter()
+    carpeta = validacion.VALIDACION_DIR
+    carpeta.mkdir(parents=True, exist_ok=True)
+    tabla = p2_tabla_validacion(pd.read_parquet(cfg.RUTA_P2_CAMBIOS))
+
+    revision = p2_revisar_tabla_completa(tabla)
+    revision.to_csv(carpeta / "p2_tabla_completa.csv", index=False)
+    logger.info(f"Revisiones sobre la tabla completa:\n{revision.to_string(index=False)}")
+    if (revision["resultado"] == "FAIL").any():
+        raise ValueError(
+            "La tabla de P2 no pasa las revisiones completas; ver p2_tabla_completa.csv"
+        )
+
+    # hora_idx ya está en hora_sin y hora_cos; estacion como categórica para ver estaciones nuevas
+    tabla = tabla.drop(columns="hora_idx")
+    for comparado in ("valid", "test"):
+        validacion.validar_tabla(
+            f"p2_train_{comparado}",
+            tabla,
+            "particion",
+            "clase",
+            ["estacion"],
+            "dia",
+            conjuntos=("train", comparado),
+            muestra=muestra,
+            carpeta=carpeta,
+        )
+    logger.success(
+        f"Validación de P2 en {(time.perf_counter() - inicio) / 60:.1f} min ({carpeta})"
+    )
+
+
 if __name__ == "__main__":
     app()
