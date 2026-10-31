@@ -1,0 +1,8 @@
+revision,filas_con_problema,resultado
+viaje_id repetido,0,PASS
+fechas o estaciones nulas,0,PASS
+duración nula o no positiva,0,PASS
+duración mayor a 1440 min,0,PASS
+fin anterior al inicio,0,PASS
+viajes de valid no posteriores a train,0,PASS
+origen o destino fuera del catálogo,0,PASS

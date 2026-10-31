@@ -75,6 +75,24 @@ features-p1:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p1-features
 
 
+## Validación de P1 con DeepChecks sobre la tabla de features (reportes en reports/validacion)
+.PHONY: validar-p1
+validar-p1:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p1-validar
+
+
+## Validación de P2 con DeepChecks sobre la tabla de features (reportes en reports/validacion)
+.PHONY: validar-p2
+validar-p2:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p2-validar
+
+
+## Validación de P3 con DeepChecks sobre la tabla de modelado (reportes en reports/validacion)
+.PHONY: validar-p3
+validar-p3:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.features p3-validar
+
+
 ## Make P2 features (limpieza propia de P2, etiqueta de riesgo y variables por estación-bin)
 .PHONY: features-p2
 features-p2:
@@ -117,6 +135,30 @@ train-p3:
 mlflow-local:
 	mlflow server --backend-store-uri sqlite:///mlflow.db --artifacts-destination ./mlartifacts \
 		--host 127.0.0.1 --port 5000
+
+
+## Pruebas de tests/ (PyTest, incluye la validación sintética con DeepChecks)
+.PHONY: pruebas
+pruebas:
+	$(PYTHON_INTERPRETER) -m pytest tests
+
+
+# Vulnerabilidades revisadas y aceptadas: mlflow (3), nltk (1) y setuptools (3).
+# La justificación de cada una está en el README (Chequeos de seguridad)
+PIP_AUDIT_IGNORAR = \
+	--ignore-vuln CVE-2026-53995 --ignore-vuln CVE-2026-115886 --ignore-vuln CVE-2026-116691 \
+	--ignore-vuln PYSEC-2026-3740 \
+	--ignore-vuln PYSEC-2025-49 --ignore-vuln PYSEC-2026-3447 --ignore-vuln GHSA-xmj3-9gf7-h52w
+
+## Seguridad: bandit sobre el código y pip-audit sobre requirements.txt (reportes en reports/seguridad)
+.PHONY: seguridad
+seguridad:
+	mkdir -p reports/seguridad
+	bandit -r tc5061_proyecto_equipo07 -f json -o reports/seguridad/bandit.json --exit-zero
+	bandit -r tc5061_proyecto_equipo07
+	-pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off \
+		$(PIP_AUDIT_IGNORAR) -f json -o reports/seguridad/pip_audit.json
+	pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off $(PIP_AUDIT_IGNORAR)
 
 
 #################################################################################

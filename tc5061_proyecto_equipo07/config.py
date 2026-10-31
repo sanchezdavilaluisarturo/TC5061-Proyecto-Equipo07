@@ -209,6 +209,11 @@ RUTA_VIAJES_MODELADO = PROCESSED_DATA_DIR / f"viajes_modelado_{MES_INICIO}_{MES_
 RUTA_ESTACIONES_TRAIN = PROCESSED_DATA_DIR / "estaciones_train.parquet"
 RUTA_DEMANDA_ESTACION_HORA = PROCESSED_DATA_DIR / "demanda_estacion_hora.parquet"
 
+# Validación con DeepChecks (`make validar-p3`): filas por conjunto y nulos tolerados por columna.
+# P3 no tiene target: `duracion_min` hace de etiqueta para que corran los chequeos de etiqueta
+P3_MUESTRA_VALIDACION = 500_000
+P3_UMBRAL_NULOS = 0.0
+
 
 # P1 (regresión): viajes que inician en cada estación por hora de servicio, un día adelante.
 # Los rezagos se miden en días completos (>= 1) para no usar información del día que se predice.
@@ -257,6 +262,10 @@ P1_PARAMETROS_XGB = {
 }
 # Filas que se muestrean para los diagnósticos caros (curva de aprendizaje e importancia)
 P1_MUESTRA_DIAGNOSTICO = 200_000
+# Validación con DeepChecks (`make validar-p1`): filas por conjunto y nulos tolerados por columna.
+# DeepChecks ya muestrea 100,000 filas para nulos y drift; la justificación está en el README
+P1_MUESTRA_VALIDACION = 500_000
+P1_UMBRAL_NULOS = 0.05
 # Nombre del run, etapa y familia de cada modelo (etiquetas `stage_of_work` y `model_family`)
 P1_MODELOS = {
     "baseline": ("p1-baseline-promedio-4sem", "baseline", "promedio_historico"),
@@ -367,6 +376,9 @@ RUTA_P2_CAMBIOS = PROCESSED_DATA_DIR / "p2_cambios_estacion_bin.parquet"
 P2_BUSQUEDA = {"xgb": {"n_trials": 15, "fraccion_train": 0.1, "timeout_min": 60}}
 
 P2_MODELO_REGISTRADO = "mibici-equipo07-p2-riesgo"
+
+# Validación con DeepChecks (`make validar-p2`): filas por conjunto
+P2_MUESTRA_VALIDACION = 500_000
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

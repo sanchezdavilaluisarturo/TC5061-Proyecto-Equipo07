@@ -3,8 +3,8 @@
 from loguru import logger
 import mlflow
 import pytest
-from test_modeling import COLUMNAS, p3_x_con_tres_grupos
-from test_tuning_p3 import base_sintetica, preparar_experimento_local
+from test_p3_modeling import COLUMNAS, p3_x_con_tres_grupos
+from test_p3_tuning import base_sintetica, preparar_experimento_local
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07.modeling import registro_p3, train
@@ -118,3 +118,67 @@ def test_no_registra_un_run_con_metricas_sin_conjunto(servidor):
 
     with pytest.raises(ValueError, match="train_silueta, valid_ari"):
         registro_p3.p3_registrar(corrida.info.run_id, "champion")
+
+
+def test_no_registra_un_run_que_no_termino(servidor):
+    mlflow.set_experiment(cfg.EXPERIMENTO_MLFLOW)
+    with mlflow.start_run() as corrida:
+        pass
+    mlflow.MlflowClient(servidor).set_terminated(corrida.info.run_id, status="FAILED")
+
+    with pytest.raises(ValueError, match="no terminó"):
+        registro_p3.p3_registrar(corrida.info.run_id, "champion")
+
+
+def test_champion_y_challenger_conviven_en_versiones_distintas(servidor):
+    campeon = registro_p3.p3_registrar(crear_candidato(), "champion")
+    retador = registro_p3.p3_registrar(crear_candidato(), "challenger")
+
+    cliente = mlflow.MlflowClient(servidor)
+    por_alias = {
+        alias: int(cliente.get_model_version_by_alias(cfg.P3_MODELO_REGISTRADO, alias).version)
+        for alias in ("champion", "challenger")
+    }
+    assert por_alias == {"champion": campeon, "challenger": retador} and campeon != retador
+
+
+def test_verificar_con_un_alias_inexistente_falla(servidor):
+    registro_p3.p3_registrar(crear_candidato(), "champion")
+
+    with pytest.raises(mlflow.exceptions.MlflowException):
+        registro_p3.p3_verificar("no_existe")
+
+
+def test_etiquetas_de_la_version_usan_valores_por_defecto_si_el_run_no_los_trae():
+    from types import SimpleNamespace
+
+    corrida = SimpleNamespace(
+        info=SimpleNamespace(run_id="abc"),
+        data=SimpleNamespace(
+            tags={}, params={}, metrics={"train_silueta": 0.5, "valid_ari": 0.25}
+        ),
+    )
+    etiquetas = registro_p3.p3_etiquetas_version(corrida)
+    assert etiquetas["commit"] == "desconocido" and etiquetas["data_version"] == "desconocido"
+    assert etiquetas["question"] == "p3" and etiquetas["fase"] == cfg.FASE_ENTREGA
+    assert etiquetas["source_run_id"] == "abc"
+    # Las etiquetas de linaje opcionales solo aparecen si el run las tiene
+    assert not {"aceptado", "referencia", "busqueda_run_id"} & set(etiquetas)
+
+
+def test_descripcion_de_la_version_omite_las_metricas_que_el_run_no_tiene():
+    from types import SimpleNamespace
+
+    corrida = SimpleNamespace(
+        info=SimpleNamespace(run_id="abc", run_name="candidato"),
+        data=SimpleNamespace(tags={}, metrics={"train_silueta": 0.5}),
+    )
+    descripcion = registro_p3.p3_descripcion_version(corrida)
+    assert "train_silueta=0.5000" in descripcion and "valid_ari" not in descripcion
+    assert descripcion.startswith("candidato:") and descripcion.endswith("Run de origen: abc.")
+
+
+def test_registrar_sin_servidor_de_mlflow_se_detiene(monkeypatch):
+    monkeypatch.setattr(cfg, "MLFLOW_TRACKING_URI", "")
+    with pytest.raises(ValueError, match="MLFLOW_TRACKING_URI"):
+        registro_p3.registrar(run_id="abc", alias="champion")

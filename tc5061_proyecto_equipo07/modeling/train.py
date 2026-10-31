@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-import subprocess
+import subprocess  # solo para `git rev-parse` con argumentos fijos  # nosec B404
 import time
 import warnings
 
@@ -577,7 +577,7 @@ def p3_commit_actual() -> str:
     if os.environ.get("GITHUB_SHA"):
         return os.environ["GITHUB_SHA"][:7]
     try:
-        return subprocess.check_output(
+        return subprocess.check_output(  # git con argumentos fijos, sin shell  # nosec B603 B607
             ["git", "rev-parse", "--short", "HEAD"], cwd=cfg.PROJ_ROOT, text=True
         ).strip()
     except (subprocess.CalledProcessError, OSError):
@@ -1274,7 +1274,7 @@ def p1_guardar_diagnosticos(
 def p1_commit_actual() -> str:
     """Commit corto con el que se ejecuta (`desconocido` si no hay repositorio Git)."""
     try:
-        return subprocess.check_output(
+        return subprocess.check_output(  # git con argumentos fijos, sin shell  # nosec B603 B607
             ["git", "rev-parse", "--short", "HEAD"], cwd=cfg.PROJ_ROOT, text=True
         ).strip()
     except (subprocess.CalledProcessError, OSError):
@@ -1595,7 +1595,7 @@ def p2_etiquetas_ci() -> dict[str, str]:
 def p2_commit_actual() -> str:
     """Commit corto: regresa el resultado de `git rev-parse`; si falla, regresa `desconocido`."""
     try:
-        return subprocess.check_output(
+        return subprocess.check_output(  # git con argumentos fijos, sin shell  # nosec B603 B607
             ["git", "rev-parse", "--short", "HEAD"], cwd=cfg.PROJ_ROOT, text=True
         ).strip()
     except (subprocess.CalledProcessError, OSError):
