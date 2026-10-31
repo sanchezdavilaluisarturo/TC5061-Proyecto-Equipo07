@@ -1149,7 +1149,7 @@ Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_inte
 | Revisión | Herramienta o práctica | Resultado |
 |---|---|---|
 | Código | bandit 1.9.4 sobre `tc5061_proyecto_equipo07/` | Sin hallazgos; 7 avisos de severidad baja justificados con `# nosec` |
-| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 5 paquetes actualizados y 7 vulnerabilidades aceptadas. Dos avisos se publicaron durante la entrega y los detectó el CI: el de `mlflow` se aceptó y los 3 de `tornado` se corrigieron actualizando |
+| Dependencias | pip-audit 2.10.1 sobre `requirements.txt` | De 55 vulnerabilidades conocidas a 0 sin justificar: 6 paquetes actualizados y 7 vulnerabilidades aceptadas. Dos avisos se publicaron durante la entrega y los detectó el CI: el de `mlflow` se aceptó y los 3 de `tornado` se corrigieron actualizando |
 | Datos sensibles | `.gitignore`, `.env` y secret de GitHub | No se versionan credenciales, datos ni modelos |
 
 **bandit** analiza el código sin ejecutarlo y busca patrones inseguros (contraseñas en el código, `eval`, `pickle`, `subprocess` con shell, etc.). No se corre sobre `tests/` porque marca cada `assert`, que es como PyTest verifica los resultados. Los 7 avisos son las llamadas a `git rev-parse` de `p1_commit_actual`, `p2_commit_actual` y `p3_commit_actual` (B404, B603 y B607), que etiquetan cada run con su commit: los argumentos son fijos, no se usa shell y no entra ningún dato del usuario. Al correrlo, bandit imprime `nosec encountered ... but no failed test` en esas líneas; es un aviso conocido de bandit con llamadas de varias líneas y el resultado sigue siendo `No issues identified`.
@@ -1163,6 +1163,7 @@ Reportes en `reports/validacion/`: `p3_tabla_completa.csv`, `p3_train_valid_inte
 | `certifi` | 2026.7.22 | 2026.10.19 | 2 |
 | `gitpython` (vía `mlflow`) | 3.2.0 | 3.2.1 | 1 |
 | `tornado` (vía Jupyter) | 6.5.10 | 6.6 | 3 (publicadas durante la entrega; ver [Segunda vulnerabilidad detectada por el CI](#segunda-vulnerabilidad-detectada-por-el-ci-tornado)) |
+| `pyasn1` | 0.6.4 | 0.6.5 | 1 (publicada durante la entrega; ver [Tercera vulnerabilidad detectada por el CI](#tercera-vulnerabilidad-detectada-por-el-ci-pyasn1)) |
 
 Las restantes se revisaron y se aceptan; están en `PIP_AUDIT_IGNORAR` del `Makefile`, así que cualquier vulnerabilidad nueva hace fallar `make seguridad`:
 
@@ -1204,6 +1205,12 @@ Igual que la de `mlflow`, se publicó después de la primera revisión: unas hor
 - No se agregó nada a `PIP_AUDIT_IGNORAR`: la vulnerabilidad se corrige en lugar de justificarse.
 
 Como pip-audit consulta bases de datos que se actualizan a diario, un `requirements.txt` que pasa hoy puede fallar mañana sin cambiar una línea. Por eso conviene volver a correr `make seguridad` justo antes de entregar.
+
+#### Tercera vulnerabilidad detectada por el CI: pyasn1
+
+El 30 de octubre del 2026, el job `calidad` del PR hacia `main` falló en `make seguridad`: pip-audit encontró CVE-2026-119196 en `pyasn1` 0.6.4, corregida en 0.6.5. Se publicó después de la revisión anterior. `pyasn1` no es una dependencia directa; llega por `google-auth`, el cual llega de `databricks-sdk`.
+
+Igual que con `tornado`, se actualizó en lugar de aceptarla: `requirements.txt` pasa a `pyasn1==0.6.5`, `pip check` no reporta conflictos, la suite completa pasa (298 pruebas) y `make seguridad` termina sin vulnerabilidades nuevas. No se agregó nada a `PIP_AUDIT_IGNORAR`.
 
 **Datos sensibles:**
 
