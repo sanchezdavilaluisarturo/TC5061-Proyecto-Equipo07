@@ -161,6 +161,32 @@ seguridad:
 	pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off $(PIP_AUDIT_IGNORAR)
 
 
+# API REST (FastAPI) en contenedor. Funciona con Docker (por defecto) o Podman: make api-build MOTOR=podman
+MOTOR ?= docker
+IMAGEN_API = tc5061-equipo07-api
+PUERTO_API = 8000
+
+## API sin contenedor, con recarga al guardar (http://127.0.0.1:8000/docs)
+.PHONY: api-local
+api-local:
+	uvicorn tc5061_proyecto_equipo07.api.main:app --reload --port $(PUERTO_API)
+
+## Construye la imagen de la API con el Dockerfile
+.PHONY: api-build
+api-build:
+	$(MOTOR) build -t $(IMAGEN_API) .
+
+## Levanta el contenedor de la API (toma MLFLOW_TRACKING_URI del .env)
+.PHONY: api-run
+api-run:
+	$(MOTOR) run --rm --name $(IMAGEN_API) -p $(PUERTO_API):8000 --env-file .env $(IMAGEN_API)
+
+## Consulta /salud de la API levantada: versión y alias de cada modelo
+.PHONY: api-probar
+api-probar:
+	curl -s http://127.0.0.1:$(PUERTO_API)/salud | $(PYTHON_INTERPRETER) -m json.tool
+
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################
