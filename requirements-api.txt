@@ -1,0 +1,28 @@
+# Dependencias de la imagen de la API (Dockerfile). Solo nombres: las versiones salen de
+# requirements.txt, que se usa como archivo de restricciones (pip install -c), así la API corre con
+# las mismas versiones con las que se entrenaron y registraron los modelos.
+
+# Servicio
+fastapi
+uvicorn
+pydantic
+
+# Carga de los modelos desde el Model Registry
+mlflow
+scikit-learn
+xgboost
+numpy
+pandas
+
+# Módulo del proyecto: al cargar un modelo se importan sus clases propias (features.py y
+# modeling/train.py), y esos archivos importan estas librerías
+python-dotenv
+loguru
+typer
+requests
+tqdm
+matplotlib
+seaborn
+deepchecks
+# deepchecks usa pkg_resources, que trae setuptools (fijado < 71 en el proyecto)
+setuptools
