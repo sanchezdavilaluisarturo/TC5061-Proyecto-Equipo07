@@ -430,6 +430,7 @@ Reglas aplicadas por `dataset.limpiar` y documentadas en `0.03-lasd-limpieza-p3`
 | Modelado | scikit-learn y XGBoost (`modeling/`) | Un baseline sencillo por pregunta antes de los candidatos, para medir cuánto aporta cada modelo | Huyen (2022) |
 | Experimentos | MLflow Tracking, servidor del equipo (https://mlflow.equipo7mlops.com) | Parámetros, métricas, etiquetas (equipo, pregunta, commit), artefactos y modelo en un solo lugar compartido | Treveil et al. (2020); MLflow (s.f.-c) |
 | Código y colaboración | Cookiecutter Data Science + Git/GitHub (ramas, PR y revisión) | Estructura estándar y cambios revisados antes de integrarse | Wilson (2022) |
+| Servicio | FastAPI + Pydantic en un contenedor Docker (`Dockerfile`) | Los modelos del Registry quedan disponibles por HTTP, con entradas y salidas validadas, en un entorno que se reconstruye igual en cualquier máquina | FastAPI (s.f.); Treveil et al. (2020) |
 | Automatización | Makefile + GitHub Actions | Calidad (ruff, pytest y seguridad) en cada PR y entrenamiento de cada pregunta con un comando | Treveil et al. (2020) |
 
 Etapas por pregunta (limpieza, agregaciones, features, entrenamiento y evaluación): [Diseño del pipeline de ML](references/pipeline-ml.md).
@@ -1222,7 +1223,7 @@ Igual que con `tornado`, se actualizó en lugar de aceptarla: `requirements.txt`
 
 ### Integración continua
 
-El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el módulo, las pruebas, `requirements.txt`, el `Makefile` o los workflows:
+El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el módulo, las pruebas, `requirements.txt`, `requirements-api.txt`, el `Makefile` o los workflows:
 
 1. `ruff format --check` y `ruff check`.
 2. `pytest tests -q`.
@@ -1276,6 +1277,100 @@ Pruebas de P3 (`pytest tests/test_p3_*.py -v`: partición, features, evaluación
 
 Las capturas de `make pruebas` y `make seguridad` de la suite completa cubren las tres preguntas, así que se toman al integrar P1, P2 y P3 (ver arriba).
 
+## API REST en contenedor
+
+Los modelos campeones de P1, P2 y P3 se sirven con una API REST hecha con FastAPI y empaquetada en una imagen de contenedor. El `Dockerfile` sigue el estándar OCI, así que se construye y corre igual con Docker (el que usa el equipo) o con Podman.
+
+### Estrategia de despliegue
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Modo de inferencia | Inferencia en línea: cada petición HTTP recibe su predicción en la respuesta | Es el primer paso desplegable del sistema y la base de la arquitectura de microservicios; el mismo servicio atiende una consulta puntual o un proceso programado | Huyen (2022, cap. 7) |
+| Features de entrada | La API recibe las features ya calculadas por el pipeline del proyecto (`features.py`) y no las recalcula | Tener un pipeline de features para entrenar y otro para predecir es una causa común de errores en producción: con uno solo, el modelo recibe exactamente las mismas transformaciones con las que se entrenó. Qué tan recientes deben ser esas features depende de cada pregunta y se explica en su sección | Huyen (2022, cap. 7) |
+| Registros por petición | Cada endpoint de predicción acepta una lista de registros | Entre el scoring por lotes y el de tiempo real hay un continuo: calificar un registro equivale a un lote de uno, así que el mismo endpoint sirve para ambos casos | Treveil et al. (2020, cap. 6) |
+| Origen del modelo | El contenedor descarga el modelo del Model Registry al arrancar (`models:/<nombre>@<alias>`); el modelo no va dentro de la imagen | Una sola imagen sirve cualquier versión: cambiar de modelo o regresar a la versión anterior (*rollback*) es mover el alias en el Registry y reiniciar el contenedor, sin reconstruir la imagen | Treveil et al. (2020, cap. 6); MLflow (s.f.-a) |
+| Entorno | `requirements-api.txt` con solo las librerías que usa la API, instaladas con las versiones fijadas en `requirements.txt` | El entorno se reconstruye igual en cualquier máquina y con las mismas versiones con las que se entrenaron los modelos (scikit-learn, XGBoost) | Treveil et al. (2020, cap. 6) |
+| Monitoreo básico | Endpoint `/salud` (*health check*) y `HEALTHCHECK` en la imagen | Permite comprobar que el servicio está vivo y qué versión de cada modelo cargó | Treveil et al. (2020, cap. 6) |
+
+### Cómo carga los modelos
+
+Al arrancar, la API lee `MLFLOW_TRACKING_URI`, resuelve el alias de cada modelo a un número de versión y carga esa versión (`tc5061_proyecto_equipo07/api/modelos.py`):
+
+| Pregunta | Modelo registrado | Alias |
+|---|---|---|
+| P1 | `mibici-equipo07-p1-demanda` | `champion` |
+| P2 | `mibici-equipo07-p2-riesgo` | `champion` |
+| P3 | `mibici-equipo07-p3-segmentos` | `champion` |
+
+- El alias se cambia con la variable `MODELO_ALIAS` (por ejemplo, `challenger`), sin reconstruir la imagen.
+- Si un modelo no carga, la API levanta igual con los demás: ese endpoint responde `503` y `/salud` muestra el error.
+- La imagen incluye el módulo `tc5061_proyecto_equipo07`, porque algunos modelos usan clases propias del proyecto (por ejemplo, `P1NivelEstacion`) que se necesitan para cargarlos.
+
+### Construir y levantar el contenedor
+
+Requisitos: Docker (o Podman) y el archivo `.env` con la URI del servidor MLflow del equipo:
+
+```bash
+cp .env.example .env    # MLFLOW_TRACKING_URI=https://mlflow.equipo7mlops.com
+```
+
+```bash
+# Construir la imagen
+make api-build          # docker build -t tc5061-equipo07-api .
+
+# Levantar el contenedor en http://127.0.0.1:8000
+make api-run            # docker run --rm --name tc5061-equipo07-api -p 8000:8000 --env-file .env tc5061-equipo07-api
+
+# En otra terminal: comprobar que los modelos cargaron
+make api-probar         # curl -s http://127.0.0.1:8000/salud
+```
+
+Con Podman, los mismos comandos con `MOTOR=podman` (por ejemplo, `make api-build MOTOR=podman`).
+
+Sin contenedor, para desarrollo: `make api-local` (recarga al guardar).
+
+Si el servidor del equipo no responde, se puede usar el MLflow local (`make mlflow-local`). Desde el contenedor, `127.0.0.1` es el propio contenedor, así que la URI cambia al nombre de la máquina anfitriona:
+
+```bash
+# Docker en Linux/WSL
+docker run --rm -p 8000:8000 --add-host=host.docker.internal:host-gateway \
+  -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 tc5061-equipo07-api
+# Podman
+podman run --rm -p 8000:8000 -e MLFLOW_TRACKING_URI=http://host.containers.internal:5000 tc5061-equipo07-api
+```
+
+### Consumir la API
+
+La documentación interactiva (Swagger) queda en http://127.0.0.1:8000/docs, con los esquemas de entrada y salida de cada endpoint.
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| GET | `/salud` | Estado del servicio y versión cargada de cada modelo |
+
+Petición:
+
+```bash
+curl -s http://127.0.0.1:8000/salud
+```
+
+Respuesta (los tres modelos cargados):
+
+```json
+{
+  "estado": "ok",
+  "modelos": {
+    "p1": {"nombre": "mibici-equipo07-p1-demanda", "alias": "champion", "version": 2, "listo": true, "error": null},
+    "p2": {"nombre": "mibici-equipo07-p2-riesgo", "alias": "champion", "version": 3, "listo": true, "error": null},
+    "p3": {"nombre": "mibici-equipo07-p3-segmentos", "alias": "champion", "version": 4, "listo": true, "error": null}
+  }
+}
+```
+
+Si algún modelo no carga, `estado` es `degradado` y su campo `error` explica la causa.
+
+<!-- Cada integrante agrega aquí la sección de su endpoint: ruta, esquema de entrada y salida,
+     validaciones, ejemplo de petición y respuesta, y la captura del contenedor respondiendo. -->
+
 ## Estructura de carpetas
 
 ```
@@ -1311,7 +1406,7 @@ Las capturas de `make pruebas` y `make seguridad` de la suite completa cubren la
 │   ├── validacion/    <- Reportes de DeepChecks de cada pregunta (HTML y resumen CSV)
 │   ├── seguridad/     <- Reportes de bandit y pip-audit (JSON)
 │   └── evidencias/    <- Capturas de la ejecución de pruebas y chequeos
-├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3), plots, validacion
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3), plots, validacion, api/ (main, modelos, p1, p2, p3)
 ├── tests/             <- Pruebas (pytest) del módulo y de la validación con DeepChecks
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
@@ -1319,10 +1414,13 @@ Las capturas de `make pruebas` y `make seguridad` de la suite completa cubren la
 │   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
 │   └── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
 ├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
+├── .dockerignore      <- Lo que no entra al contexto de construcción de la imagen (datos, .env, .git)
+├── Dockerfile         <- Imagen de la API (estándar OCI: Docker o Podman)
 ├── Makefile           <- Comandos del proyecto (make help)
 ├── MLproject          <- Puntos de entrada de `mlflow run` (ingest, train, tune, register)
 ├── python_env.yaml    <- Entorno aislado de `mlflow run` (Python 3.11 + requirements.txt)
 ├── pyproject.toml
+├── requirements-api.txt   <- Librerías de la imagen de la API (versiones de requirements.txt)
 └── requirements.txt   <- Dependencias con versiones fijadas
 ```
 
@@ -1332,6 +1430,7 @@ Las capturas de `make pruebas` y `make seguridad` de la suite completa cubren la
 - `EDA` es la rama de integración del equipo. Cada integrante trabaja en su rama (`feat/<tema>`, `fix/<tema>`, `docs/<tema>`) creada desde `EDA`, abre un PR hacia `EDA` y, al cerrar cada entrega, se abre un PR `EDA → main`.
 - En la Fase 2 la rama de integración es `mlflow_run` (creada desde `main`): las ramas de cada pregunta (`tuning/p1`, `tuning/p2`, `tuning/p3`) salen de ella y vuelven por PR.
 - En la entrega de pruebas y seguridad la rama de integración es `calidad_pruebas` (creada desde `main`), que trae el módulo de validación y los chequeos de seguridad: las ramas de cada pregunta (`testing/p1`, `testing/p2`, `testing/p3`) salen de ella y vuelven por PR, y `calidad_pruebas` entra a `main` por PR.
+- En la entrega de la API REST la rama de integración es `api_rest` (creada desde `main`), que trae la base de la API y el `Dockerfile`: las ramas de cada pregunta (`api/p1`, `api/p2`, `api/p3`) salen de ella y vuelven por PR, y `api_rest` entra a `main` por PR.
 - Commits con [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/) en español, sin alcance entre paréntesis y mencionando la pregunta: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `build:`, `ci:`, `style:`, `chore:`.
 - Cada integrante abre al menos un PR y revisa al menos uno de otro integrante.
 - En cada PR, GitHub Actions corre `ruff`, `pytest` y `make seguridad` (`TC5061-Proyecto-Equipo07.yml`).
@@ -1372,6 +1471,8 @@ Anthropic. (2026). *Claude* (Claude Opus 5.5 y Claude Sonnet 5.5) [Modelo de len
 
 Dorard, L. (2018, 9 de marzo). *From data to AI with the Machine Learning Canvas (Part I)*. Own Machine Learning (Medium). https://medium.com/louis-dorard/from-data-to-ai-with-the-machine-learning-canvas-part-i-d171b867b047
 
+FastAPI. (s.f.). *FastAPI* [Documentación]. https://fastapi.tiangolo.com/
+
 Huyen, C. (2022). *Designing machine learning systems: An iterative process for production-ready applications*. O'Reilly Media.
 
 MiBici. (s.f.). *Datos abiertos* [Conjunto de datos]. Sistema de Bicicleta Pública del Área Metropolitana de Guadalajara. https://mibici.net/es/datos-abiertos/
@@ -1392,7 +1493,7 @@ Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programac
 
 | Integrante | Herramienta | Para qué se usó |
 |---|---|---|
-| Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
+| Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: base de la API REST (carga de los modelos desde el Registry, `/salud`), `Dockerfile`, targets del Makefile, pruebas de la base y la documentación de la estrategia de despliegue |
 | Fernando Arreola Treviño (P2) | Claude Code, con los modelos Claude Sonnet 5.5 y Claude Opus 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks. Emn la fase 2: etiquetas y artefactos de los runs de P2, búsqueda con Optuna, registro en el Model Registry y la documentación de esta fase |
 | Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P3, métricas con el conjunto en el nombre, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
 
