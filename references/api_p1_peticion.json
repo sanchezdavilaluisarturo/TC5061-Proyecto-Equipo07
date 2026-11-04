@@ -1,0 +1,7 @@
+{"registros": [
+ {"origen_id": 168, "viajes_rezago_1d": 0.0, "viajes_rezago_7d": 0.0, "viajes_promedio_4sem": 0.75, "hora": 23, "dia_semana": 6, "es_fin_de_semana": 1, "mes": 9, "es_festivo": 0, "capacidad": 19, "latitud": 20.6896896362, "longitud": -103.3748626709, "zona": "GDL", "dias_desde_apertura": 256},
+ {"origen_id": 55, "viajes_rezago_1d": 2.0, "viajes_rezago_7d": 2.0, "viajes_promedio_4sem": 1.5, "hora": 16, "dia_semana": 6, "es_fin_de_semana": 1, "mes": 11, "es_festivo": 0, "capacidad": 15, "latitud": 20.6754016876, "longitud": -103.345664978, "zona": "GDL", "dias_desde_apertura": 1054},
+ {"origen_id": 172, "viajes_rezago_1d": 4.0, "viajes_rezago_7d": 2.0, "viajes_promedio_4sem": 2.25, "hora": 11, "dia_semana": 0, "es_fin_de_semana": 0, "mes": 10, "es_festivo": 0, "capacidad": 23, "latitud": 20.6821994781, "longitud": -103.3460083008, "zona": "GDL", "dias_desde_apertura": 1013},
+ {"origen_id": 256, "viajes_rezago_1d": 5.0, "viajes_rezago_7d": 5.0, "viajes_promedio_4sem": 4.25, "hora": 17, "dia_semana": 3, "es_fin_de_semana": 0, "mes": 12, "es_festivo": 0, "capacidad": 19, "latitud": 20.6639862061, "longitud": -103.3480758667, "zona": "GDL", "dias_desde_apertura": 344},
+ {"origen_id": 157, "viajes_rezago_1d": 2.0, "viajes_rezago_7d": 4.0, "viajes_promedio_4sem": 2.75, "hora": 15, "dia_semana": 2, "es_fin_de_semana": 0, "mes": 7, "es_festivo": 0, "capacidad": 23, "latitud": 20.6986503601, "longitud": -103.3551864624, "zona": "GDL", "dias_desde_apertura": 189}
+]}

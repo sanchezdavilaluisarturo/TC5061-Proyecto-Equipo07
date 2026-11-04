@@ -964,7 +964,9 @@ Cada archivo de `tests/` prueba un módulo o una pregunta, con datos sintéticos
 | `test_p3_evaluacion.py` | Criterios de aceptación de P3 en sus bordes, selección con empates, promedio por semilla (peor caso en tamaño mínimo) y métricas del modelo | 16 |
 | `test_p3_reproducibilidad.py` | Misma semilla, mismos grupos y métricas en P3 (baseline, alternativo y Optuna); con otra semilla cambian | 6 |
 | `test_p3_validacion.py` | Revisiones de la tabla completa de P3 y comando `p3-validar` | 14 |
-| **Total** | | **298** |
+| `test_api_base.py` | Base de la API: carga desde el Registry por alias, `/salud`, `503` y dependencias fijadas de la imagen | 6 |
+| `test_api_p1.py` | Endpoint de P1: predicción, rezagos nulos, tipos de la signature y `422` por regla | 20 |
+| **Total** | | **324** |
 
 ### Validación de datos con DeepChecks
 
@@ -1230,6 +1232,8 @@ El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el 
 3. `make seguridad`, que falla si bandit encuentra algo o si aparece una vulnerabilidad no aceptada.
 4. Sube `reports/seguridad/` como artefacto `reportes-seguridad`, descargable desde la pestaña *Actions* del PR.
 
+El job `imagen` de `api.yml` corre en los PR que tocan la API, el `Dockerfile` o las dependencias: construye la imagen, la levanta y corre `make api-smoke` (ver [Smoke test de la imagen](#smoke-test-de-la-imagen)).
+
 ### Evidencias
 
 | Evidencia | Dónde |
@@ -1323,6 +1327,12 @@ make api-run            # docker run --rm --name tc5061-equipo07-api -p 8000:800
 
 # En otra terminal: comprobar que los modelos cargaron
 make api-probar         # curl -s http://127.0.0.1:8000/salud
+
+# Predicción de P1 con la petición de ejemplo
+make api-probar-p1
+
+# Smoke test: /salud, predicción de P1 y validación (falla si algo no responde)
+make api-smoke
 ```
 
 Con Podman, los mismos comandos con `MOTOR=podman` (por ejemplo, `make api-build MOTOR=podman`).
@@ -1339,6 +1349,24 @@ docker run --rm -p 8000:8000 --add-host=host.docker.internal:host-gateway \
 podman run --rm -p 8000:8000 -e MLFLOW_TRACKING_URI=http://host.containers.internal:5000 tc5061-equipo07-api
 ```
 
+### El contenedor respondiendo
+
+Contenedor levantado con `make api-run` (Docker en WSL2): descarga y carga los tres champions del Registry, y luego atiende `/salud` (la consulta interna del `HEALTHCHECK`), una predicción de P1 (`200`) y una petición inválida (`422`):
+
+![Logs del contenedor: carga de los tres modelos y peticiones 200 y 422](reports/evidencias/api_contenedor_logs.png)
+
+`docker ps` con el contenedor en estado `healthy` (el `HEALTHCHECK` de la imagen consulta `/salud`) y el puerto 8000 publicado:
+
+![docker ps: tc5061-equipo07-api en estado healthy](reports/evidencias/api_contenedor_ps.png)
+
+El aviso de `pytest` al cargar P3 no es un error: MLflow anotó `pytest` entre las dependencias del modelo al registrarlo, pero no se usa para predecir, así que no se instala en la imagen.
+
+### Smoke test de la imagen
+
+`make api-smoke`, con la API levantada, comprueba en segundos que el servicio está completo: `/salud` en `ok` (los tres modelos cargados), una predicción de P1 con `references/api_p1_peticion.json` y un `422` ante una petición vacía. Falla si cualquiera de las tres no se cumple.
+
+La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
+
 ### Consumir la API
 
 La documentación interactiva (Swagger) queda en http://127.0.0.1:8000/docs, con los esquemas de entrada y salida de cada endpoint.
@@ -1346,6 +1374,7 @@ La documentación interactiva (Swagger) queda en http://127.0.0.1:8000/docs, con
 | Método | Ruta | Qué hace |
 |---|---|---|
 | GET | `/salud` | Estado del servicio y versión cargada de cada modelo |
+| POST | `/p1/predecir` | Viajes esperados por estación-hora y su suma por zona (ver [Endpoint de P1](#endpoint-de-p1-demanda-por-estación-hora)) |
 
 Petición:
 
@@ -1367,6 +1396,119 @@ Respuesta (los tres modelos cargados):
 ```
 
 Si algún modelo no carga, `estado` es `degradado` y su campo `error` explica la causa.
+
+### Endpoint de P1: demanda por estación-hora
+
+`POST /p1/predecir` regresa los viajes esperados por estación-hora y su suma por zona con el champion de `mibici-equipo07-p1-demanda` (código en `tc5061_proyecto_equipo07/api/p1.py`, pruebas en `tests/test_api_p1.py`).
+
+#### Por qué recibe las features ya calculadas
+
+Las 14 variables de P1 son *batch features*: los rezagos de 1 y 7 días y el promedio de 4 semanas se calculan con la historia hasta el cierre del día anterior, y el calendario y los datos de la estación se conocen de antemano. P1 predice el día siguiente para planear la flota, así que no necesita *streaming features*: es el caso de inferencia en línea con *batch features* (Huyen, 2022, cap. 7). La API no recalcula nada: el cliente manda las variables que produce `features.py`, el mismo pipeline con el que se entrenó el modelo, y así no hay un segundo pipeline que pueda diferir del de entrenamiento (Huyen, 2022, cap. 7). Por la misma razón la predicción usa `p1_predecir` de `modeling/predict.py`, la función del pipeline del proyecto.
+
+En producción, el flujo sería un proceso programado cada noche (fuera del alcance de esta entrega):
+
+1. Al cierre del día D, `make data` y `features.py` calculan las variables de las 20 horas de servicio de D+1 para toda la red (472 estaciones × 20 horas = 9,440 registros).
+2. El proceso manda esos registros en una sola petición a `POST /p1/predecir`.
+3. Guarda las predicciones por estación y el total por zona, que el operador usa para planear dónde mover bicicletas.
+
+El mismo endpoint sirve también para consultas puntuales, por ejemplo una sola estación-hora desde un tablero. Treveil et al. (2020, cap. 6) distinguen la predicción por lotes (muchos registros a la vez, de forma programada) de la predicción en tiempo real (uno o pocos registros cuando se piden), pero aclaran que no son excluyentes: predecir un registro es técnicamente lo mismo que predecir un lote de uno. Por eso la entrada es una lista: el proceso nocturno manda los 9,440 registros del día y una consulta puntual manda uno.
+
+#### Entrada
+
+Cuerpo `{"registros": [...]}` con 1 a 10,000 estación-horas (un día completo de la red cabe en una petición). Cada registro trae las 14 variables con estas reglas, tomadas de los datos de P1:
+
+| Variable | Regla | Por qué |
+|---|---|---|
+| `origen_id` | Entero ≥ 1 | Id de la estación |
+| `viajes_rezago_1d`, `viajes_rezago_7d`, `viajes_promedio_4sem` | Número de 0 a 1000, o `null` | `null` cuando la estación aún no tiene historia (0.08 % a 0.44 % de las filas); XGBoost maneja el vacío. El máximo observado es 207: 1000 es un tope de cordura |
+| `hora` | 0 y de 5 a 23 | De 1:00 a 4:59 MiBici no opera (`HORAS_SIN_SERVICIO`) |
+| `dia_semana` | 0 (lunes) a 6 (domingo) | |
+| `es_fin_de_semana` | 0 o 1, coherente con `dia_semana` | Sábado y domingo deben llevar 1; un lunes con 1 se rechaza |
+| `mes` | 1 a 12 | |
+| `es_festivo` | 0 o 1 | |
+| `capacidad` | Entero de 1 a 100 | Observado: 11 a 39 anclajes |
+| `latitud`, `longitud` | 20.55 a 20.85 y −103.55 a −103.20 | Rango de las estaciones (20.64 a 20.74 y −103.43 a −103.30) con ~10 km de margen para estaciones nuevas del área metropolitana |
+| `zona` | `GDL`, `ZPN` o `TLQ` | Los tres municipios con estaciones |
+| `dias_desde_apertura` | Entero ≥ 0 | |
+
+Además:
+
+- **Campos exactos** (`extra="forbid"`): un campo de más (por ejemplo, el target `viajes`) o uno faltante se rechaza, en lugar de ignorarse en silencio.
+- **Tipos estrictos** (`strict=True`): `"8"` (texto) no se convierte en `8`; el cliente debe mandar el tipo correcto.
+- **Sin `NaN` ni `Infinity`**: la falta de historia se expresa solo con `null`.
+
+Un registro inválido responde `422` con la ubicación exacta de cada error (`loc`: número de registro y campo). Pydantic reporta todos los errores de campo de la petición a la vez; la regla entre campos (fin de semana contra día de la semana) se revisa solo cuando los campos del registro ya son válidos.
+
+Después de validar, la API convierte el DataFrame a los tipos de la signature del modelo, que lee del propio modelo: el JSON llega como `int64` y `float64`, y MLflow rechaza esos tipos en columnas `int32` y `float32`. Si se reentrena con otros tipos, la API los toma sin cambios en el código.
+
+#### Salida
+
+| Campo | Qué es |
+|---|---|
+| `modelo`, `version` | Modelo y versión del Registry que hizo la predicción (trazabilidad) |
+| `predicciones` | Una por registro, en el mismo orden: `origen_id`, `hora`, `zona` y `viajes_esperados` (≥ 0, 4 decimales) |
+| `por_zona` | Suma de `viajes_esperados` de las estaciones de cada zona dentro de la petición. Con un día completo de la red es el total esperado por municipio |
+
+#### Ejemplo
+
+Con el contenedor levantado (`make api-run`), la petición de ejemplo (`references/api_p1_peticion.json`, las 5 filas del `input_example` del champion) se manda con:
+
+```bash
+make api-probar-p1
+# curl -s -X POST http://127.0.0.1:8000/p1/predecir -H "Content-Type: application/json" \
+#   -d @references/api_p1_peticion.json
+```
+
+Respuesta con el champion (versión 2):
+
+```json
+{
+  "modelo": "mibici-equipo07-p1-demanda",
+  "version": 2,
+  "predicciones": [
+    {"origen_id": 168, "hora": 23, "zona": "GDL", "viajes_esperados": 0.3271},
+    {"origen_id": 55, "hora": 16, "zona": "GDL", "viajes_esperados": 1.2956},
+    {"origen_id": 172, "hora": 11, "zona": "GDL", "viajes_esperados": 2.9919},
+    {"origen_id": 256, "hora": 17, "zona": "GDL", "viajes_esperados": 4.2466},
+    {"origen_id": 157, "hora": 15, "zona": "GDL", "viajes_esperados": 2.7119}
+  ],
+  "por_zona": {"GDL": 11.5731}
+}
+```
+
+Una petición con errores (hora 3 en el primer registro; zona `CDMX` y el campo extra `viajes` en el segundo) responde `422`:
+
+```json
+{"detail": [
+  {"type": "value_error", "loc": ["body", "registros", 0, "hora"],
+   "msg": "Value error, MiBici no opera de 1:00 a 4:59 (hora 3)", "input": 3},
+  {"type": "literal_error", "loc": ["body", "registros", 1, "zona"],
+   "msg": "Input should be 'GDL', 'ZPN' or 'TLQ'", "input": "CDMX"},
+  {"type": "extra_forbidden", "loc": ["body", "registros", 1, "viajes"],
+   "msg": "Extra inputs are not permitted", "input": 3}
+]}
+```
+
+#### Pruebas
+
+`tests/test_api_p1.py` (20 pruebas) registra un modelo de P1 con los mismos tipos que el real en un Model Registry local temporal y prueba: una predicción por registro en el mismo orden y `por_zona` como suma de sus estaciones; rezagos `null`; que el DataFrame termina con los tipos de la signature; un `422` por cada regla (13 casos, entre ellos la hora 3, coordenadas de la Ciudad de México y `"8"` como texto); la incoherencia entre fin de semana y día; campos de más o de menos; peticiones vacías o de más de 10,000 registros; y el `503` cuando el modelo no cargó.
+
+#### Evidencias
+
+Swagger (`/docs`): petición con el ejemplo precargado y respuesta `200` del champion versión 2:
+
+![Swagger: POST /p1/predecir con respuesta 200](reports/evidencias/api_p1_docs.png)
+
+Terminal: petición válida con las 5 filas del `input_example` y petición con errores (`422`):
+
+![curl a /p1/predecir: respuesta 200 y 422](reports/evidencias/api_p1_curl.png)
+
+#### Limitaciones conocidas
+
+- **Sin autenticación.** Cualquiera que alcance el puerto puede llamar a la API; está pensada para correr en local o dentro de una red privada.
+- **El cliente es responsable de las features.** Deben calcularse con `features.py`; la API valida rangos y tipos, pero no puede comprobar que un rezago corresponda a la historia real de la estación.
+- **Zonas fijas.** Un municipio nuevo se rechaza hasta reentrenar el modelo con él y agregarlo a la regla de `zona`.
+- **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
 
 <!-- Cada integrante agrega aquí la sección de su endpoint: ruta, esquema de entrada y salida,
      validaciones, ejemplo de petición y respuesta, y la captura del contenedor respondiendo. -->
@@ -1400,6 +1542,7 @@ Si algún modelo no carga, `estado` es `degradado` y su campo `error` explica la
 │   ├── pipeline-ml.png       <- Diagrama del pipeline por pregunta (fuente editable: pipeline-ml.svg)
 │   ├── fuentes-datos.csv     <- URLs, registros y SHA-256 de los archivos del portal
 │   ├── tiempos-p1.md         <- Tiempos medidos de los modelos de P1 y límites de la búsqueda
+│   ├── api_p1_peticion.json  <- Petición de ejemplo de la API de P1 (make api-probar-p1)
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/
 │   ├── figures/       <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
@@ -1412,7 +1555,8 @@ Si algún modelo no carga, `estado` es `degradado` y su campo `error` explica la
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
 │   ├── p1.yml                         <- Acción de P1: entrenamiento y registro en MLflow
 │   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
-│   └── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
+│   ├── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
+│   └── api.yml                        <- Smoke test de la imagen de la API en cada PR
 ├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
 ├── .dockerignore      <- Lo que no entra al contexto de construcción de la imagen (datos, .env, .git)
 ├── Dockerfile         <- Imagen de la API (estándar OCI: Docker o Podman)
@@ -1493,7 +1637,7 @@ Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programac
 
 | Integrante | Herramienta | Para qué se usó |
 |---|---|---|
-| Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: base de la API REST (carga de los modelos desde el Registry, `/salud`), `Dockerfile`, targets del Makefile, pruebas de la base y la documentación de la estrategia de despliegue |
+| Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: base de la API REST (carga de los modelos desde el Registry, `/salud`), `Dockerfile`, targets del Makefile, pruebas de la base y la documentación de la estrategia de despliegue; endpoint de P1 (esquemas Pydantic con las reglas de cada variable, conversión a los tipos de la signature), sus pruebas y su documentación; smoke test de la imagen (`make api-smoke` y la acción `api.yml`) |
 | Fernando Arreola Treviño (P2) | Claude Code, con los modelos Claude Sonnet 5.5 y Claude Opus 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks. Emn la fase 2: etiquetas y artefactos de los runs de P2, búsqueda con Optuna, registro en el Model Registry y la documentación de esta fase |
 | Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P3, métricas con el conjunto en el nombre, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
 

@@ -1,0 +1,55 @@
+# Smoke test de la imagen de la API: construye el Dockerfile, levanta el contenedor contra el
+# servidor MLflow del equipo (secret MLFLOW_TRACKING_URI) y corre `make api-smoke`.
+# Comprueba en una máquina limpia que la imagen se construye y responde, no solo en la del equipo.
+name: API - smoke test de la imagen
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tc5061_proyecto_equipo07/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "requirements.txt"
+      - "requirements-api.txt"
+      - "references/api_*.json"
+      - "Makefile"
+      - ".github/workflows/api.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  imagen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comprobar la URL de MLflow
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        run: test -n "$MLFLOW_TRACKING_URI" || (echo "Falta el secret MLFLOW_TRACKING_URI" && exit 1)
+      - name: Construir la imagen
+        run: make api-build
+      - name: Levantar el contenedor
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        # -e sin valor pasa la variable del entorno del job sin escribirla en el comando
+        run: docker run -d --name tc5061-equipo07-api -p 8000:8000 -e MLFLOW_TRACKING_URI tc5061-equipo07-api
+      - name: Esperar a que cargue los modelos
+        # La API responde /salud hasta que terminó de descargar y cargar los modelos
+        run: |
+          for intento in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/salud > /dev/null && exit 0
+            sleep 3
+          done
+          echo "La API no respondió en 3 minutos" && exit 1
+      - name: Smoke test
+        run: make api-smoke PYTHON_INTERPRETER=python3
+      - name: Logs del contenedor
+        if: always()
+        run: docker logs tc5061-equipo07-api
