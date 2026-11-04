@@ -1388,7 +1388,7 @@ En producción, el flujo sería un proceso programado cada noche (fuera del alca
 2. El proceso manda esos registros en una sola petición a `POST /p1/predecir`.
 3. Guarda las predicciones por estación y el total por zona, que el operador usa para planear dónde mover bicicletas.
 
-El mismo endpoint atiende también una consulta puntual (una estación-hora): entre el scoring por lotes y el de tiempo real hay un continuo, y calificar un registro equivale a un lote de uno (Treveil et al., 2020, cap. 6).
+El mismo endpoint sirve también para consultas puntuales, por ejemplo una sola estación-hora desde un tablero. Treveil et al. (2020, cap. 6) distinguen la predicción por lotes (muchos registros a la vez, de forma programada) de la predicción en tiempo real (uno o pocos registros cuando se piden), pero aclaran que no son excluyentes: predecir un registro es técnicamente lo mismo que predecir un lote de uno. Por eso la entrada es una lista: el proceso nocturno manda los 9,440 registros del día y una consulta puntual manda uno.
 
 #### Entrada
 
