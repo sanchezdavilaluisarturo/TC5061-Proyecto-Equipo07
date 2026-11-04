@@ -1232,6 +1232,8 @@ El job `calidad` de `TC5061-Proyecto-Equipo07.yml` corre en cada PR que toca el 
 3. `make seguridad`, que falla si bandit encuentra algo o si aparece una vulnerabilidad no aceptada.
 4. Sube `reports/seguridad/` como artefacto `reportes-seguridad`, descargable desde la pestaña *Actions* del PR.
 
+El job `imagen` de `api.yml` corre en los PR que tocan la API, el `Dockerfile` o las dependencias: construye la imagen, la levanta y corre `make api-smoke` (ver [Smoke test de la imagen](#smoke-test-de-la-imagen)).
+
 ### Evidencias
 
 | Evidencia | Dónde |
@@ -1328,6 +1330,9 @@ make api-probar         # curl -s http://127.0.0.1:8000/salud
 
 # Predicción de P1 con la petición de ejemplo
 make api-probar-p1
+
+# Smoke test: /salud, predicción de P1 y validación (falla si algo no responde)
+make api-smoke
 ```
 
 Con Podman, los mismos comandos con `MOTOR=podman` (por ejemplo, `make api-build MOTOR=podman`).
@@ -1343,6 +1348,24 @@ docker run --rm -p 8000:8000 --add-host=host.docker.internal:host-gateway \
 # Podman
 podman run --rm -p 8000:8000 -e MLFLOW_TRACKING_URI=http://host.containers.internal:5000 tc5061-equipo07-api
 ```
+
+### El contenedor respondiendo
+
+Contenedor levantado con `make api-run` (Docker en WSL2): descarga y carga los tres champions del Registry, y luego atiende `/salud` (la consulta interna del `HEALTHCHECK`), una predicción de P1 (`200`) y una petición inválida (`422`):
+
+![Logs del contenedor: carga de los tres modelos y peticiones 200 y 422](reports/evidencias/api_contenedor_logs.png)
+
+`docker ps` con el contenedor en estado `healthy` (el `HEALTHCHECK` de la imagen consulta `/salud`) y el puerto 8000 publicado:
+
+![docker ps: tc5061-equipo07-api en estado healthy](reports/evidencias/api_contenedor_ps.png)
+
+El aviso de `pytest` al cargar P3 no es un error: MLflow anotó `pytest` entre las dependencias del modelo al registrarlo, pero no se usa para predecir, así que no se instala en la imagen.
+
+### Smoke test de la imagen
+
+`make api-smoke`, con la API levantada, comprueba en segundos que el servicio está completo: `/salud` en `ok` (los tres modelos cargados), una predicción de P1 con `references/api_p1_peticion.json` y un `422` ante una petición vacía. Falla si cualquiera de las tres no se cumple.
+
+La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
 
 ### Consumir la API
 
@@ -1532,7 +1555,8 @@ Terminal: petición válida con las 5 filas del `input_example` y petición con 
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
 │   ├── p1.yml                         <- Acción de P1: entrenamiento y registro en MLflow
 │   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
-│   └── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
+│   ├── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
+│   └── api.yml                        <- Smoke test de la imagen de la API en cada PR
 ├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
 ├── .dockerignore      <- Lo que no entra al contexto de construcción de la imagen (datos, .env, .git)
 ├── Dockerfile         <- Imagen de la API (estándar OCI: Docker o Podman)
@@ -1613,7 +1637,7 @@ Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programac
 
 | Integrante | Herramienta | Para qué se usó |
 |---|---|---|
-| Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: base de la API REST (carga de los modelos desde el Registry, `/salud`), `Dockerfile`, targets del Makefile, pruebas de la base y la documentación de la estrategia de despliegue; endpoint de P1 (esquemas Pydantic con las reglas de cada variable, conversión a los tipos de la signature), sus pruebas y su documentación |
+| Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: base de la API REST (carga de los modelos desde el Registry, `/salud`), `Dockerfile`, targets del Makefile, pruebas de la base y la documentación de la estrategia de despliegue; endpoint de P1 (esquemas Pydantic con las reglas de cada variable, conversión a los tipos de la signature), sus pruebas y su documentación; smoke test de la imagen (`make api-smoke` y la acción `api.yml`) |
 | Fernando Arreola Treviño (P2) | Claude Code, con los modelos Claude Sonnet 5.5 y Claude Opus 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks. Emn la fase 2: etiquetas y artefactos de los runs de P2, búsqueda con Optuna, registro en el Model Registry y la documentación de esta fase |
 | Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P3, métricas con el conjunto en el nombre, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
 
