@@ -186,6 +186,12 @@ api-run:
 api-probar:
 	curl -s http://127.0.0.1:$(PUERTO_API)/salud | $(PYTHON_INTERPRETER) -m json.tool
 
+## Predicción de P1 con la petición de ejemplo (references/api_p1_peticion.json)
+.PHONY: api-probar-p1
+api-probar-p1:
+	curl -s -X POST http://127.0.0.1:$(PUERTO_API)/p1/predecir -H "Content-Type: application/json" \
+		-d @references/api_p1_peticion.json | $(PYTHON_INTERPRETER) -m json.tool
+
 
 #################################################################################
 # Self Documenting Commands                                                     #
