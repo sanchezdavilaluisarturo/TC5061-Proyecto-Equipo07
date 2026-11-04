@@ -29,6 +29,8 @@ class ModeloServido:
     version: int | None = None
     # Etiquetas de la versión (source_run_id, commit, data_version...), para leer el linaje
     etiquetas: dict[str, str] = field(default_factory=dict)
+    # Parámetros del run de origen (umbrales de decisión de P2, hiperparámetros...)
+    parametros: dict[str, str] = field(default_factory=dict)
     modelo: Any = None
     error: str | None = None
 
@@ -40,6 +42,18 @@ class ModeloServido:
 def alias_configurado() -> str:
     """Alias que se sirve; se cambia sin reconstruir la imagen (por ejemplo, a challenger)."""
     return os.getenv("MODELO_ALIAS", "champion")
+
+
+def cargar_parametros(pregunta: str, id_run: str | None) -> dict[str, str]:
+    """Parámetros del run de origen (por ejemplo, los umbrales de P2); vacío si no se pueden leer."""
+    if not id_run:
+        return {}
+    try:
+        return MlflowClient().get_run(id_run).data.params
+    except MlflowException as error:
+        # No impide servir el modelo
+        logger.warning(f"{pregunta}: no se pudieron leer los parámetros del run {id_run}: {error}")
+        return {}
 
 
 def cargar_modelo(pregunta: str, nombre: str, alias: str) -> ModeloServido:
@@ -57,6 +71,7 @@ def cargar_modelo(pregunta: str, nombre: str, alias: str) -> ModeloServido:
         return servido
     servido.version = int(version.version)
     servido.etiquetas = dict(version.tags)
+    servido.parametros = cargar_parametros(pregunta, servido.etiquetas.get("source_run_id"))
     logger.success(f"{pregunta}: models:/{nombre}@{alias} -> versión {version.version}")
     return servido
 
