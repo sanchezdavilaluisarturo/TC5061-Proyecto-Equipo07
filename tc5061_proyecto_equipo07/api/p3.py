@@ -7,10 +7,13 @@ regresa el grupo al que el modelo champion asigna cada estación.
 
 from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from tc5061_proyecto_equipo07 import config as cfg
+from tc5061_proyecto_equipo07.api.modelos import obtener_modelo
+from tc5061_proyecto_equipo07.modeling.predict import p3_reasignar_grupos
 
 router = APIRouter(prefix="/p3", tags=["P3: segmentos de estaciones"])
 
@@ -119,7 +122,58 @@ class P3Prediccion(BaseModel):
 class P3Respuesta(BaseModel):
     modelo: str
     version: int
-    n_grupos: int = Field(ge=1, description="Grupos que distingue el modelo")
     predicciones: list[P3Prediccion]
     # Estaciones de cada grupo dentro de esta petición (no de toda la red)
     estaciones_por_grupo: dict[int, int]
+
+
+def p3_columnas_horarias(prefijo: str) -> list[str]:
+    """Nombres de las columnas del modelo para un tipo de día: lab_h00, lab_h05... lab_h23."""
+    return [f"{prefijo}_h{hora:02d}" for hora in cfg.P3_HORAS_SERVICIO]
+
+
+def p3_a_dataframe(estaciones: list[P3Estacion], modelo) -> pd.DataFrame:
+    """DataFrame con las columnas y los tipos de la signature del modelo (una fila por estación).
+
+    Los perfiles llegan como arreglos y aquí se abren en `lab_hHH` y `fin_hHH`. Las columnas se
+    toman de la signature y no de una lista escrita aquí: si se reentrena con otras, la API las usa.
+    """
+    laborales = pd.DataFrame(
+        [e.perfil_laboral for e in estaciones], columns=p3_columnas_horarias("lab")
+    )
+    fines = pd.DataFrame(
+        [e.perfil_fin_de_semana for e in estaciones], columns=p3_columnas_horarias("fin")
+    )
+    indicadores = pd.DataFrame(
+        [
+            e.model_dump(exclude={"origen_id", "perfil_laboral", "perfil_fin_de_semana"})
+            for e in estaciones
+        ]
+    )
+    datos = pd.concat([laborales, fines, indicadores], axis=1)
+    esquema = modelo.metadata.get_input_schema()
+    if esquema is None:
+        return datos
+    return datos[[c.name for c in esquema.inputs]].astype(
+        {c.name: c.type.to_pandas() for c in esquema.inputs}
+    )
+
+
+@router.post("/segmentar", response_model=P3Respuesta)
+def p3_segmentar(peticion: P3Peticion, request: Request) -> P3Respuesta:
+    """Grupo de cada estación según el modelo champion de P3."""
+    servido = obtener_modelo(request, "p3")
+    datos = p3_a_dataframe(peticion.estaciones, servido.modelo)
+    grupos = p3_reasignar_grupos(servido.modelo, datos, list(datos.columns))
+
+    predicciones = [
+        P3Prediccion(origen_id=e.origen_id, grupo=int(g))
+        for e, g in zip(peticion.estaciones, grupos)
+    ]
+    por_grupo = pd.Series(grupos).value_counts().sort_index()
+    return P3Respuesta(
+        modelo=servido.nombre,
+        version=servido.version,
+        predicciones=predicciones,
+        estaciones_por_grupo={int(g): int(n) for g, n in por_grupo.items()},
+    )
