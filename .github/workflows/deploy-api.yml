@@ -1,0 +1,89 @@
+# Despliegue de la API en el EC2 del equipo (https://api.equipo7mlops.com).
+# Con cada push a api_rest (por ejemplo, al hacer merge de un PR) entra por SSH al servidor,
+# trae ese commit, reconstruye la imagen y reemplaza el contenedor. Termina en rojo si /salud no
+# queda en "ok", y en los logs se ve por qué. A mano: Actions > Run workflow.
+#
+# Diferencia con api.yml: aquel prueba la imagen en una máquina temporal de GitHub y todo se
+# destruye al terminar; este deja el contenedor corriendo en el EC2 (`--restart unless-stopped`).
+#
+# Secrets del repositorio (Settings > Secrets and variables > Actions > Secrets):
+#   EC2_HOST             IP pública o dominio del EC2
+#   EC2_USER             usuario SSH (ec2-user en Amazon Linux)
+#   EC2_SSH_KEY          llave privada SSH completa, con sus líneas BEGIN y END
+#   MLFLOW_TRACKING_URI  URL del servidor MLflow del que la API descarga los modelos
+#
+# En el EC2: el repositorio clonado en ~/apps/mibici-api (rama api_rest) y Docker instalado.
+# Rollback: docker tag tc5061-equipo07-api:anterior tc5061-equipo07-api:latest y repetir el
+# docker run de este archivo.
+name: API - desplegar en el EC2
+
+on:
+  push:
+    branches: [api_rest]
+    paths:
+      - "tc5061_proyecto_equipo07/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "requirements-api.txt"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Un despliegue a la vez; uno en curso no se cancela a la mitad
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  desplegar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Preparar SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          test -n "$EC2_HOST" && test -n "$EC2_SSH_KEY" || (echo "Faltan los secrets EC2_HOST y EC2_SSH_KEY" && exit 1)
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Desplegar en el EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          COMMIT: ${{ github.sha }}
+        # El script se manda por stdin; el commit y la URI van como argumentos ($1 y $2), no
+        # escritos en el comando
+        run: |
+          ssh -i ~/.ssh/deploy_key "$EC2_USER@$EC2_HOST" bash -s "$COMMIT" "$MLFLOW_TRACKING_URI" <<'EOF'
+          set -euo pipefail
+          cd ~/apps/mibici-api
+          git fetch origin api_rest
+          # Despliega exactamente el commit que disparó la acción
+          git merge --ff-only "$1"
+          docker tag tc5061-equipo07-api:latest tc5061-equipo07-api:anterior 2>/dev/null || true
+          docker build -t tc5061-equipo07-api:latest .
+          docker rm -f tc5061-equipo07-api 2>/dev/null || true
+          docker run -d --name tc5061-equipo07-api --restart unless-stopped -p 8000:8000 \
+            -e MLFLOW_TRACKING_URI="$2" tc5061-equipo07-api:latest
+          # La API responde /salud cuando terminó de cargar los modelos
+          for intento in $(seq 1 40); do
+            if curl -sf localhost:8000/salud | grep -q '"estado":"ok"'; then
+              echo "API sana en el EC2"
+              exit 0
+            fi
+            sleep 3
+          done
+          docker logs --tail 30 tc5061-equipo07-api
+          echo "La API no quedó en ok en 2 minutos"
+          exit 1
+          EOF
+
+      - name: Comprobar la URL pública
+        run: curl -sf https://api.equipo7mlops.com/salud
