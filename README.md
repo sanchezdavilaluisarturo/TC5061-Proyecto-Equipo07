@@ -1331,7 +1331,10 @@ make api-probar         # curl -s http://127.0.0.1:8000/salud
 # Predicción de P1 con la petición de ejemplo
 make api-probar-p1
 
-# Smoke test: /salud, predicción de P1 y validación (falla si algo no responde)
+# Segmentos de P3 con la petición de ejemplo
+make api-probar-p3
+
+# Smoke test: /salud, P1, P3 y validación (falla si algo no responde)
 make api-smoke
 ```
 
@@ -1363,7 +1366,7 @@ El aviso de `pytest` al cargar P3 no es un error: MLflow anotó `pytest` entre l
 
 ### Smoke test de la imagen
 
-`make api-smoke`, con la API levantada, comprueba en segundos que el servicio está completo: `/salud` en `ok` (los tres modelos cargados), una predicción de P1 con `references/api_p1_peticion.json` y un `422` ante una petición vacía. Falla si cualquiera de las tres no se cumple.
+`make api-smoke`, con la API levantada, comprueba en segundos que el servicio está completo: `/salud` en `ok` (los tres modelos cargados), una predicción de P1 con `references/api_p1_peticion.json`, un `422` ante una petición vacía a P1, los segmentos de P3 con `references/api_p3_peticion.json` (deben regresar las 3 estaciones) y un `422` ante una petición vacía a P3. Falla si cualquiera no se cumple.
 
 La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
 
@@ -1375,6 +1378,7 @@ La documentación interactiva (Swagger) queda en http://127.0.0.1:8000/docs, con
 |---|---|---|
 | GET | `/salud` | Estado del servicio y versión cargada de cada modelo |
 | POST | `/p1/predecir` | Viajes esperados por estación-hora y su suma por zona (ver [Endpoint de P1](#endpoint-de-p1-demanda-por-estación-hora)) |
+| POST | `/p3/segmentar` | Grupo al que el modelo asigna cada estación según su perfil de uso (ver [Endpoint de P3](#endpoint-de-p3-segmentos-de-estaciones)) |
 
 Petición:
 
@@ -1510,6 +1514,95 @@ Terminal: petición válida con las 5 filas del `input_example` y petición con 
 - **Zonas fijas.** Un municipio nuevo se rechaza hasta reentrenar el modelo con él y agregarlo a la regla de `zona`.
 - **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
 
+### Endpoint de P3: segmentos de estaciones
+
+`POST /p3/segmentar` regresa el grupo al que el champion de `mibici-equipo07-p3-segmentos` asigna cada estación según su perfil de uso (código en `tc5061_proyecto_equipo07/api/p3.py`, pruebas en `tests/test_api_p3.py`).
+
+#### Qué hace y por qué recibe el perfil ya calculado
+
+P3 es clustering: no tiene una variable objetivo, así que la "predicción" es la asignación de cada estación al grupo cuyo centro le queda más cerca. La API usa `p3_reasignar_grupos` de `modeling/predict.py`, la misma función con la que el proyecto reasigna las estaciones del año de validación al evaluar la estabilidad del modelo.
+
+Igual que en P1, la API no recalcula nada: el cliente manda el perfil que produce `p3_perfil_de_estaciones` en `features.py`, el mismo con el que se entrenó el modelo, y el modelo ya incluye su escalador (Huyen, 2022, cap. 7). Son *batch features*: el perfil de una estación resume un periodo de viajes (no cambia de una consulta a otra), por lo que el caso de uso es recalcular los perfiles cuando hay datos nuevos y reasignar las estaciones, o consultar una estación puntual.
+
+#### Entrada
+
+Cuerpo `{"estaciones": [...]}` con 1 a 1,000 estaciones (la red tiene ~470). El modelo recibe 44 columnas; para no pedir 44 campos sueltos, la API pide los dos perfiles horarios como arreglos y los abre en las columnas del modelo (`lab_h00`, `lab_h05`… `lab_h23` y `fin_h00`… `fin_h23`):
+
+| Campo | Regla | Por qué |
+|---|---|---|
+| `origen_id` | Entero ≥ 1, sin repetirse en la petición | Id de la estación; no es una variable del modelo, sirve para devolver cada resultado a su estación |
+| `perfil_laboral` | 20 números de 0 a 1 que suman 1 | Proporción de salidas en cada hora de servicio (0 y de 5 a 23, en ese orden) en días laborales |
+| `perfil_fin_de_semana` | Igual que el anterior | Lo mismo en sábado y domingo |
+| `log_viajes_por_dia` | De 0 a 10 | `log(1 + salidas por día)` |
+| `neto_sobre_salidas` | De −1 a 10 | `(llegadas − salidas) / salidas`. El piso es −1 (la estación no recibe bicis); no tiene techo natural, así que 10 es un tope de cordura |
+| `prop_circulares` | De 0 a 1 | Proporción de viajes que regresan al origen |
+| `duracion_mediana_min` | Mayor que 0 y hasta 1,440 | Minutos |
+
+Además:
+
+- **Perfiles que suman 1** (tolerancia de 0.001). Un perfil en ceros también se acepta: es el caso de una estación sin viajes de ese tipo de día, que `p3_perfil_de_estaciones` también representa con ceros.
+- **Campos exactos** (`extra="forbid"`) y **tipos estrictos** (`strict=True`), igual que en P1: un campo de más o de menos se rechaza y `"0.1"` (texto) no se convierte en número.
+- **Sin `NaN` ni `Infinity`.**
+
+Un registro inválido responde `422` con la ubicación del error. Después de validar, la API arma el DataFrame con las columnas y los tipos de la signature del modelo, que lee del propio modelo: si se reentrena con otras columnas, las toma sin cambios en el código.
+
+#### Salida
+
+| Campo | Qué es |
+|---|---|
+| `modelo`, `version` | Modelo y versión del Registry que hizo la asignación (trazabilidad) |
+| `predicciones` | Una por estación, en el mismo orden: `origen_id` y `grupo` (entero desde 0) |
+| `estaciones_por_grupo` | Cuántas estaciones de **esta petición** cayeron en cada grupo |
+
+#### Ejemplo
+
+Con el contenedor levantado (`make api-run`), la petición de ejemplo (`references/api_p3_peticion.json`, las 3 filas del `input_example` del champion) se manda con:
+
+```bash
+make api-probar-p3
+# curl -s -X POST http://127.0.0.1:8000/p3/segmentar -H "Content-Type: application/json" \
+#   -d @references/api_p3_peticion.json
+```
+
+Cada estación de la petición lleva este formato (el primer perfil, recortado):
+
+```json
+{"origen_id": 1,
+ "perfil_laboral": [0.000798, 0.006649, 0.028238, "... 20 valores"],
+ "perfil_fin_de_semana": [0.019705, 0.002723, 0.025393, "... 20 valores"],
+ "log_viajes_por_dia": 3.823337, "neto_sobre_salidas": 0.092065,
+ "prop_circulares": 0.067815, "duracion_mediana_min": 10.316667}
+```
+
+Respuesta con el champion (versión 4):
+
+```json
+{
+  "modelo": "mibici-equipo07-p3-segmentos",
+  "version": 4,
+  "predicciones": [
+    {"origen_id": 1, "grupo": 1},
+    {"origen_id": 2, "grupo": 0},
+    {"origen_id": 3, "grupo": 0}
+  ],
+  "estaciones_por_grupo": {"0": 2, "1": 1}
+}
+```
+
+Un perfil con 19 horas en lugar de 20 responde `422` con la ubicación del error (`loc`: número de estación y campo) en lugar de asignar un grupo con datos incompletos.
+
+#### Pruebas
+
+`tests/test_api_p3.py` (20 pruebas) registra en un Model Registry local temporal un modelo con las 44 columnas del real y tres grupos sintéticos bien separados, y prueba: que cada estación recibe el grupo que da `modelo.predict` con la misma tabla y en el mismo orden; que `estaciones_por_grupo` suma las estaciones de la petición; que el DataFrame termina con las columnas y los tipos de la signature y con los perfiles abiertos en el orden correcto de horas; el perfil en ceros; un `422` por cada regla (11 casos), por campo faltante, por estaciones repetidas y por una petición vacía o de más de 1,000; y el `503` cuando el modelo no cargó. Además, `make api-smoke` consulta este endpoint con la petición de ejemplo.
+
+#### Limitaciones conocidas
+
+- **Sin autenticación.** Igual que el resto de la API: pensada para correr en local o dentro de una red privada.
+- **El grupo es un número, no una etiqueta.** El modelo no dice qué significa cada grupo, y la numeración puede cambiar al reentrenar (el grupo 0 de una versión no es necesariamente el 0 de otra). Para interpretarlos hay que comparar los perfiles de cada grupo en los notebooks de P3.
+- **El cliente es responsable del perfil.** Debe calcularse con `p3_perfil_de_estaciones`; la API valida forma y rangos, pero no puede comprobar que el perfil corresponda a la historia real de la estación. Una estación con pocos viajes tiene un perfil poco estable y su grupo es menos confiable.
+- **`estaciones_por_grupo` cuenta solo la petición**, no toda la red: con un subconjunto de estaciones no es el tamaño real de cada grupo.
+- **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
+
 <!-- Cada integrante agrega aquí la sección de su endpoint: ruta, esquema de entrada y salida,
      validaciones, ejemplo de petición y respuesta, y la captura del contenedor respondiendo. -->
 
@@ -1639,6 +1732,6 @@ Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programac
 |---|---|---|
 | Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: base de la API REST (carga de los modelos desde el Registry, `/salud`), `Dockerfile`, targets del Makefile, pruebas de la base y la documentación de la estrategia de despliegue; endpoint de P1 (esquemas Pydantic con las reglas de cada variable, conversión a los tipos de la signature), sus pruebas y su documentación; smoke test de la imagen (`make api-smoke` y la acción `api.yml`) |
 | Fernando Arreola Treviño (P2) | Claude Code, con los modelos Claude Sonnet 5.5 y Claude Opus 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks. Emn la fase 2: etiquetas y artefactos de los runs de P2, búsqueda con Optuna, registro en el Model Registry y la documentación de esta fase |
-| Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P3, métricas con el conjunto en el nombre, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase |
+| Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P3, métricas con el conjunto en el nombre, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: endpoint de P3 (esquemas Pydantic con las reglas de cada variable, apertura de los perfiles en las 44 columnas de la signature), sus pruebas, la petición de ejemplo, la ampliación del smoke test y la documentación del endpoint |
 
 En las tres preguntas, la formulación del problema, la elección de variables, modelos y métricas, los criterios de aceptación, la ejecución con los datos reales, la validación de los resultados y los commits y Pull Requests son de cada integrante, que revisó y es responsable del contenido. Por acuerdo del equipo, esta declaración vive aquí y no en los mensajes de commit.
