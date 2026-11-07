@@ -1552,7 +1552,7 @@ Terminal: petición válida con las 5 filas del `input_example` y petición con 
 
 #### Limitaciones conocidas
 
-- **Sin autenticación.** Cualquiera que alcance el puerto puede llamar a la API; está pensada para correr en local o dentro de una red privada.
+- **Sin autenticación.** Cualquiera que alcance la URL puede llamar a la API, y https://api.equipo7mlops.com es pública. Es aceptable para el proyecto porque solo expone predicciones sobre datos abiertos de MiBici, pero un uso real pediría una llave de API o limitar el acceso (grupo de seguridad del EC2, WAF o un API Gateway) y un límite de peticiones.
 - **El cliente es responsable de las features.** Deben calcularse con `features.py`; la API valida rangos y tipos, pero no puede comprobar que un rezago corresponda a la historia real de la estación.
 - **Zonas fijas.** Un municipio nuevo se rechaza hasta reentrenar el modelo con él y agregarlo a la regla de `zona`.
 - **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
@@ -1640,7 +1640,7 @@ Un perfil con 19 horas en lugar de 20 responde `422` con la ubicación del error
 
 #### Limitaciones conocidas
 
-- **Sin autenticación.** Igual que el resto de la API: pensada para correr en local o dentro de una red privada.
+- **Sin autenticación.** Igual que el resto de la API, y desplegada de forma pública (ver [Despliegue en el EC2](#despliegue-en-el-ec2)).
 - **El grupo es un número, no una etiqueta.** El modelo no dice qué significa cada grupo, y la numeración puede cambiar al reentrenar (el grupo 0 de una versión no es necesariamente el 0 de otra). Para interpretarlos hay que comparar los perfiles de cada grupo en los notebooks de P3.
 - **El cliente es responsable del perfil.** Debe calcularse con `p3_perfil_de_estaciones`; la API valida forma y rangos, pero no puede comprobar que el perfil corresponda a la historia real de la estación. Una estación con pocos viajes tiene un perfil poco estable y su grupo es menos confiable.
 - **`estaciones_por_grupo` cuenta solo la petición**, no toda la red: con un subconjunto de estaciones no es el tamaño real de cada grupo.
@@ -1679,6 +1679,7 @@ Un perfil con 19 horas en lugar de 20 responde `422` con la ubicación del error
 │   ├── fuentes-datos.csv     <- URLs, registros y SHA-256 de los archivos del portal
 │   ├── tiempos-p1.md         <- Tiempos medidos de los modelos de P1 y límites de la búsqueda
 │   ├── api_p1_peticion.json  <- Petición de ejemplo de la API de P1 (make api-probar-p1)
+│   ├── api_p3_peticion.json  <- Petición de ejemplo de la API de P3 (make api-probar-p3)
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/
 │   ├── figures/       <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
@@ -1692,7 +1693,8 @@ Un perfil con 19 horas en lugar de 20 responde `422` con la ubicación del error
 │   ├── p1.yml                         <- Acción de P1: entrenamiento y registro en MLflow
 │   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
 │   ├── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
-│   └── api.yml                        <- Smoke test de la imagen de la API en cada PR
+│   ├── api.yml                        <- Smoke test de la imagen de la API en cada PR
+│   └── deploy-api.yml                 <- Despliegue de la API en el EC2 al hacer merge a api_rest
 ├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
 ├── .dockerignore      <- Lo que no entra al contexto de construcción de la imagen (datos, .env, .git)
 ├── Dockerfile         <- Imagen de la API (estándar OCI: Docker o Podman)
@@ -1710,7 +1712,7 @@ Un perfil con 19 horas en lugar de 20 responde `422` con la ubicación del error
 - `EDA` es la rama de integración del equipo. Cada integrante trabaja en su rama (`feat/<tema>`, `fix/<tema>`, `docs/<tema>`) creada desde `EDA`, abre un PR hacia `EDA` y, al cerrar cada entrega, se abre un PR `EDA → main`.
 - En la Fase 2 la rama de integración es `mlflow_run` (creada desde `main`): las ramas de cada pregunta (`tuning/p1`, `tuning/p2`, `tuning/p3`) salen de ella y vuelven por PR.
 - En la entrega de pruebas y seguridad la rama de integración es `calidad_pruebas` (creada desde `main`), que trae el módulo de validación y los chequeos de seguridad: las ramas de cada pregunta (`testing/p1`, `testing/p2`, `testing/p3`) salen de ella y vuelven por PR, y `calidad_pruebas` entra a `main` por PR.
-- En la entrega de la API REST la rama de integración es `api_rest` (creada desde `main`), que trae la base de la API y el `Dockerfile`: las ramas de cada pregunta (`api/p1`, `api/p2`, `api/p3`) salen de ella y vuelven por PR, y `api_rest` entra a `main` por PR.
+- En la entrega de la API REST la rama de integración es `api_rest` (creada desde `main`), que trae la base de la API y el `Dockerfile`: las ramas de cada pregunta (`api/p1`, `api/p2`, `api/p3`) y la del despliegue (`api/server`) salen de ella y vuelven por PR, y `api_rest` entra a `main` por PR. Cada merge a `api_rest` despliega la API en el EC2 (`deploy-api.yml`), así que esa rama siempre debe dejar la API en un estado que arranque.
 - Commits con [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/) en español, sin alcance entre paréntesis y mencionando la pregunta: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `build:`, `ci:`, `style:`, `chore:`.
 - Cada integrante abre al menos un PR y revisa al menos uno de otro integrante.
 - En cada PR, GitHub Actions corre `ruff`, `pytest` y `make seguridad` (`TC5061-Proyecto-Equipo07.yml`).
