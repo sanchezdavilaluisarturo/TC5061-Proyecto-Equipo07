@@ -37,6 +37,7 @@ def registro(**cambios) -> dict:
 SIN_ACTIVIDAD = registro(
     **{f"neto_{k}_relativo": 0.0 for k in (1, 2, 4, 8)},
     **{f"{c}_{k}": 0 for c in ("salidas", "entradas") for k in (2, 4)},
+    fecha="2020-01-02",
     cumsum_dia_relativo=0.0,
     hora_sin=0.965926,
     hora_cos=0.258819,
@@ -58,8 +59,13 @@ def cliente(tmp_path_factory):
         variables = tabla[cfg.P2_FEATURES_CON_HISTORICO].astype(TIPOS_P2)
         modelo = train.p2_construir_modelo("xgb").fit(variables, tabla["clase"])
         id_run = train.p2_registrar_run(
-            "xgb", {"data_version": "abc123", **UMBRALES}, {"valid_ap_riesgo": 0.8}, {}, modelo,
-            variables.head(5), tabla,
+            "xgb",
+            {"data_version": "abc123", **UMBRALES},
+            {"valid_ap_riesgo": 0.8},
+            {},
+            modelo,
+            variables.head(5),
+            tabla,
         )
         registro_p2.p2_registrar(id_run, "champion")
         with TestClient(app) as cliente:
@@ -93,7 +99,10 @@ def test_predice_cada_registro_en_orden_con_su_estacion_y_hora(cliente):
     assert (cuerpo["modelo"], cuerpo["version"]) == (cfg.P2_MODELO_REGISTRADO, 1)
     assert cuerpo["umbrales"] == {"sin_bicis": 0.2, "sin_anclajes": 0.1}
     predicciones = cuerpo["predicciones"]
-    assert [(p["estacion"], p["hora"]) for p in predicciones] == [(2, "18:00"), (7, "05:00")]
+    assert [(p["estacion"], p["fecha"], p["hora"]) for p in predicciones] == [
+        (2, "2023-12-15", "18:00"),
+        (7, "2020-01-02", "05:00"),
+    ]
     # Lo que devuelve la API es lo que predice el modelo con los mismos registros
     modelo = app.state.modelos["p2"].modelo
     esperadas = modelo.predict(p2_a_dataframe([P2Registro(**r) for r in registros], modelo))
@@ -173,6 +182,12 @@ def test_valor_fuera_de_rango_o_de_tipo_responde_422(cliente, cambios, campo):
         pytest.param({"salidas_2": 11, "entradas_2": 17}, "ventana de 2 bins", id="ventana 2 > 4"),
         pytest.param(
             {"hist_sin_bicis": 0.7, "hist_sin_anclajes": 0.6}, "pasar de 1", id="historia > 1"
+        ),
+        # Se pasa un fin de semana, pero es_fin_semana = 0
+        pytest.param(
+            {"fecha": "2023-12-16", "es_fin_semana": 0},
+            "es_fin_semana",
+            id="es_fin_semana no corresponde",
         ),
     ],
 )

@@ -5,6 +5,7 @@ de 30 minutos y la historia (`hist_*`) al cierre del día anterior. Regresa la p
 clase y la clase decidida con los umbrales elegidos en validación, que se leen del run de origen.
 """
 
+from datetime import date
 import math
 from typing import Annotated, Literal
 
@@ -36,6 +37,7 @@ P2_CLASE = Literal["sin_riesgo", "sin_bicis", "sin_anclajes"]
 # Fila real de train (estación 2, viernes 2023-12-15 a las 18:00) con su historia
 P2_EJEMPLO = {
     "estacion": 2,
+    "fecha": "2023-12-15",
     "neto_1_relativo": 0.2,
     "neto_2_relativo": 0.4,
     "neto_4_relativo": 0.666667,
@@ -74,6 +76,7 @@ class P2Registro(BaseModel):
     )
 
     estacion: int = Field(ge=1, description="Id de la estación; no entra al modelo")
+    fecha: date = Field(strict=False, description="Día del bin; no entra al modelo")
     neto_1_relativo: Relativo = Field(description="(entradas - salidas) del bin / capacidad")
     neto_2_relativo: Relativo = Field(description="Lo mismo en los últimos 2 bins (1 h)")
     neto_4_relativo: Relativo = Field(description="Lo mismo en los últimos 4 bins (2 h)")
@@ -105,6 +108,9 @@ class P2Registro(BaseModel):
             or abs(self.hora_cos - math.cos(angulo)) > P2_TOLERANCIA
         ):
             raise ValueError("hora_sin y hora_cos deben ser un bin de 30 min de 05:00 a 22:30")
+        # Se rechaza si la fecha ingresada no empata con la columna es_fin_semana
+        if self.es_fin_semana != int(self.fecha.weekday() >= 5):
+            raise ValueError("es_fin_semana no corresponde al día de fecha")
         # Se rechaza si neto_k_relativo no encaja con el neto y las capacidades dadas
         for k in (2, 4):
             neto = getattr(self, f"entradas_{k}") - getattr(self, f"salidas_{k}")
@@ -125,6 +131,7 @@ class P2Peticion(BaseModel):
 
 class P2Prediccion(BaseModel):
     estacion: int
+    fecha: date
     hora: str = Field(pattern=r"^\d{2}:\d{2}$", description="Inicio del bin (HH:MM)")
     probabilidades: dict[P2_CLASE, Annotated[float, Field(ge=0, le=1)]]
     clase: P2_CLASE
@@ -183,6 +190,7 @@ def p2_predecir(peticion: P2Peticion, request: Request) -> P2Respuesta:
         predicciones=[
             P2Prediccion(
                 estacion=r.estacion,
+                fecha=r.fecha,
                 hora=p2_hora(r),
                 probabilidades=dict(zip(cfg.P2_CLASES, p.tolist())),
                 clase=c,
