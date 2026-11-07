@@ -192,13 +192,19 @@ api-probar-p1:
 	curl -s -X POST http://127.0.0.1:$(PUERTO_API)/p1/predecir -H "Content-Type: application/json" \
 		-d @references/api_p1_peticion.json | $(PYTHON_INTERPRETER) -m json.tool
 
+## Predicción de P2 con la petición de ejemplo (references/api_p2_peticion.json)
+.PHONY: api-probar-p2
+api-probar-p2:
+	curl -s -X POST http://127.0.0.1:$(PUERTO_API)/p2/predecir -H "Content-Type: application/json" \
+		-d @references/api_p2_peticion.json | $(PYTHON_INTERPRETER) -m json.tool
+
 ## Segmentos de P3 con la petición de ejemplo (references/api_p3_peticion.json)
 .PHONY: api-probar-p3
 api-probar-p3:
 	curl -s -X POST http://127.0.0.1:$(PUERTO_API)/p3/segmentar -H "Content-Type: application/json" \
 		-d @references/api_p3_peticion.json | $(PYTHON_INTERPRETER) -m json.tool
 
-## Smoke test de la API levantada: /salud en "ok", P1 predice, P3 segmenta y una petición inválida da 422
+## Smoke test de la API levantada: /salud en "ok", P1 y P2 predicen, P3 segmenta y una petición inválida da 422
 .PHONY: api-smoke
 api-smoke:
 	curl -sf http://127.0.0.1:$(PUERTO_API)/salud | $(PYTHON_INTERPRETER) -c \
@@ -207,6 +213,11 @@ api-smoke:
 		-d @references/api_p1_peticion.json | $(PYTHON_INTERPRETER) -c \
 		'import json, sys; r = json.load(sys.stdin); print(r); sys.exit(len(r["predicciones"]) != 5)'
 	test "$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$(PUERTO_API)/p1/predecir \
+		-H 'Content-Type: application/json' -d '{"registros": []}')" = 422
+	curl -sf -X POST http://127.0.0.1:$(PUERTO_API)/p2/predecir -H "Content-Type: application/json" \
+		-d @references/api_p2_peticion.json | $(PYTHON_INTERPRETER) -c \
+		'import json, sys; r = json.load(sys.stdin); print(r); sys.exit(len(r["predicciones"]) != 5)'
+	test "$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$(PUERTO_API)/p2/predecir \
 		-H 'Content-Type: application/json' -d '{"registros": []}')" = 422
 	curl -sf -X POST http://127.0.0.1:$(PUERTO_API)/p3/segmentar -H "Content-Type: application/json" \
 		-d @references/api_p3_peticion.json | $(PYTHON_INTERPRETER) -c \
