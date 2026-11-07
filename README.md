@@ -1295,6 +1295,7 @@ Los modelos campeones de P1, P2 y P3 se sirven con una API REST hecha con FastAP
 | Origen del modelo | El contenedor descarga el modelo del Model Registry al arrancar (`models:/<nombre>@<alias>`); el modelo no va dentro de la imagen | Una sola imagen sirve cualquier versión: cambiar de modelo o regresar a la versión anterior (*rollback*) es mover el alias en el Registry y reiniciar el contenedor, sin reconstruir la imagen | Treveil et al. (2020, cap. 6); MLflow (s.f.-a) |
 | Entorno | `requirements-api.txt` con solo las librerías que usa la API, instaladas con las versiones fijadas en `requirements.txt` | El entorno se reconstruye igual en cualquier máquina y con las mismas versiones con las que se entrenaron los modelos (scikit-learn, XGBoost) | Treveil et al. (2020, cap. 6) |
 | Monitoreo básico | Endpoint `/salud` (*health check*) y `HEALTHCHECK` en la imagen | Permite comprobar que el servicio está vivo y qué versión de cada modelo cargó | Treveil et al. (2020, cap. 6) |
+| Despliegue | La API corre en un EC2 del equipo (https://api.equipo7mlops.com) y se actualiza sola con cada merge a `api_rest` (ver [Despliegue en el EC2](#despliegue-en-el-ec2)) | Un despliegue manual depende de quién se acuerde y de qué comandos corrió; con una acción, lo que corre en el servidor es siempre un commit conocido y el *rollback* es un comando | Treveil et al. (2020, cap. 6) |
 
 ### Cómo carga los modelos
 
@@ -1370,9 +1371,51 @@ El aviso de `pytest` al cargar P3 no es un error: MLflow anotó `pytest` entre l
 
 La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
 
+### Despliegue en el EC2
+
+La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7mlops.com. La acción `deploy-api.yml` la actualiza con cada push a `api_rest` (es decir, al hacer merge de un PR) que toque `tc5061_proyecto_equipo07/`, el `Dockerfile`, los `requirements*.txt` o el propio workflow; también se puede lanzar a mano en *Actions > Run workflow*.
+
+| Acción | Dónde corre | Qué deja al terminar |
+|---|---|---|
+| `api.yml` | Máquina temporal de GitHub, en cada PR | Nada: comprueba que la imagen se construye y responde, y todo se destruye |
+| `deploy-api.yml` | El EC2, al hacer merge a `api_rest` | El contenedor corriendo con el commit recién integrado (`--restart unless-stopped`) |
+
+**Qué hace la acción**, en orden:
+
+1. **Preparar SSH.** Valida que existan los secrets `EC2_HOST` y `EC2_SSH_KEY` y falla ahí mismo si falta alguno, en lugar de intentar conectarse con valores vacíos.
+2. **Traer el commit.** Entra por SSH a `~/apps/mibici-api` y hace `git merge --ff-only` del commit exacto que disparó la acción, no del último de la rama: si dos merges seguidos llegan juntos, cada despliegue corresponde a su commit.
+3. **Guardar la imagen anterior.** Etiqueta la imagen vigente como `tc5061-equipo07-api:anterior`, que es lo que permite el *rollback*.
+4. **Reconstruir y reemplazar.** `docker build`, elimina el contenedor viejo y levanta el nuevo con `MLFLOW_TRACKING_URI` como variable de entorno.
+5. **Comprobar.** Consulta `localhost:8000/salud` hasta 40 veces (cada 3 s) esperando `"estado":"ok"`, que la API da cuando terminó de cargar los modelos. Si no llega, imprime las últimas 30 líneas de log y termina en rojo.
+6. **Comprobar la URL pública.** `curl` a `https://api.equipo7mlops.com/salud`, para detectar fallas de DNS, certificado o puertos que el chequeo local no ve.
+
+Además, `concurrency` garantiza un despliegue a la vez y que uno en curso no se cancela a la mitad.
+
+**Secrets** (Settings > Secrets and variables > Actions):
+
+| Secret | Contenido |
+|---|---|
+| `EC2_HOST` | IP pública o dominio del EC2 (solo el host, sin `https://` ni puerto) |
+| `EC2_USER` | Usuario SSH (`ec2-user` en Amazon Linux) |
+| `EC2_SSH_KEY` | Llave privada SSH completa, con sus líneas `BEGIN` y `END` |
+| `MLFLOW_TRACKING_URI` | URL del servidor MLflow del que la API descarga los modelos |
+
+**Rollback.** En el EC2, si la versión nueva responde mal:
+
+```bash
+docker rm -f tc5061-equipo07-api
+docker tag tc5061-equipo07-api:anterior tc5061-equipo07-api:latest
+docker run -d --name tc5061-equipo07-api --restart unless-stopped -p 8000:8000 \
+  -e MLFLOW_TRACKING_URI=<URL de MLflow> tc5061-equipo07-api:latest
+```
+
+Solo se conserva una versión atrás: un segundo despliegue sobrescribe `:anterior`. Para volver más atrás hay que hacer `git revert` del cambio y dejar que la acción despliegue el resultado.
+
+**Si la acción falla en "Preparar SSH"**, casi siempre es un secret mal capturado (el caso típico: `EC2_HOST` con valor equivocado o con espacios). Se corrige en Settings y se relanza con *Re-run jobs*, sin hacer otro commit.
+
 ### Consumir la API
 
-La documentación interactiva (Swagger) queda en http://127.0.0.1:8000/docs, con los esquemas de entrada y salida de cada endpoint.
+La documentación interactiva (Swagger) queda en http://127.0.0.1:8000/docs con el contenedor local, o en https://api.equipo7mlops.com/docs con la API desplegada, con los esquemas de entrada y salida de cada endpoint.
 
 | Método | Ruta | Qué hace |
 |---|---|---|
