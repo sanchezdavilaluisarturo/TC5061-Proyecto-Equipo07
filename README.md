@@ -1380,6 +1380,10 @@ La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7ml
 | `api.yml` | Máquina temporal de GitHub, en cada PR | Nada: comprueba que la imagen se construye y responde, y todo se destruye |
 | `deploy-api.yml` | El EC2, al hacer merge a `api_rest` | El contenedor corriendo con el commit recién integrado (`--restart unless-stopped`) |
 
+Flujo completo, desde el merge hasta la verificación (fuente editable en `references/despliegue-api.candidate.json` y versión interactiva en [`references/despliegue-api.html`](references/despliegue-api.html), generada con [Archify](https://github.com/tt-a1i/archify)):
+
+![Diagrama del despliegue automático de la API en el EC2](references/despliegue-api.png)
+
 **Qué hace la acción**, en orden:
 
 1. **Preparar SSH.** Valida que existan los secrets `EC2_HOST` y `EC2_SSH_KEY` y falla ahí mismo si falta alguno, en lugar de intentar conectarse con valores vacíos.
@@ -1552,7 +1556,7 @@ Terminal: petición válida con las 5 filas del `input_example` y petición con 
 
 #### Limitaciones conocidas
 
-- **Sin autenticación.** Cualquiera que alcance la URL puede llamar a la API, y https://api.equipo7mlops.com es pública. Es aceptable para el proyecto porque solo expone predicciones sobre datos abiertos de MiBici, pero un uso real pediría una llave de API o limitar el acceso (grupo de seguridad del EC2, WAF o un API Gateway) y un límite de peticiones.
+- **Riesgo aceptado: sin autenticación.** Cualquiera que conozca la URL puede llamar a la API, y https://api.equipo7mlops.com es pública. Riesgos: consumo no autorizado del servicio y de los recursos del EC2, abuso por volumen (cada petición ocupa CPU del servidor) y exposición de la documentación (`/docs`, `/openapi.json`). **No se cubre en esta fase**: la entrega pide el servicio funcionando y la API solo expone predicciones sobre datos abiertos de MiBici, sin datos personales. Antes de un uso real se necesitaría una llave de API o un API Gateway, limitar el acceso (grupo de seguridad del EC2 o WAF) y un límite de peticiones.
 - **El cliente es responsable de las features.** Deben calcularse con `features.py`; la API valida rangos y tipos, pero no puede comprobar que un rezago corresponda a la historia real de la estación.
 - **Zonas fijas.** Un municipio nuevo se rechaza hasta reentrenar el modelo con él y agregarlo a la regla de `zona`.
 - **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
@@ -1638,9 +1642,15 @@ Un perfil con 19 horas en lugar de 20 responde `422` con la ubicación del error
 
 `tests/test_api_p3.py` (20 pruebas) registra en un Model Registry local temporal un modelo con las 44 columnas del real y tres grupos sintéticos bien separados, y prueba: que cada estación recibe el grupo que da `modelo.predict` con la misma tabla y en el mismo orden; que `estaciones_por_grupo` suma las estaciones de la petición; que el DataFrame termina con las columnas y los tipos de la signature y con los perfiles abiertos en el orden correcto de horas; el perfil en ceros; un `422` por cada regla (11 casos), por campo faltante, por estaciones repetidas y por una petición vacía o de más de 1,000; y el `503` cuando el modelo no cargó. Además, `make api-smoke` consulta este endpoint con la petición de ejemplo.
 
+#### Evidencias
+
+Swagger de la API desplegada (https://api.equipo7mlops.com/docs): `POST /p3/segmentar` con las 3 estaciones de `references/api_p3_peticion.json` y respuesta `200` del champion versión 4, con un grupo asignado a cada estación:
+
+![Swagger: POST /p3/segmentar con respuesta 200](reports/evidencias/api_p3_docs.png)
+
 #### Limitaciones conocidas
 
-- **Sin autenticación.** Igual que el resto de la API, y desplegada de forma pública (ver [Despliegue en el EC2](#despliegue-en-el-ec2)).
+- **Sin autenticación (riesgo aceptado en esta fase).** Igual que el resto de la API, que está desplegada de forma pública; ver el riesgo y su alcance en [Limitaciones conocidas](#limitaciones-conocidas) de P1 y el [Despliegue en el EC2](#despliegue-en-el-ec2).
 - **El grupo es un número, no una etiqueta.** El modelo no dice qué significa cada grupo, y la numeración puede cambiar al reentrenar (el grupo 0 de una versión no es necesariamente el 0 de otra). Para interpretarlos hay que comparar los perfiles de cada grupo en los notebooks de P3.
 - **El cliente es responsable del perfil.** Debe calcularse con `p3_perfil_de_estaciones`; la API valida forma y rangos, pero no puede comprobar que el perfil corresponda a la historia real de la estación. Una estación con pocos viajes tiene un perfil poco estable y su grupo es menos confiable.
 - **`estaciones_por_grupo` cuenta solo la petición**, no toda la red: con un subconjunto de estaciones no es el tamaño real de cada grupo.
@@ -1680,6 +1690,7 @@ Un perfil con 19 horas en lugar de 20 responde `422` con la ubicación del error
 │   ├── tiempos-p1.md         <- Tiempos medidos de los modelos de P1 y límites de la búsqueda
 │   ├── api_p1_peticion.json  <- Petición de ejemplo de la API de P1 (make api-probar-p1)
 │   ├── api_p3_peticion.json  <- Petición de ejemplo de la API de P3 (make api-probar-p3)
+│   ├── despliegue-api.png    <- Diagrama del despliegue de la API en el EC2 (fuente: despliegue-api.candidate.json; interactivo: despliegue-api.html)
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/
 │   ├── figures/       <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
