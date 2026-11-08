@@ -161,6 +161,72 @@ seguridad:
 	pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off $(PIP_AUDIT_IGNORAR)
 
 
+# API REST (FastAPI) en contenedor. Funciona con Docker (por defecto) o Podman: make api-build MOTOR=podman
+MOTOR ?= docker
+IMAGEN_API = tc5061-equipo07-api
+PUERTO_API = 8000
+
+## API sin contenedor, con recarga al guardar (http://127.0.0.1:8000/docs)
+.PHONY: api-local
+api-local:
+	uvicorn tc5061_proyecto_equipo07.api.main:app --reload --port $(PUERTO_API)
+
+## Construye la imagen de la API con el Dockerfile
+.PHONY: api-build
+api-build:
+	$(MOTOR) build -t $(IMAGEN_API) .
+
+## Levanta el contenedor de la API (toma MLFLOW_TRACKING_URI del .env)
+.PHONY: api-run
+api-run:
+	$(MOTOR) run --rm --name $(IMAGEN_API) -p $(PUERTO_API):8000 --env-file .env $(IMAGEN_API)
+
+## Consulta /salud de la API levantada: versión y alias de cada modelo
+.PHONY: api-probar
+api-probar:
+	curl -s http://127.0.0.1:$(PUERTO_API)/salud | $(PYTHON_INTERPRETER) -m json.tool
+
+## Predicción de P1 con la petición de ejemplo (references/api_p1_peticion.json)
+.PHONY: api-probar-p1
+api-probar-p1:
+	curl -s -X POST http://127.0.0.1:$(PUERTO_API)/p1/predecir -H "Content-Type: application/json" \
+		-d @references/api_p1_peticion.json | $(PYTHON_INTERPRETER) -m json.tool
+
+## Predicción de P2 con la petición de ejemplo (references/api_p2_peticion.json)
+.PHONY: api-probar-p2
+api-probar-p2:
+	curl -s -X POST http://127.0.0.1:$(PUERTO_API)/p2/predecir -H "Content-Type: application/json" \
+		-d @references/api_p2_peticion.json | $(PYTHON_INTERPRETER) -m json.tool
+
+## Segmentos de P3 con la petición de ejemplo (references/api_p3_peticion.json)
+.PHONY: api-probar-p3
+api-probar-p3:
+	curl -s -X POST http://127.0.0.1:$(PUERTO_API)/p3/segmentar -H "Content-Type: application/json" \
+		-d @references/api_p3_peticion.json | $(PYTHON_INTERPRETER) -m json.tool
+
+## Smoke test de la API levantada: /salud en "ok", P1 y P2 predicen, P3 segmenta y una petición inválida da 422
+.PHONY: api-smoke
+api-smoke:
+	curl -sf http://127.0.0.1:$(PUERTO_API)/salud | $(PYTHON_INTERPRETER) -c \
+		'import json, sys; s = json.load(sys.stdin); print(s); sys.exit(s["estado"] != "ok")'
+	curl -sf -X POST http://127.0.0.1:$(PUERTO_API)/p1/predecir -H "Content-Type: application/json" \
+		-d @references/api_p1_peticion.json | $(PYTHON_INTERPRETER) -c \
+		'import json, sys; r = json.load(sys.stdin); print(r); sys.exit(len(r["predicciones"]) != 5)'
+	test "$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$(PUERTO_API)/p1/predecir \
+		-H 'Content-Type: application/json' -d '{"registros": []}')" = 422
+	curl -sf -X POST http://127.0.0.1:$(PUERTO_API)/p2/predecir -H "Content-Type: application/json" \
+		-d @references/api_p2_peticion.json | $(PYTHON_INTERPRETER) -c \
+		'import json, sys; r = json.load(sys.stdin); print(r); sys.exit(len(r["predicciones"]) != 5)'
+	test "$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$(PUERTO_API)/p2/predecir \
+		-H 'Content-Type: application/json' -d '{"registros": []}')" = 422
+	curl -sf -X POST http://127.0.0.1:$(PUERTO_API)/p3/segmentar -H "Content-Type: application/json" \
+		-d @references/api_p3_peticion.json | $(PYTHON_INTERPRETER) -c \
+		'import json, sys; r = json.load(sys.stdin); print(r); sys.exit(len(r["predicciones"]) != 3)'
+	test "$$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:$(PUERTO_API)/p3/segmentar \
+		-H 'Content-Type: application/json' -d '{"estaciones": []}')" = 422
+	@echo "Smoke test de la API: OK"
+
+
 #################################################################################
 # Self Documenting Commands                                                     #
 #################################################################################

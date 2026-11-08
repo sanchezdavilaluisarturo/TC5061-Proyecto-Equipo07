@@ -43,6 +43,7 @@ on:
       - "tc5061_proyecto_equipo07/**"
       - "tests/**"
       - "requirements.txt"
+      - "requirements-api.txt"
       - "Makefile"
       - ".github/workflows/**"
 

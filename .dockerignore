@@ -1,0 +1,16 @@
+# Fuera del contexto de construcción: datos (varios GB), secretos y lo que no usa la imagen
+.git
+.github
+.env
+data/
+models/
+notebooks/
+reports/
+references/
+docs/
+tests/
+mlruns/
+mlartifacts/
+mlflow.db
+**/__pycache__
+.venv
