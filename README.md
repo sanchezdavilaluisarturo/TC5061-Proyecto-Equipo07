@@ -1332,10 +1332,13 @@ make api-probar         # curl -s http://127.0.0.1:8000/salud
 # Predicción de P1 con la petición de ejemplo
 make api-probar-p1
 
+# Predicción de P2 con la petición de ejemplo
+make api-probar-p2
+
 # Segmentos de P3 con la petición de ejemplo
 make api-probar-p3
 
-# Smoke test: /salud, P1, P3 y validación (falla si algo no responde)
+# Smoke test: /salud, P1, P2, P3 y validación (falla si algo no responde)
 make api-smoke
 ```
 
@@ -1367,7 +1370,7 @@ El aviso de `pytest` al cargar P3 no es un error: MLflow anotó `pytest` entre l
 
 ### Smoke test de la imagen
 
-`make api-smoke`, con la API levantada, comprueba en segundos que el servicio está completo: `/salud` en `ok` (los tres modelos cargados), una predicción de P1 con `references/api_p1_peticion.json`, un `422` ante una petición vacía a P1, los segmentos de P3 con `references/api_p3_peticion.json` (deben regresar las 3 estaciones) y un `422` ante una petición vacía a P3. Falla si cualquiera no se cumple.
+`make api-smoke`, con la API levantada, comprueba en segundos que el servicio está completo: `/salud` en `ok` (los tres modelos cargados), una predicción de P1 con `references/api_p1_peticion.json`, las predicciones de P2 con `references/api_p2_peticion.json`, los segmentos de P3 con `references/api_p3_peticion.json` (deben regresar las 3 estaciones) y un `422` ante una petición vacía a cada uno de los tres endpoints. Falla si cualquiera no se cumple.
 
 La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
 
@@ -1425,6 +1428,7 @@ La documentación interactiva (Swagger) queda en http://127.0.0.1:8000/docs con 
 |---|---|---|
 | GET | `/salud` | Estado del servicio y versión cargada de cada modelo |
 | POST | `/p1/predecir` | Viajes esperados por estación-hora y su suma por zona (ver [Endpoint de P1](#endpoint-de-p1-demanda-por-estación-hora)) |
+| POST | `/p2/predecir` | Probabilidad de que cada estación se quede sin bicis o sin anclajes en las próximas 2 h y la clase decidida con los umbrales del modelo (ver [Endpoint de P2](#endpoint-de-p2-riesgo-de-estación)) |
 | POST | `/p3/segmentar` | Grupo al que el modelo asigna cada estación según su perfil de uso (ver [Endpoint de P3](#endpoint-de-p3-segmentos-de-estaciones)) |
 
 Petición:
@@ -1561,6 +1565,151 @@ Terminal: petición válida con las 5 filas del `input_example` y petición con 
 - **Zonas fijas.** Un municipio nuevo se rechaza hasta reentrenar el modelo con él y agregarlo a la regla de `zona`.
 - **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
 
+### Endpoint de P2: riesgo de estación
+
+`POST /p2/predecir` regresa, para cada estación en un bloque de 30 minutos, la probabilidad de que en las próximas 2 horas se quede sin bicis, sin anclajes o sin riesgo, y la clase decidida con los umbrales del champion de `mibici-equipo07-p2-riesgo` (código en `tc5061_proyecto_equipo07/api/p2.py`, pruebas en `tests/test_api_p2.py`).
+
+#### Por qué recibe las features ya calculadas
+
+P2 combina dos tipos de variables (Huyen, 2022, cap. 7):
+
+- **De flujo reciente**: el balance neto relativo de los últimos 1, 2, 4 y 8 bloques, las salidas y entradas de los últimos 2 y 4 bloques y el acumulado del día. Se calculan al cierre de cada bloque de 30 minutos, así que cambian durante el día.
+- **Históricas** (`hist_sin_bicis` y `hist_sin_anclajes`): la frecuencia de cada riesgo en la misma estación, tipo de día y hora, con los días previos hasta el cierre del día anterior (`P2HistoriaHastaAyer`). Son *batch features*.
+
+Igual que en P1 y P3, la API no recalcula nada: el cliente manda las variables que produce `features.py`, el mismo pipeline con el que se entrenó el modelo. Calcular las variables de flujo con otro código en el servicio crearía un segundo pipeline que puede diferir del de entrenamiento (Huyen, 2022, cap. 7). Por la misma razón, la clase se decide con `p2_decidir_clase` de `modeling/predict.py`, la función con la que se evaluó el modelo.
+
+En producción, el flujo sería un proceso programado cada 30 minutos durante el servicio:
+
+1. Al cierre de cada bloque, `features.py` calcula las variables de flujo de las 472 estaciones; la historia se calcula una vez al día, al cierre del día anterior.
+2. El proceso manda esos registros en una sola petición a `POST /p2/predecir`.
+3. Con las clases de riesgo, el operador decide a qué estaciones mandar el camión de rebalanceo antes de que se vacíen o se llenen.
+
+Es el caso intermedio que describen Treveil et al. (2020, cap. 6): un lote por bloque, con una frecuencia lo bastante alta para anticipar el riesgo de las 2 h siguientes. El mismo endpoint sirve para consultar una sola estación.
+
+#### Entrada
+
+Cuerpo `{"registros": [...]}` con 1 a 1,000 registros (la red completa en un bloque son 472 estaciones, con margen para estaciones nuevas). Cada registro es una estación en un bloque, con las 17 variables del modelo más dos campos de identificación:
+
+| Variable | Regla | Por qué |
+|---|---|---|
+| `estacion` | Entero ≥ 1 | Id de la estación; no entra al modelo, sirve para devolver cada resultado a su estación |
+| `fecha` | Fecha `AAAA-MM-DD` | Día del bloque; no entra al modelo. Da trazabilidad a la respuesta y permite revisar `es_fin_semana` |
+| `neto_1_relativo`, `neto_2_relativo`, `neto_4_relativo`, `neto_8_relativo` | Número de −20 a 20 | (entradas − salidas) de los últimos 1, 2, 4 y 8 bloques entre la capacidad. El máximo observado es 8.9: 20 es un tope de cordura |
+| `salidas_2`, `salidas_4`, `entradas_2`, `entradas_4` | Entero de 0 a 1000 | Viajes de los últimos 2 y 4 bloques. El máximo observado en 4 bloques es 392 |
+| `cumsum_dia_relativo` | Número de −20 a 20 | Neto acumulado desde las 05:00 entre la capacidad |
+| `dpcapacity` | Entero de 1 a 100 | Anclajes de la estación |
+| `latitude`, `longitude` | 20.55 a 20.85 y −103.55 a −103.20 | Los mismos rangos que P1: las estaciones con ~10 km de margen |
+| `hora_sin`, `hora_cos` | De −1 a 1, y deben ser un bloque de 30 min de 05:00 a 22:30 | Codificación cíclica del bloque (`sin(2π·bloque/48)`, `cos(2π·bloque/48)`). Los bloques de 23:00 a 00:30 no se entrenaron: sus 2 h siguientes se salen del día de servicio, que termina a la 01:00, y no tienen etiqueta |
+| `es_fin_semana` | 0 o 1, coherente con `fecha` | Sábado y domingo deben llevar 1 |
+| `hist_sin_bicis`, `hist_sin_anclajes` | De 0 a 1, y su suma no pasa de 1 | Son frecuencias de dos eventos que no ocurren a la vez |
+
+Además, reglas entre campos que detectan variables mal calculadas:
+
+- **Netos coherentes con los viajes**: `neto_2_relativo × dpcapacity` debe ser `entradas_2 − salidas_2`, y lo mismo con la ventana de 4 bloques (tolerancia de 0.01 para admitir decimales redondeados por el cliente). Los netos de 1 y 8 bloques no se pueden revisar porque la petición no trae sus viajes.
+- **Ventanas anidadas**: la ventana de 2 bloques no puede tener más salidas ni más entradas que la de 4.
+- **Campos exactos** (`extra="forbid"`) y **tipos estrictos** (`strict=True`), igual que en P1 y P3: un campo de más (por ejemplo, el target `clase`) o uno faltante se rechaza, y `"5"` (texto) no se convierte en `5`. La única excepción es `fecha`, que llega como texto en JSON.
+- **Sin `NaN` ni `Infinity`** y sin `null`: todas las variables de P2 existen para cualquier estación con historia, así que un vacío indica un error del cliente.
+
+Un registro inválido responde `422` con la ubicación del error. Las reglas entre campos se revisan solo cuando los campos del registro ya son válidos.
+
+Después de validar, la API ordena las columnas como las espera el modelo (`P2_FEATURES_CON_HISTORICO`) y las convierte a los tipos de su signature, que lee del propio modelo, igual que en P1.
+
+#### Salida
+
+| Campo | Qué es |
+|---|---|
+| `modelo`, `version` | Modelo y versión del Registry que hizo la predicción (trazabilidad) |
+| `umbrales` | Umbral de `sin_bicis` y de `sin_anclajes` con el que se decidió la clase. Se eligieron en validación y se leen de los parámetros del run de origen del champion (`umbral_sin_bicis`, `umbral_sin_anclajes`) |
+| `predicciones` | Una por registro, en el mismo orden: `estacion`, `fecha`, `hora` (inicio del bloque, `HH:MM`), `probabilidades` de las tres clases (4 decimales) y `clase` |
+| `por_clase` | Cuántos registros de **esta petición** cayeron en cada clase |
+
+**Cómo se decide la clase.** Las clases de riesgo son raras (alrededor del 1 % de los bloques), así que tomar la de mayor probabilidad casi nunca daría riesgo. Para cada riesgo se divide su probabilidad entre su umbral; si alguno llega a 1, gana el de mayor cociente, y si ninguno llega, la clase es `sin_riesgo`. Por eso una estación puede salir `sin_riesgo` aunque su probabilidad de riesgo no sea despreciable.
+
+#### Ejemplo
+
+Con el contenedor levantado (`make api-run`), la petición de ejemplo (`references/api_p2_peticion.json`, 5 estaciones reales del viernes 2023-12-15 a las 18:00) se manda con:
+
+```bash
+make api-probar-p2
+# curl -s -X POST http://127.0.0.1:8000/p2/predecir -H "Content-Type: application/json" \
+#   -d @references/api_p2_peticion.json
+```
+
+Cada registro lleva este formato:
+
+```json
+{"estacion": 2, "fecha": "2023-12-15",
+ "neto_1_relativo": 0.2, "neto_2_relativo": 0.4, "neto_4_relativo": 0.666667, "neto_8_relativo": 1.0,
+ "salidas_2": 3, "salidas_4": 10, "entradas_2": 9, "entradas_4": 20,
+ "cumsum_dia_relativo": 0.266667, "dpcapacity": 15,
+ "latitude": 20.666378, "longitude": -103.348824,
+ "hora_sin": -1.0, "hora_cos": 0.0, "es_fin_semana": 0,
+ "hist_sin_bicis": 0.000227, "hist_sin_anclajes": 0.147563}
+```
+
+Respuesta con el champion (versión 3):
+
+```json
+{
+  "modelo": "mibici-equipo07-p2-riesgo",
+  "version": 3,
+  "umbrales": {"sin_bicis": 0.2436, "sin_anclajes": 0.2306},
+  "predicciones": [
+    {"estacion": 2, "fecha": "2023-12-15", "hora": "18:00",
+     "probabilidades": {"sin_riesgo": 0.8923, "sin_bicis": 0.0013, "sin_anclajes": 0.1064}, "clase": "sin_riesgo"},
+    {"estacion": 41, "fecha": "2023-12-15", "hora": "18:00",
+     "probabilidades": {"sin_riesgo": 0.814, "sin_bicis": 0.1849, "sin_anclajes": 0.0011}, "clase": "sin_riesgo"},
+    {"estacion": 51, "fecha": "2023-12-15", "hora": "18:00",
+     "probabilidades": {"sin_riesgo": 0.0383, "sin_bicis": 0.0008, "sin_anclajes": 0.961}, "clase": "sin_anclajes"},
+    {"estacion": 75, "fecha": "2023-12-15", "hora": "18:00",
+     "probabilidades": {"sin_riesgo": 0.956, "sin_bicis": 0.0084, "sin_anclajes": 0.0356}, "clase": "sin_riesgo"},
+    {"estacion": 3, "fecha": "2023-12-15", "hora": "18:00",
+     "probabilidades": {"sin_riesgo": 0.9563, "sin_bicis": 0.043, "sin_anclajes": 0.0007}, "clase": "sin_riesgo"}
+  ],
+  "por_clase": {"sin_riesgo": 4, "sin_bicis": 0, "sin_anclajes": 1}
+}
+```
+
+La estación 51 lleva 79 entradas contra 30 salidas en las últimas 2 h, con una historia de riesgo *sin anclajes* de 0.91 a esa hora: su probabilidad (0.961) supera con mucho el umbral y sale `sin_anclajes`. La estación 41 tiene 0.18 de probabilidad *sin bicis*, que no llega a su umbral (0.24), así que sale `sin_riesgo`.
+
+Una petición con errores (el primer registro a las 23:30; `salidas_2` como texto en el segundo; el target `clase` como campo extra en el tercero) responde `422`:
+
+```json
+{"detail": [
+  {"type": "value_error", "loc": ["body", "registros", 0],
+   "msg": "Value error, hora_sin y hora_cos deben ser un bin de 30 min de 05:00 a 22:30", "input": {"...": "..."}},
+  {"type": "int_type", "loc": ["body", "registros", 1, "salidas_2"],
+   "msg": "Input should be a valid integer", "input": "5"},
+  {"type": "extra_forbidden", "loc": ["body", "registros", 2, "clase"],
+   "msg": "Extra inputs are not permitted", "input": 1}
+]}
+```
+
+#### Pruebas
+
+`tests/test_api_p2.py` (25 pruebas) registra en un Model Registry local temporal un modelo de P2 con sus umbrales como parámetros del run, y prueba: una predicción por registro en el mismo orden, con su estación, fecha y hora; que la clase sale de los umbrales del run (3 casos: cada riesgo y ninguno); el `503` cuando el run no tiene umbrales; que solo los bloques de 05:00 a 22:30 se aceptan (4 casos en los bordes); un `422` por cada regla de rango o de tipo (7 casos, entre ellos coordenadas de la Ciudad de México y `"3"` como texto) y por cada regla entre campos (6 casos: 23:30, una hora que no es un bloque, netos incoherentes, ventana de 2 mayor que la de 4, historia que suma más de 1 y fin de semana que no corresponde a la fecha); campos de más o de menos; peticiones vacías o de más de 1,000 registros; y el `503` cuando el modelo no cargó. Además, `make api-smoke` consulta este endpoint con la petición de ejemplo.
+
+#### Evidencias
+
+Swagger (`/docs`) con el contenedor local: `POST /p2/predecir` con las 5 estaciones de `references/api_p2_peticion.json` y respuesta `200` del champion versión 3:
+
+![Swagger: POST /p2/predecir con respuesta 200](reports/evidencias/api_p2_docs.png)
+
+Terminal: `make api-probar-p2` contra el contenedor:
+
+![curl a /p2/predecir: respuesta 200](reports/evidencias/api_p2_curl.png)
+
+#### Limitaciones conocidas
+
+- **Sin autenticación (riesgo aceptado en esta fase).** Igual que el resto de la API; ver el riesgo y su alcance en [Limitaciones conocidas](#limitaciones-conocidas) de P1.
+- **El desempeño en test es similar al del baseline.** En AP de riesgo, el champion empata con la frecuencia histórica (0.3342 contra 0.3329) y en *sin bicis* queda por debajo; su ventaja está en la precisión y el F1 con los umbrales elegidos (ver [Resultados de la Fase 2](#resultados-de-la-fase-2-1)). La API sirve el modelo elegido por el criterio fijado, no garantiza que supere al baseline.
+- **El riesgo es una aproximación.** Los datos no traen inventario, así que la etiqueta se construyó con el cambio neto de viajes frente a la capacidad (ver [P2](#p2-riesgo-de-estación-clasificación)). La API no sabe cuántas bicis hay en la estación en ese momento.
+- **El cliente es responsable de las features.** Deben calcularse con `features.py`; la API valida rangos, tipos y la coherencia entre campos, pero no puede comprobar que la historia corresponda a la estación real ni que los netos de 1 y 8 bloques sean correctos.
+- **Solo predice de 05:00 a 22:30.** Fuera de ese horario los bloques no tienen etiqueta ni se entrenaron, y la petición se rechaza.
+- **Sin umbrales no hay clase.** Si el run de origen de la versión servida no tiene `umbral_sin_bicis` y `umbral_sin_anclajes`, el endpoint responde `503` en lugar de decidir con umbrales inventados.
+- **`por_clase` cuenta solo la petición**, no toda la red.
+- **El champion y sus umbrales se leen al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
+
 ### Endpoint de P3: segmentos de estaciones
 
 `POST /p3/segmentar` regresa el grupo al que el champion de `mibici-equipo07-p3-segmentos` asigna cada estación según su perfil de uso (código en `tc5061_proyecto_equipo07/api/p3.py`, pruebas en `tests/test_api_p3.py`).
@@ -1655,9 +1804,6 @@ Swagger de la API desplegada (https://api.equipo7mlops.com/docs): `POST /p3/segm
 - **El cliente es responsable del perfil.** Debe calcularse con `p3_perfil_de_estaciones`; la API valida forma y rangos, pero no puede comprobar que el perfil corresponda a la historia real de la estación. Una estación con pocos viajes tiene un perfil poco estable y su grupo es menos confiable.
 - **`estaciones_por_grupo` cuenta solo la petición**, no toda la red: con un subconjunto de estaciones no es el tamaño real de cada grupo.
 - **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
-
-<!-- Cada integrante agrega aquí la sección de su endpoint: ruta, esquema de entrada y salida,
-     validaciones, ejemplo de petición y respuesta, y la captura del contenedor respondiendo. -->
 
 ## Estructura de carpetas
 
@@ -1789,7 +1935,7 @@ Los tres integrantes usaron Claude (Anthropic, 2026) como asistente de programac
 | Integrante | Herramienta | Para qué se usó                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 |---|---|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Daniel Sánchez Hernández (P1) | Claude Code, con los modelos Claude Opus 5.5 y Claude Sonnet 5.5 | Revisión y depuración del código de P1 (features, modelado y registro en MLflow) y su reorganización en el módulo con el mismo patrón que P2 y P3; targets del Makefile y workflow de P1; pruebas y prueba en seco con datos sintéticos antes de cada cambio; actualización de la documentación del equipo (README, `references/` y diagramas) y del borrador del reporte. En la Fase 2: etiquetas y artefactos de los runs de P1, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: base de la API REST (carga de los modelos desde el Registry, `/salud`), `Dockerfile`, targets del Makefile, pruebas de la base y la documentación de la estrategia de despliegue; endpoint de P1 (esquemas Pydantic con las reglas de cada variable, conversión a los tipos de la signature), sus pruebas y su documentación; smoke test de la imagen (`make api-smoke` y la acción `api.yml`) |
-| Fernando Arreola Treviño (P2) | Claude Code, con los modelos Claude Sonnet 5.5 y Claude Opus 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks. Emn la fase 2: etiquetas y artefactos de los runs de P2, búsqueda con Optuna, registro en el Model Registry y la documentación de esta fase                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Fernando Arreola Treviño (P2) | Claude Code, con los modelos Claude Sonnet 5.5 y Claude Opus 5.5 | Búsqueda de mejoras en la eficiencia de ejecución, importante porque el proceso es intensivo en memoria; reorganización de la lógica de los notebooks en el módulo para evitar conflictos con el código de los otros integrantes; corrección de ortografía y limpieza de código no utilizado en los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P2, búsqueda con Optuna, registro en el Model Registry y la documentación de esta fase. En la Fase 3: endpoint de P2 (esquemas Pydantic con las reglas de cada variable y entre variables, lectura de los umbrales del run de origen y decisión de la clase), sus pruebas, la petición de ejemplo, el target `api-probar-p2`, la ampliación del smoke test y la documentación del endpoint                                                                                       |
 | Luis Arturo Sánchez Davila (P3) | Claude Code, con el modelo Claude Sonnet 5.5 | Reorganización de la lógica de los notebooks de P3 en el módulo (funciones `p3_*`), con sus comandos, targets de `make`, pruebas y el workflow de GitHub Actions; redacción de la documentación (`README.md`, `notebooks/README.md`) y de las observaciones de los notebooks. En la Fase 2: etiquetas y artefactos de los runs de P3, métricas con el conjunto en el nombre, búsqueda con Optuna, registro en el Model Registry y la documentación de esa fase. En la Fase 3: endpoint de P3 (esquemas Pydantic con las reglas de cada variable, apertura de los perfiles en las 44 columnas de la signature), sus pruebas, la petición de ejemplo, la ampliación del smoke test y la documentación del endpoint. Al integrar el despliegue automático en el EC2: revisión del README contra la API ya desplegada, redacción de la sección de despliegue                                                                           |
 
 En las tres preguntas, la formulación del problema, la elección de variables, modelos y métricas, los criterios de aceptación, la ejecución con los datos reales, la validación de los resultados y los commits y Pull Requests son de cada integrante, que revisó y es responsable del contenido. Por acuerdo del equipo, esta declaración vive aquí y no en los mensajes de commit.
