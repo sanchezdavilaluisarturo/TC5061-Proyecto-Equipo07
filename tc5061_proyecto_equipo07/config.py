@@ -380,6 +380,33 @@ P2_MODELO_REGISTRADO = "mibici-equipo07-p2-riesgo"
 # Validación con DeepChecks (`make validar-p2`): filas por conjunto
 P2_MUESTRA_VALIDACION = 500_000
 
+
+# Monitoreo (Entregable 8): drift con Evidently y A/B testing entre versiones del Registry.
+# Periodos: referencia = train (hasta 2024-09), actual = año de test (2025-10 a 2026-09) y
+# evaluación del A/B = el mes nuevo del portal, que ningún modelo ha visto.
+# MES_FIN no cambia: el mes nuevo se descarga aparte para que las entregas anteriores se
+# reproduzcan igual (mismo manifiesto, mismas rutas y misma nomenclatura).
+MES_MONITOREO = "2026-10"
+FRONTERA_MONITOREO = f"{MES_MONITOREO}-01"
+RUTA_MONITOREO_CRUDOS = RAW_DATA_DIR / "monitoreo"
+RUTA_MANIFIESTO_MONITOREO = REFERENCES_DIR / "fuentes-datos-monitoreo.csv"
+RUTA_VIAJES_LIMPIOS_MONITOREO = (
+    PROCESSED_DATA_DIR / f"viajes_limpios_{MES_MONITOREO}_{MES_MONITOREO}.parquet"
+)
+# Rango completo + mes nuevo: las features con rezagos del mes nuevo necesitan la historia previa
+RUTA_VIAJES_LIMPIOS_EXTENDIDOS = (
+    PROCESSED_DATA_DIR / f"viajes_limpios_{MES_INICIO}_{MES_MONITOREO}.parquet"
+)
+MONITOREO_DIR = REPORTS_DIR / "monitoreo"
+# Filas por conjunto en los reportes de Evidently. Con más de 1000 filas Evidently usa distancias
+# (Wasserstein y Jensen-Shannon) en vez de p-values, así que la muestra no cambia el criterio
+MONITOREO_MUESTRA = 100_000
+# A/B testing: significancia y remuestreos del intervalo bootstrap
+MONITOREO_ALFA = 0.05
+MONITOREO_BOOTSTRAP = 2000
+# Etiqueta `fase` de los runs de monitoreo en MLflow
+FASE_MONITOREO = "monitoreo"
+
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
 try:
