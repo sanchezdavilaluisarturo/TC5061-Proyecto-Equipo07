@@ -136,6 +136,12 @@ monitoreo-datos:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.monitoreo datos
 
 
+## Pruebas de la base de monitoreo (drift con Evidently y A/B testing)
+.PHONY: pruebas-monitoreo
+pruebas-monitoreo:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo.py
+
+
 ## MLflow local de respaldo si el servidor del equipo no responde (usar MLFLOW_TRACKING_URI=http://127.0.0.1:5000)
 .PHONY: mlflow-local
 mlflow-local:
