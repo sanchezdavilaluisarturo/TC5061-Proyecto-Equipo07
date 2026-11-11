@@ -5,13 +5,22 @@ módulo (modeling/monitoreo_p1.py, etc.) y usa de aquí:
     asignar_periodo          referencia, valid, actual, evaluacion o brecha de cada fecha
     generar_reporte          reporte de Evidently (drift + calidad, y desempeño si hay target)
     resumen_drift            drift por variable en una tabla (columna, método, valor, drift)
+    comparar_pareado         A/B pareado: las dos versiones sobre las mismas filas
+    comparar_aleatorio       A/B con asignación aleatoria de unidades a cada versión
+    registrar_en_mlflow      run de monitoreo con métricas y reportes como artefactos
 
 Uso: python -m tc5061_proyecto_equipo07.monitoreo datos
 """
 
 from pathlib import Path
 
-from evidently import DataDefinition, Dataset, MulticlassClassification, Regression, Report
+from evidently import (
+    DataDefinition,
+    Dataset,
+    MulticlassClassification,
+    Regression,
+    Report,
+)
 from evidently.presets import (
     ClassificationPreset,
     DataDriftPreset,
@@ -19,9 +28,11 @@ from evidently.presets import (
     RegressionPreset,
 )
 from loguru import logger
+import mlflow
 import numpy as np
 import pandas as pd
 from pandas.api.types import union_categoricals
+from scipy import stats
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
@@ -289,6 +300,161 @@ def proporcion_drift(snapshot) -> dict:
                 "umbral_proporcion": float(metrica["config"]["drift_share"]),
             }
     raise ValueError("El snapshot no incluye DataDriftPreset")
+
+
+def bootstrap_media(
+    diferencias: np.ndarray,
+    grupos: np.ndarray | None = None,
+    n_bootstrap: int = cfg.MONITOREO_BOOTSTRAP,
+    alfa: float = cfg.MONITOREO_ALFA,
+    semilla: int = cfg.SEMILLA,
+) -> tuple[float, float]:
+    """Intervalo de confianza bootstrap (percentiles) de la media de `diferencias`.
+
+    Con `grupos` se remuestrean grupos completos (por ejemplo, estación-día): las filas de un mismo
+    grupo están correlacionadas y remuestrearlas por separado daría un intervalo demasiado angosto.
+    """
+    rng = np.random.default_rng(semilla)
+    if grupos is None:
+        sumas, conteos = diferencias, np.ones_like(diferencias)
+    else:
+        tabla = pd.DataFrame({"grupo": grupos, "dif": diferencias}).groupby("grupo")["dif"]
+        sumas, conteos = tabla.sum().to_numpy(), tabla.count().to_numpy()
+    medias = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        indices = rng.integers(0, len(sumas), len(sumas))
+        medias[i] = sumas[indices].sum() / conteos[indices].sum()
+    return tuple(np.quantile(medias, [alfa / 2, 1 - alfa / 2]))
+
+
+def decidir(media_a: float, media_b: float, p_valor: float, alfa: float) -> str:
+    """Versión ganadora con una pérdida (menor es mejor): A, B o empate si no es significativa."""
+    if p_valor >= alfa:
+        return "sin diferencia significativa"
+    return "B" if media_b < media_a else "A"
+
+
+def comparar_pareado(
+    perdida_a,
+    perdida_b,
+    grupos=None,
+    alfa: float = cfg.MONITOREO_ALFA,
+    n_bootstrap: int = cfg.MONITOREO_BOOTSTRAP,
+    semilla: int = cfg.SEMILLA,
+) -> dict:
+    """A/B pareado (champion/challenger): las dos versiones predicen las mismas filas.
+
+    `perdida_a` y `perdida_b` son la pérdida por fila de cada versión (por ejemplo, error absoluto
+    en P1). Se decide con Wilcoxon de rangos con signo, que no supone normalidad; la t pareada y el
+    intervalo bootstrap de la diferencia (B - A) acompañan la decisión.
+    """
+    perdida_a, perdida_b = np.asarray(perdida_a, float), np.asarray(perdida_b, float)
+    if perdida_a.shape != perdida_b.shape:
+        raise ValueError("En el A/B pareado las dos versiones deben tener las mismas filas")
+    diferencias = perdida_b - perdida_a
+    media_a, media_b = perdida_a.mean(), perdida_b.mean()
+    # zsplit: las filas sin diferencia (comunes con conteos) cuentan como empates, no se descartan
+    p_wilcoxon = stats.wilcoxon(perdida_b, perdida_a, zero_method="zsplit").pvalue
+    p_t = stats.ttest_rel(perdida_b, perdida_a).pvalue
+    ic_inferior, ic_superior = bootstrap_media(
+        diferencias,
+        None if grupos is None else np.asarray(grupos),
+        n_bootstrap,
+        alfa,
+        semilla,
+    )
+    return {
+        "prueba": "pareada",
+        "n_a": len(perdida_a),
+        "n_b": len(perdida_b),
+        "media_a": media_a,
+        "media_b": media_b,
+        "diferencia": media_b - media_a,
+        "cambio_relativo": (media_b - media_a) / media_a,
+        "ic_inferior": ic_inferior,
+        "ic_superior": ic_superior,
+        "p_valor": p_wilcoxon,
+        "p_valor_t": p_t,
+        "ganador": decidir(media_a, media_b, p_wilcoxon, alfa),
+    }
+
+
+def comparar_aleatorio(
+    perdida_a,
+    perdida_b,
+    unidades=None,
+    proporcion_b: float = 0.5,
+    alfa: float = cfg.MONITOREO_ALFA,
+    semilla: int = cfg.SEMILLA,
+) -> dict:
+    """A/B con asignación aleatoria: cada unidad recibe solo la predicción de una versión.
+
+    Simula el reparto de tráfico de un A/B en producción sobre el mismo conjunto. La unidad de
+    asignación (`unidades`, por ejemplo estación-día) evita que filas de una misma unidad queden en
+    los dos grupos. Al no ser pareada, necesita más datos que `comparar_pareado` para detectar la
+    misma diferencia (Treveil et al., 2020, cap. 7).
+    """
+    perdida_a, perdida_b = np.asarray(perdida_a, float), np.asarray(perdida_b, float)
+    unidades = np.arange(len(perdida_a)) if unidades is None else np.asarray(unidades)
+    rng = np.random.default_rng(semilla)
+    distintas = np.unique(unidades)
+    unidades_b = distintas[rng.random(len(distintas)) < proporcion_b]
+    a_b = np.isin(unidades, unidades_b)
+    grupo_a, grupo_b = perdida_a[~a_b], perdida_b[a_b]
+    media_a, media_b = grupo_a.mean(), grupo_b.mean()
+    p_mann_whitney = stats.mannwhitneyu(grupo_b, grupo_a).pvalue
+    p_welch = stats.ttest_ind(grupo_b, grupo_a, equal_var=False).pvalue
+    return {
+        "prueba": "aleatoria",
+        "n_a": len(grupo_a),
+        "n_b": len(grupo_b),
+        "media_a": media_a,
+        "media_b": media_b,
+        "diferencia": media_b - media_a,
+        "cambio_relativo": (media_b - media_a) / media_a,
+        "p_valor": p_mann_whitney,
+        "p_valor_t": p_welch,
+        "ganador": decidir(media_a, media_b, p_mann_whitney, alfa),
+    }
+
+
+def cargar_version(nombre: str, alias: str | None = None, version: int | None = None):
+    """Carga una versión del Model Registry por alias o por número; regresa (modelo, versión)."""
+    cliente = mlflow.MlflowClient()
+    if (alias is None) == (version is None):
+        raise ValueError("Indicar `alias` o `version`, no los dos")
+    info = (
+        cliente.get_model_version_by_alias(nombre, alias)
+        if alias
+        else cliente.get_model_version(nombre, str(version))
+    )
+    modelo = mlflow.pyfunc.load_model(f"models:/{nombre}/{info.version}")
+    logger.info(f"{nombre}: versión {info.version} cargada")
+    return modelo, int(info.version)
+
+
+def registrar_en_mlflow(
+    nombre_run: str,
+    pregunta: str,
+    archivos: list[Path],
+    metricas: dict | None = None,
+    parametros: dict | None = None,
+    etiquetas: dict | None = None,
+) -> str:
+    """Registra un run de monitoreo (drift o A/B) en el experimento del equipo; regresa su ID."""
+    if cfg.MLFLOW_TRACKING_URI:
+        mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(cfg.EXPERIMENTO_MLFLOW)
+    base = {"question": pregunta, "fase": cfg.FASE_MONITOREO, "stage_of_work": "monitoring"}
+    with mlflow.start_run(run_name=nombre_run, tags={**base, **(etiquetas or {})}) as run:
+        if parametros:
+            mlflow.log_params(parametros)
+        if metricas:
+            mlflow.log_metrics(metricas)
+        for archivo in archivos:
+            mlflow.log_artifact(str(archivo), artifact_path="monitoreo")
+    logger.success(f"Run de monitoreo {nombre_run}: {run.info.run_id}")
+    return run.info.run_id
 
 
 if __name__ == "__main__":
