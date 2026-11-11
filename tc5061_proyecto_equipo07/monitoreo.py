@@ -3,12 +3,21 @@
 Base común de P1, P2 y P3. Cada pregunta arma sus conjuntos y su versión alternativa en su propio
 módulo (modeling/monitoreo_p1.py, etc.) y usa de aquí:
     asignar_periodo          referencia, valid, actual, evaluacion o brecha de cada fecha
+    generar_reporte          reporte de Evidently (drift + calidad, y desempeño si hay target)
+    resumen_drift            drift por variable en una tabla (columna, método, valor, drift)
 
 Uso: python -m tc5061_proyecto_equipo07.monitoreo datos
 """
 
 from pathlib import Path
 
+from evidently import DataDefinition, Dataset, MulticlassClassification, Regression, Report
+from evidently.presets import (
+    ClassificationPreset,
+    DataDriftPreset,
+    DataSummaryPreset,
+    RegressionPreset,
+)
 from loguru import logger
 import numpy as np
 import pandas as pd
@@ -171,6 +180,115 @@ def datos(mes: str = cfg.MES_MONITOREO):
     """Ejecuta descargar y construir en orden."""
     descargar(mes)
     construir(mes)
+
+
+def muestrear(
+    tabla: pd.DataFrame, n: int = cfg.MONITOREO_MUESTRA, semilla: int = cfg.SEMILLA
+) -> pd.DataFrame:
+    """Muestra aleatoria de `n` filas (o la tabla completa si tiene menos)."""
+    if len(tabla) <= n:
+        return tabla.reset_index(drop=True)
+    return tabla.sample(n=n, random_state=semilla).reset_index(drop=True)
+
+
+def definicion_datos(
+    numericas: list[str],
+    categoricas: list[str],
+    tarea: str | None = None,
+    target: str | None = None,
+    prediccion: str | None = None,
+) -> DataDefinition:
+    """Esquema de columnas para Evidently; con `tarea` agrega el target y la predicción.
+
+    tarea: "regresion" (P1), "clasificacion" (P2, multiclase con etiquetas) o None (P3).
+    """
+    if tarea is None:
+        return DataDefinition(numerical_columns=numericas, categorical_columns=categoricas)
+    if target is None or prediccion is None:
+        raise ValueError("Con `tarea` hay que indicar `target` y `prediccion`")
+    if tarea == "regresion":
+        return DataDefinition(
+            numerical_columns=numericas + [target, prediccion],
+            categorical_columns=categoricas,
+            regression=[Regression(target=target, prediction=prediccion)],
+        )
+    if tarea == "clasificacion":
+        return DataDefinition(
+            numerical_columns=numericas,
+            categorical_columns=categoricas + [target, prediccion],
+            classification=[MulticlassClassification(target=target, prediction_labels=prediccion)],
+        )
+    raise ValueError(f"Tarea desconocida: {tarea}")
+
+
+def generar_reporte(
+    referencia: pd.DataFrame,
+    actual: pd.DataFrame,
+    definicion: DataDefinition,
+    nombre: str,
+    tarea: str | None = None,
+    carpeta: Path = cfg.MONITOREO_DIR,
+):
+    """Corre el reporte de Evidently y lo guarda como HTML y JSON en `carpeta`.
+
+    Incluye drift por variable y calidad de datos; con `tarea`, también el desempeño del modelo.
+    Regresa el snapshot y las rutas de los dos archivos.
+    """
+    presets = [DataDriftPreset(), DataSummaryPreset()]
+    if tarea == "regresion":
+        presets.append(RegressionPreset())
+    elif tarea == "clasificacion":
+        presets.append(ClassificationPreset())
+    reporte = Report(presets, include_tests=True)
+    # Evidently recibe primero el conjunto actual y después el de referencia
+    snapshot = reporte.run(
+        Dataset.from_pandas(actual, data_definition=definicion),
+        Dataset.from_pandas(referencia, data_definition=definicion),
+    )
+    carpeta.mkdir(parents=True, exist_ok=True)
+    ruta_html, ruta_json = carpeta / f"{nombre}.html", carpeta / f"{nombre}.json"
+    snapshot.save_html(str(ruta_html))
+    ruta_json.write_text(snapshot.json(), encoding="utf-8")
+    logger.success(f"Reporte de Evidently: {ruta_html.name} y {ruta_json.name}")
+    return snapshot, [ruta_html, ruta_json]
+
+
+def resumen_drift(snapshot) -> pd.DataFrame:
+    """Drift por variable a partir del snapshot, ordenado de mayor a menor valor.
+
+    Mismo criterio de Evidently: con p-value hay drift si el valor es menor o igual al umbral; con
+    una distancia (Wasserstein, Jensen-Shannon), si es mayor o igual.
+    """
+    filas = []
+    for metrica in snapshot.dict()["metrics"]:
+        config = metrica["config"]
+        if not config["type"].endswith(":ValueDrift"):
+            continue
+        es_p_value = "p_value" in config["method"]
+        valor, umbral = float(metrica["value"]), float(config["threshold"])
+        filas.append(
+            {
+                "columna": config["column"],
+                "metodo": config["method"],
+                "umbral": umbral,
+                "valor": valor,
+                "drift": valor <= umbral if es_p_value else valor >= umbral,
+            }
+        )
+    resumen = pd.DataFrame(filas, columns=["columna", "metodo", "umbral", "valor", "drift"])
+    return resumen.sort_values(["drift", "valor"], ascending=False, ignore_index=True)
+
+
+def proporcion_drift(snapshot) -> dict:
+    """Columnas con drift y su proporción, tal como las reporta Evidently (DriftedColumnsCount)."""
+    for metrica in snapshot.dict()["metrics"]:
+        if metrica["config"]["type"].endswith(":DriftedColumnsCount"):
+            return {
+                "columnas_con_drift": int(metrica["value"]["count"]),
+                "proporcion_drift": float(metrica["value"]["share"]),
+                "umbral_proporcion": float(metrica["config"]["drift_share"]),
+            }
+    raise ValueError("El snapshot no incluye DataDriftPreset")
 
 
 if __name__ == "__main__":
