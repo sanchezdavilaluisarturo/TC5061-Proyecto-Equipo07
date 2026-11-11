@@ -130,6 +130,12 @@ train-p3:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.train p3-alternativo
 
 
+## Monitoreo: descarga el mes nuevo (MES_MONITOREO), lo limpia y lo une con el rango del proyecto
+.PHONY: monitoreo-datos
+monitoreo-datos:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.monitoreo datos
+
+
 ## MLflow local de respaldo si el servidor del equipo no responde (usar MLFLOW_TRACKING_URI=http://127.0.0.1:5000)
 .PHONY: mlflow-local
 mlflow-local:
