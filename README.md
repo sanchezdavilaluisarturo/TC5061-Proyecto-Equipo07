@@ -1805,11 +1805,80 @@ Swagger de la API desplegada (https://api.equipo7mlops.com/docs): `POST /p3/segm
 - **`estaciones_por_grupo` cuenta solo la petición**, no toda la red: con un subconjunto de estaciones no es el tamaño real de cada grupo.
 - **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
 
+## Monitoreo y drift
+
+Entregable 8: el proyecto detecta cuándo los datos de producción se alejan de los de entrenamiento (drift, con Evidently) y decide con evidencia si una versión nueva del modelo es mejor que la vigente (A/B testing entre versiones del Model Registry). La base es común a las tres preguntas (`monitoreo.py`); cada pregunta tiene su propio módulo (`modeling/monitoreo_p1.py`, `monitoreo_p2.py` y `monitoreo_p3.py`) y su propia sección más abajo.
+
+### Periodos
+
+`asignar_periodo` etiqueta cada fecha con `referencia`, `valid`, `actual`, `evaluacion` o `brecha` (las 24 h previas a cada frontera, igual que en la partición común).
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Referencia | Train: 2020-01 a 2024-09 | Es la distribución que aprendió el champion; la práctica común es usar la distribución de entrenamiento como base y comparar contra ella los datos de producción | Huyen (2022, cap. 8); Treveil et al. (2020, cap. 7) |
+| Actual | Test: 2025-10 a 2026-09 | La ventana de tiempo define qué drift se detecta: una ventana corta confunde la estacionalidad con un drift. Un año completo cubre todas las temporadas | Huyen (2022, cap. 8) |
+| Evaluación del A/B | 2026-10, el mes nuevo del portal | Las versiones se comparan sobre el mismo conjunto, y de preferencia con datos nuevos etiquetados. Ninguna versión vio este mes, así que la alternativa puede reentrenarse con datos hasta 2026-09 sin fuga de datos (*data leakage*) | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
+| Origen del periodo actual | El portal de MiBici, no los registros de la API | La API no guarda un registro de eventos con las entradas y salidas de cada predicción, que es lo que permitiría monitorear con tráfico real; queda como mejora | Treveil et al. (2020, cap. 7) |
+
+### Datos del mes nuevo
+
+```bash
+make monitoreo-datos
+```
+
+Requiere haber corrido `make data`.
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Ingesta aparte | El mes nuevo y la nomenclatura vigente se descargan en `data/raw/monitoreo/`, con su propio manifiesto (`references/fuentes-datos-monitoreo.csv`); `MES_FIN`, el manifiesto del proyecto y `data/raw/estaciones/` no cambian | Cada versión del modelo debe poder reproducirse con sus datos de entrenamiento; si el mes nuevo cambiara el rango, las entregas anteriores ya no se reproducirían igual | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
+| Misma limpieza | `limpiar_viajes` aplica las reglas de `dataset.limpiar` (una prueba comprueba que el resultado es idéntico) | Buena parte de lo que parece drift son diferencias entre cómo se procesaron los datos de entrenamiento y los de producción (*train-serving skew*) | Huyen (2022, cap. 8) |
+| Estaciones nuevas | Las estaciones de la nomenclatura nueva que no estaban en la de entrenamiento quedan en `reports/monitoreo/estaciones_nuevas.csv` | Un cambio en el conjunto de valores posibles de una variable (*feature change*) degrada el modelo aunque no aparezca como drift de distribución | Huyen (2022, cap. 8) |
+| Historia + mes nuevo | `viajes_limpios_2020-01_2026-10.parquet` une el rango del proyecto con el mes nuevo (`viajes_limpios_2026-10_2026-10.parquet` lo guarda solo) | Las features del mes nuevo se calculan con el mismo pipeline de entrenamiento, y sus rezagos necesitan la historia previa | Huyen (2022, cap. 8) |
+
+### Drift con Evidently
+
+`generar_reporte` guarda el reporte en `reports/monitoreo/` como HTML (las gráficas) y JSON; `resumen_drift` lo convierte en una tabla por variable (método, umbral, valor y si hay drift).
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Qué incluye el reporte | `DataDriftPreset` (drift por variable) y `DataSummaryPreset` (calidad de datos); con target y predicción, también `RegressionPreset` (P1) o `ClassificationPreset` (P2) | El drift de las entradas es una alerta temprana; el desempeño con la etiqueta real es la evidencia definitiva, y la validación de las variables (rangos, valores permitidos) detecta errores del pipeline | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 8) |
+| Monitorear predicciones | La predicción del champion entra al reporte como una columna más | Las predicciones son de baja dimensión, fáciles de comparar, y un cambio en su distribución suele reflejar un cambio en las entradas | Huyen (2022, cap. 8) |
+| Método por variable | Los defectos de Evidently. Con más de 1000 filas de referencia: Wasserstein (numéricas) y Jensen-Shannon (categóricas y numéricas con 5 valores distintos o menos), con drift si la distancia es mayor o igual a 0.1. Con 1000 o menos: Kolmogorov-Smirnov, chi-cuadrada o prueba Z, con drift si el p-value es menor o igual a 0.05 | Con muestras grandes, un p-value marca como significativo cualquier cambio mínimo sin decir qué tan grande es; una distancia mide el tamaño del cambio | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 8); Evidently AI (s.f.) |
+| Drift del conjunto | Se declara si al menos la mitad de las columnas tiene drift (`drift_share=0.5`, el valor por defecto de `DataDriftPreset`) | Una alerta por cada variable que se mueve lleva a la fatiga de alertas: muchas variables cambian sin afectar al modelo | Huyen (2022, cap. 8) |
+| Muestra | 100000 filas por conjunto (`MONITOREO_MUESTRA`), con la semilla del proyecto | Calcular estadísticas sobre todas las filas y variables cuesta cómputo y memoria; con distancias, la muestra no cambia el criterio | Huyen (2022, cap. 8); Evidently AI (s.f.) |
+
+### A/B testing entre versiones
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Versión alternativa | Reentrenar el champion con los mismos hiperparámetros y datos más recientes (*data iteration*), y registrarlo como versión nueva del mismo modelo con el alias `challenger`; `champion` no se mueve hasta que el A/B lo justifique | Responde la pregunta de Continuous Training: cuánto mejora el modelo con datos más frescos. El reemplazo es una réplica actualizada (challenger) que solo sustituye al campeón si demuestra ser mejor | Huyen (2022, cap. 9); MLflow (s.f.-a) |
+| Prueba principal | Pareada (`comparar_pareado`): las dos versiones predicen las mismas filas del mes de evaluación | Con las mismas filas la comparación es directa; una prueba no pareada necesita más datos para detectar la misma diferencia | Treveil et al. (2020, cap. 7) |
+| Estadístico | Wilcoxon de rangos con signo sobre la pérdida por fila; la acompañan la t pareada y un intervalo bootstrap de la diferencia (B - A) | La t pareada es la prueba usual cuando la métrica es un promedio por fila; Wilcoxon es su versión no paramétrica, para errores que no son normales | Treveil et al. (2020, cap. 7); SciPy (s.f.) |
+| Prueba complementaria | Aleatoria (`comparar_aleatorio`): cada unidad (por ejemplo, estación-día) se asigna al azar a una sola versión; decide Mann-Whitney y la acompaña la t de Welch | Simula el reparto de tráfico de un A/B: la asignación debe ser aleatoria y una misma unidad debe quedar siempre con el mismo modelo, para no sesgar los grupos | Huyen (2022, cap. 9); Treveil et al. (2020, cap. 7) |
+| Bootstrap por grupos | Se remuestrean grupos completos (estación-día) en vez de filas sueltas | Las filas de un mismo grupo no son independientes; tratarlas como tales da un intervalo artificialmente angosto | Treveil et al. (2020, cap. 7) |
+| Protocolo | El criterio (pérdida media en 2026-10, α = 0.05) se fija antes de ver los resultados | Decidir el protocolo de antemano evita escoger el resultado conveniente (*p-hacking*) | Treveil et al. (2020, cap. 7) |
+| Significancia y relevancia | Además del p-value se reporta el cambio relativo de la pérdida | Una diferencia puede ser significativa sin impacto práctico, y una no significativa puede indicar que las versiones son equivalentes | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
+| Registro | Cada reporte y cada A/B queda como run del experimento `mibici-equipo07` (`registrar_en_mlflow`, etiquetas `fase=monitoreo` y `stage_of_work=monitoring`) | Las versiones de un modelo se comparan y se siguen en el tiempo desde un mismo lugar | Treveil et al. (2020, cap. 7); MLflow (s.f.-c) |
+
+### Pruebas
+
+```bash
+make pruebas-monitoreo
+```
+
+`tests/test_monitoreo.py` (20 pruebas, sin red ni servidor de MLflow) comprueba:
+
+- Fronteras y brechas de los periodos.
+- Que la limpieza del mes nuevo da el mismo resultado que `dataset.limpiar`.
+- Que el resumen de drift detecta solo las columnas desplazadas, con distancias y con p-values, y coincide con el conteo de Evidently.
+- Que las pruebas A/B eligen la versión con menor pérdida y no declaran ganador sin diferencia real.
+- Que el bootstrap por grupos amplía el intervalo cuando las filas están correlacionadas.
+
 ## Estructura de carpetas
 
 ```
 ├── data/              <- (ignorado por Git)
-│   ├── raw/           <- CSV originales del portal (viajes/ y estaciones/)
+│   ├── raw/           <- CSV originales del portal (viajes/, estaciones/ y monitoreo/)
 │   ├── external/      <- Reservada para datos de terceros (hoy vacía)
 │   ├── interim/       <- viajes_2020-01_2026-09.parquet (normalizado, sin limpiar)
 │   └── processed/     <- Viajes limpios y tablas de features de P1, P2 y P3 (.parquet)
@@ -1833,6 +1902,7 @@ Swagger de la API desplegada (https://api.equipo7mlops.com/docs): `POST /p3/segm
 │   ├── pipeline-ml.md        <- Pipeline por pregunta: limpieza, features, entrenamiento y evaluación
 │   ├── pipeline-ml.png       <- Diagrama del pipeline por pregunta (fuente editable: pipeline-ml.svg)
 │   ├── fuentes-datos.csv     <- URLs, registros y SHA-256 de los archivos del portal
+│   ├── fuentes-datos-monitoreo.csv  <- Lo mismo para el mes nuevo del monitoreo
 │   ├── tiempos-p1.md         <- Tiempos medidos de los modelos de P1 y límites de la búsqueda
 │   ├── api_p1_peticion.json  <- Petición de ejemplo de la API de P1 (make api-probar-p1)
 │   ├── api_p3_peticion.json  <- Petición de ejemplo de la API de P3 (make api-probar-p3)
@@ -1842,8 +1912,9 @@ Swagger de la API desplegada (https://api.equipo7mlops.com/docs): `POST /p3/segm
 │   ├── figures/       <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
 │   ├── validacion/    <- Reportes de DeepChecks de cada pregunta (HTML y resumen CSV)
 │   ├── seguridad/     <- Reportes de bandit y pip-audit (JSON)
+│   ├── monitoreo/     <- Reportes de Evidently (HTML y JSON), A/B testing y estaciones nuevas
 │   └── evidencias/    <- Capturas de la ejecución de pruebas y chequeos
-├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3), plots, validacion, api/ (main, modelos, p1, p2, p3)
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3), plots, validacion, monitoreo, api/ (main, modelos, p1, p2, p3)
 ├── tests/             <- Pruebas (pytest) del módulo y de la validación con DeepChecks
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
@@ -1912,6 +1983,8 @@ Archify. (s.f.). *Archify* [Software]. GitHub. https://github.com/tt-a1i/archify
 
 Dorard, L. (2018, 9 de marzo). *From data to AI with the Machine Learning Canvas (Part I)*. Own Machine Learning (Medium). https://medium.com/louis-dorard/from-data-to-ai-with-the-machine-learning-canvas-part-i-d171b867b047
 
+Evidently AI. (s.f.). *Evidently documentation* [Documentación]. https://docs.evidentlyai.com/introduction
+
 FastAPI. (s.f.). *FastAPI* [Documentación]. https://fastapi.tiangolo.com/
 
 Huyen, C. (2022). *Designing machine learning systems: An iterative process for production-ready applications*. O'Reilly Media.
@@ -1923,6 +1996,8 @@ MLflow. (s.f.-a). *ML Model Registry* [Documentación]. https://mlflow.org/docs/
 MLflow. (s.f.-b). *ML Projects* [Documentación]. https://mlflow.org/docs/latest/ml/projects/
 
 MLflow. (s.f.-c). *MLflow Tracking* [Documentación]. https://mlflow.org/docs/latest/ml/tracking/
+
+SciPy. (s.f.). *scipy.stats.wilcoxon* [Documentación]. https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.wilcoxon.html
 
 Treveil, M., Omont, N., Stenac, C., Lefevre, K., Phan, D., Zentici, J., Lavoillotte, A., Miyazaki, M., & Heidmann, L. (2020). *Introducing MLOps: How to scale machine learning in the enterprise*. O'Reilly Media.
 
