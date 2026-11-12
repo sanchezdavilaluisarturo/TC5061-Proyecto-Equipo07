@@ -623,5 +623,126 @@ def silueta():
     logger.info(f"Silueta del champion v{version} por conjunto:\n{tabla.to_string(index=False)}")
 
 
+def p3_metricas_drift(conteo: pd.DataFrame, por_anio: pd.DataFrame | None) -> dict[str, float]:
+    """Métricas de un run de drift: la proporción y el conteo de variables con drift por comparación."""
+    metricas = {}
+    for fila in conteo.itertuples():
+        metricas[f"{fila.comparacion}_proporcion_drift"] = float(fila.proporcion_drift)
+        metricas[f"{fila.comparacion}_columnas_con_drift"] = float(fila.columnas_con_drift)
+    if por_anio is not None:
+        for fila in por_anio.itertuples():
+            metricas[f"octubre_{fila.anio}_proporcion_drift"] = float(fila.proporcion_drift)
+    return metricas
+
+
+def p3_datasets_monitoreo(conjuntos: dict[str, pd.DataFrame], contextos: dict[str, str]) -> dict:
+    """Conjuntos de perfiles como datasets de MLflow; `contextos`: contexto -> nombre del conjunto."""
+    return {
+        contexto: monitoreo.dataset_mlflow(
+            conjuntos[nombre].reset_index(),
+            f"p3_perfiles_{nombre}",
+            cfg.P3_RUTA_PERFILES_MONITOREO,
+        )
+        for contexto, nombre in contextos.items()
+    }
+
+
+@app.command()
+def registrar_drift():
+    """Registra en MLflow un run con los reportes de drift ya generados (no los vuelve a correr).
+
+    Lee `p3_drift_*` de reports/monitoreo; si falta el conteo, falla y pide correr `drift` primero.
+    Escribe en el experimento del equipo: un run nuevo por cada ejecución (no es idempotente).
+    """
+    carpeta = cfg.MONITOREO_DIR
+    conteo_ruta = carpeta / "p3_drift_conteo.csv"
+    if not conteo_ruta.exists():
+        raise FileNotFoundError("Falta p3_drift_conteo.csv; ejecutar `make monitoreo-p3-drift`")
+    conteo = pd.read_csv(conteo_ruta)
+    anual_ruta = carpeta / "p3_drift_mismo_mes_por_anio.csv"
+    por_anio = pd.read_csv(anual_ruta) if anual_ruta.exists() else None
+    archivos = sorted(carpeta.glob("p3_drift_*"))
+    _, version, _, id_modelo = p3_cargar_champion()
+    descripcion = (
+        f"Drift de P3 (segmentación de estaciones) con Evidently sobre {cfg.MES_MONITOREO}: train "
+        "contra test, control estacional (mismo mes de la referencia) y contraste, cada uno con todas "
+        f"las estaciones y solo las comunes; champion v{version}. Un porcentaje de variables con "
+        "drift bajo el umbral de 50% no es alerta; el desglose por año separa la pandemia."
+    )
+    id_run = monitoreo.registrar_en_mlflow(
+        f"p3-drift-{cfg.MES_MONITOREO}",
+        "p3",
+        archivos,
+        metricas=p3_metricas_drift(conteo, por_anio),
+        parametros={
+            "champion_version": version,
+            "umbral_proporcion": float(conteo["umbral_proporcion"].iloc[0]),
+            "n_variables": len(P3_COLUMNAS_PERFIL) + 1,
+        },
+        etiquetas={"tarea": "clustering", "rol": "drift", "champion_version": str(version)},
+        descripcion=descripcion,
+        datasets=p3_datasets_monitoreo(
+            p3_conjuntos(),
+            {"referencia": "referencia", "actual": "actual", "evaluacion": "evaluacion"},
+        ),
+        modelo_id=id_modelo,
+    )
+    logger.success(f"Drift de P3 registrado en MLflow: run {id_run}")
+
+
+@app.command()
+def registrar_ab():
+    """Registra en MLflow un run con el resultado del A/B ya calculado (no lo vuelve a correr).
+
+    Lee `p3_ab_resultado.csv` y `p3_ab_estaciones.csv`; liga el champion como modelo evaluado y la
+    silueta de octubre 2026 como métrica del champion sobre ese conjunto. Escribe en el
+    experimento del equipo: un run nuevo por cada ejecución (no es idempotente).
+    """
+    carpeta = cfg.MONITOREO_DIR
+    ruta = carpeta / "p3_ab_resultado.csv"
+    if not ruta.exists():
+        raise FileNotFoundError("Falta p3_ab_resultado.csv; ejecutar `make monitoreo-p3-ab`")
+    resultado = pd.read_csv(ruta, index_col="metrica")["valor"]
+    textos = {k: str(resultado[k]) for k in ("version_vigente", "motivo")}
+    numericos = resultado.drop(list(textos)).astype(float)
+    _, version, _, id_modelo = p3_cargar_champion()
+    if int(numericos["champion_version"]) != version:
+        raise ValueError(
+            f"El A/B se calculó con el champion v{int(numericos['champion_version'])} y el alias "
+            f"champion ya apunta a v{version}; volver a correr `make monitoreo-p3-ab`"
+        )
+    version_challenger = int(numericos["challenger_version"])
+    descripcion = (
+        f"A/B de P3, champion v{version} contra challenger v{version_challenger} sobre "
+        f"{int(numericos['estaciones'])} estaciones de {cfg.MES_MONITOREO}. Silueta por estación en "
+        "el espacio del champion; Wilcoxon pareado y bootstrap de la diferencia. Decisión: "
+        f"{textos['motivo']}."
+    )
+    id_run = monitoreo.registrar_en_mlflow(
+        f"p3-ab-{cfg.MES_MONITOREO}",
+        "p3",
+        [carpeta / "p3_ab_resultado.csv", carpeta / "p3_ab_estaciones.csv"],
+        metricas=numericos.drop(["champion_version", "challenger_version", "alfa"]).to_dict(),
+        parametros={
+            "champion_version": version,
+            "challenger_version": version_challenger,
+            "alfa": float(numericos["alfa"]),
+        },
+        etiquetas={
+            "tarea": "clustering",
+            "rol": "ab",
+            "champion_version": str(version),
+            "decision": textos["version_vigente"],
+        },
+        descripcion=descripcion,
+        datasets=p3_datasets_monitoreo(p3_conjuntos(), {"evaluacion": "evaluacion"}),
+        modelo_id=id_modelo,
+        metricas_por_dataset={
+            "evaluacion": {"champion_silueta_evaluacion": float(numericos["silueta_champion"])}
+        },
+    )
+    logger.success(f"A/B de P3 registrado en MLflow: run {id_run}")
+
+
 if __name__ == "__main__":
     app()

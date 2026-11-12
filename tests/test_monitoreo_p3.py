@@ -364,3 +364,117 @@ def test_silueta_por_conjunto_regresa_una_fila_por_conjunto():
     assert tabla["conjunto"].tolist() == ["a", "b"]
     assert tabla["estaciones"].tolist() == [80, 40]
     assert (tabla["salidas_mediana"] == 100.0).all()
+
+
+@pytest.fixture
+def registro_local(tmp_path, monkeypatch):
+    """MLflow en SQLite, manifiestos y reportes de juguete: `registrar-*` sin servidor ni datos reales."""
+    import mlflow
+
+    monkeypatch.setattr(cfg, "MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path / 'mlflow.db'}")
+    for nombre, constante in (
+        ("fuentes.csv", "RUTA_MANIFIESTO"),
+        ("monitoreo.csv", "RUTA_MANIFIESTO_MONITOREO"),
+    ):
+        ruta = tmp_path / nombre
+        ruta.write_text("archivo,periodo,url,registros,sha256\na.csv,2026-10,u,1,abc\n")
+        monkeypatch.setattr(cfg, constante, ruta)
+    reportes = tmp_path / "reportes"
+    reportes.mkdir()
+    monkeypatch.setattr(cfg, "MONITOREO_DIR", reportes)
+    monkeypatch.setattr(cfg, "P3_RUTA_PERFILES_MONITOREO", tmp_path / "perfiles.parquet")
+    perfil = pd.DataFrame(
+        np.random.default_rng(0).random((6, len(mp3.P3_COLUMNAS_PERFIL))),
+        columns=mp3.P3_COLUMNAS_PERFIL,
+        index=pd.Index(range(6), name="origen_id"),
+    ).assign(salidas=100.0)
+    conjuntos = {n: perfil for n in ("referencia", "actual", "evaluacion")}
+    monkeypatch.setattr(mp3, "p3_conjuntos", lambda: conjuntos)
+    monkeypatch.setattr(mp3, "p3_cargar_champion", lambda: (None, 4, {}, None))
+    mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
+    return reportes
+
+
+def test_metricas_de_drift_incluyen_cada_comparacion_y_cada_octubre():
+    conteo = pd.DataFrame(
+        {
+            "comparacion": ["train_test_todas", "estacional_comunes"],
+            "columnas_con_drift": [28, 29],
+            "proporcion_drift": [0.62, 0.64],
+        }
+    )
+    por_anio = pd.DataFrame({"anio": [2022, 2023], "proporcion_drift": [0.44, 0.49]})
+    metricas = mp3.p3_metricas_drift(conteo, por_anio)
+    assert metricas["train_test_todas_proporcion_drift"] == 0.62
+    assert metricas["estacional_comunes_columnas_con_drift"] == 29.0
+    assert metricas["octubre_2023_proporcion_drift"] == 0.49
+    assert "octubre_2022_proporcion_drift" in mp3.p3_metricas_drift(conteo, por_anio)
+    assert not any(k.startswith("octubre_") for k in mp3.p3_metricas_drift(conteo, None))
+
+
+def test_registrar_drift_guarda_metricas_etiquetas_y_reportes(registro_local):
+    import mlflow
+
+    pd.DataFrame(
+        {
+            "comparacion": ["train_test_todas"],
+            "estaciones_referencia": [362],
+            "estaciones_actual": [457],
+            "columnas_con_drift": [28],
+            "proporcion_drift": [0.62],
+            "umbral_proporcion": [0.5],
+        }
+    ).to_csv(registro_local / "p3_drift_conteo.csv", index=False)
+    (registro_local / "p3_drift_train_test_todas.html").write_text("<html></html>")
+    mp3.registrar_drift()
+    (run,) = mlflow.search_runs(experiment_names=[cfg.EXPERIMENTO_MLFLOW], output_format="list")
+    assert run.data.tags["rol"] == "drift" and run.data.tags["fase"] == cfg.FASE_MONITOREO
+    assert run.data.metrics["train_test_todas_proporcion_drift"] == 0.62
+    archivos = {a.path for a in mlflow.MlflowClient().list_artifacts(run.info.run_id, "monitoreo")}
+    assert archivos == {
+        "monitoreo/p3_drift_conteo.csv",
+        "monitoreo/p3_drift_train_test_todas.html",
+    }
+
+
+def test_registrar_drift_sin_el_conteo_pide_correr_drift(registro_local):
+    with pytest.raises(FileNotFoundError, match="monitoreo-p3-drift"):
+        mp3.registrar_drift()
+
+
+def escribir_resultado_ab(carpeta, champion_version: int = 4):
+    filas = {
+        "champion_version": champion_version,
+        "challenger_version": 5,
+        "estaciones": 469,
+        "silueta_champion": 0.0728,
+        "silueta_challenger": 0.0710,
+        "diferencia": -0.0018,
+        "p_wilcoxon": 0.83,
+        "alfa": 0.05,
+        "version_vigente": "champion",
+        "motivo": "sin diferencia significativa: el champion se queda",
+    }
+    pd.Series(filas).to_frame("valor").rename_axis("metrica").to_csv(
+        carpeta / "p3_ab_resultado.csv"
+    )
+    pd.DataFrame({"silueta_champion": [0.1]}).to_csv(carpeta / "p3_ab_estaciones.csv")
+
+
+def test_registrar_ab_guarda_la_decision_y_las_metricas(registro_local):
+    import mlflow
+
+    escribir_resultado_ab(registro_local)
+    mp3.registrar_ab()
+    (run,) = mlflow.search_runs(experiment_names=[cfg.EXPERIMENTO_MLFLOW], output_format="list")
+    assert run.data.tags["rol"] == "ab" and run.data.tags["decision"] == "champion"
+    assert run.data.metrics["p_wilcoxon"] == 0.83
+    assert run.data.metrics["champion_silueta_evaluacion"] == 0.0728
+    assert run.data.params["challenger_version"] == "5"
+    assert "champion_version" not in run.data.metrics
+
+
+def test_registrar_ab_falla_si_el_champion_cambio_desde_el_calculo(registro_local):
+    escribir_resultado_ab(registro_local, champion_version=3)
+    with pytest.raises(ValueError, match="volver a correr"):
+        mp3.registrar_ab()
