@@ -1874,6 +1874,54 @@ make pruebas-monitoreo
 - Que las pruebas A/B eligen la versión con menor pérdida y no declaran ganador sin diferencia real.
 - Que el bootstrap por grupos amplía el intervalo cuando las filas están correlacionadas.
 
+### Monitoreo de P3 (segmentación de estaciones)
+
+```bash
+make monitoreo-p3-perfiles   # perfiles por periodo; requiere make data y make monitoreo-datos
+make monitoreo-p3-drift      # reportes de Evidently con el champion del Registry
+make monitoreo-p3-drift-anual
+```
+
+P3 no modela filas sino estaciones: cada fila de los conjuntos es una estación con 44 variables (la proporción de salidas por hora en días laborales y en fin de semana, el volumen diario, el balance neto, la proporción de viajes circulares y la duración mediana). Los reportes quedan en `reports/monitoreo/p3_drift_*.html`, con el resumen por variable en `p3_drift_resumen.csv`, el conteo por comparación en `p3_drift_conteo.csv` y el desglose por año en `p3_drift_mismo_mes_por_anio.csv`.
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Conjuntos | Referencia = perfiles de train (362 estaciones), actual = perfiles de test (457) y evaluación = perfiles de octubre 2026 (469), calculados con `features.p3_perfil_de_estaciones`, la misma función del entrenamiento | Con otra función, el drift mediría una diferencia de procesamiento y no de los datos (*train-serving skew*). `perfiles` comprueba que referencia y valid son idénticos a las variables con las que se entrenó el champion y falla si no | Huyen (2022, cap. 8) |
+| Mínimo de salidas | Referencia 1000, valid y actual 300 (los del entrenamiento) y octubre 2026 25 (`P3_MIN_SALIDAS_EVALUACION`) | Con pocos viajes el perfil horario es ruido. 25 es el ritmo mensual de valid (300 en 12 meses); con 300 en un solo mes se perdería gran parte de las estaciones | Huyen (2022, cap. 8) |
+| Control estacional | Cada año previo (2020 a 2025) se compara solo con su octubre, y los octubres de la referencia juntos | Octubre contra los 57 meses de train confunde la estacionalidad con el drift: el reporte marca 82% de las variables, pero una parte importante es la época del año | Huyen (2022, cap. 8) |
+| Año atípico | El desglose se hace año por año y no solo con los octubres juntos | 2020 y 2021 (pandemia) dominan los octubres de la referencia y no son comparables con 2026 | Huyen (2022, cap. 8) |
+| Estaciones comunes | Cada comparación se corre con todas las estaciones y solo con las que están en los dos conjuntos | Una estación que abre o cierra cambia la composición de la red, no su comportamiento; separarlas permite saber cuál de las dos causas explica el drift | Huyen (2022, cap. 8) |
+| Predicción | El grupo que asigna el champion entra como variable categórica | Un cambio en la proporción de estaciones por grupo es la señal del drift que ya afecta al modelo | Huyen (2022, cap. 8) |
+| Método | Los defectos de Evidently: con 1000 filas o menos (aquí cada fila es una estación) usa Kolmogorov-Smirnov, que da un p-value | Un p-value dice si la diferencia es detectable, no qué tan grande es; con 44 pruebas a 0.05 se esperan unos 2 falsos positivos por azar, así que el porcentaje de variables con drift sale algo inflado | Treveil et al. (2020, cap. 7); Evidently AI (s.f.) |
+
+#### Resultados (champion v4)
+
+| Comparación | Estaciones (ref. / actual) | Variables con drift | Drift del conjunto |
+|---|---|---|---|
+| Train contra test | 362 / 457 | 28 de 45 (62%) | Sí |
+| Train contra test, solo estaciones comunes | 359 / 359 | 25 de 45 (56%) | Sí |
+| Octubres 2020-2023 contra octubre 2026 | 300 / 469 | 36 de 45 (80%) | Sí |
+| Octubres 2020-2023 contra octubre 2026, comunes | 297 / 297 | 29 de 45 (64%) | Sí |
+| Toda la referencia contra octubre 2026 (contraste) | 362 / 469 | 37 de 45 (82%) | Sí |
+
+| Octubre del año | Estaciones | Variables con drift contra octubre 2026 |
+|---|---|---|
+| 2020 | 274 | 37 de 45 (82%) |
+| 2021 | 300 | 29 de 45 (64%) |
+| 2022 | 300 | 20 de 45 (44%) |
+| 2023 | 313 | 22 de 45 (49%) |
+| 2024 | 360 | 21 de 45 (47%) |
+| 2025 | 368 | 18 de 45 (40%) |
+
+Las 45 son las 44 variables más el grupo asignado.
+
+**Interpretación.**
+
+- **Drift de un año (train contra test).** Se mueven `prop_circulares` y, con todas las estaciones, `log_viajes_por_dia` y `neto_sobre_salidas`; con solo las comunes esas dos dejan de marcar drift, así que parte del cambio era composición de la red. `duracion_mediana_min` no cambia. El grupo asignado tampoco (p = 0.71): el champion reparte las estaciones igual que antes.
+- **Octubre 2026.** Contra los octubres de 2022 a 2025 el drift está bajo el umbral de 50% (40% a 49%); contra 2020 y 2021 lo supera, por la pandemia. Es drift moderado y reciente, no un cambio de régimen.
+- **Lo que sí es nuevo en octubre 2026.** La duración mediana de los viajes baja a 8.0 minutos, contra 9.3 a 10.0 en todos los octubres anteriores, y marca drift en todas las comparaciones de octubre (no en train contra test). Con solo las estaciones comunes, además, el grupo asignado sí cambia (p = 0.013): el champion ya reparte distinto a las estaciones que ya existían.
+- **Implicación.** Las entradas se mueven, pero el reparto en grupos casi no (solo cambia en octubre 2026 y solo en las estaciones comunes). El drift de las entradas es una alerta temprana, no prueba de que el champion se degrade; eso lo decide el A/B contra el challenger entrenado con datos hasta septiembre 2026, que se mide con la silueta por estación.
+
 ## Estructura de carpetas
 
 ```
