@@ -7,12 +7,14 @@ módulo (modeling/monitoreo_p1.py, etc.) y usa de aquí:
     resumen_drift            drift por variable en una tabla (columna, método, valor, drift)
     comparar_pareado         A/B pareado: las dos versiones sobre las mismas filas
     comparar_aleatorio       A/B con asignación aleatoria de unidades a cada versión
-    registrar_en_mlflow      run de monitoreo con métricas y reportes como artefactos
+    dataset_mlflow           conjunto como dataset de MLflow (esquema, perfil y huella)
+    registrar_en_mlflow      run de monitoreo con datasets, modelo evaluado, métricas y reportes
 
 Uso: python -m tc5061_proyecto_equipo07.monitoreo datos
 """
 
 from pathlib import Path
+import subprocess  # solo para `git rev-parse` con argumentos fijos  # nosec B404
 
 from evidently import (
     DataDefinition,
@@ -29,6 +31,8 @@ from evidently.presets import (
 )
 from loguru import logger
 import mlflow
+import mlflow.data
+from mlflow.entities import LoggedModelInput
 import numpy as np
 import pandas as pd
 from pandas.api.types import union_categoricals
@@ -433,6 +437,34 @@ def cargar_version(nombre: str, alias: str | None = None, version: int | None = 
     return modelo, int(info.version)
 
 
+def commit_actual() -> str:
+    """Commit corto con el que se ejecuta (`desconocido` si no hay repositorio Git)."""
+    try:
+        return subprocess.check_output(  # git con argumentos fijos, sin shell  # nosec B603 B607
+            ["git", "rev-parse", "--short", "HEAD"], cwd=cfg.PROJ_ROOT, text=True
+        ).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return "desconocido"
+
+
+def archivos_configuracion() -> list[Path]:
+    """Archivos con los que corre el run: config.py y, si existen, MLproject y python_env.yaml.
+
+    Los mismos que suben los runs de entrenamiento (p1_archivos_configuracion en train.py).
+    """
+    candidatos = [
+        Path(cfg.__file__),
+        cfg.PROJ_ROOT / "MLproject",
+        cfg.PROJ_ROOT / "python_env.yaml",
+    ]
+    return [ruta for ruta in candidatos if ruta.exists()]
+
+
+def dataset_mlflow(datos: pd.DataFrame, nombre: str, fuente: Path, target: str | None = None):
+    """Conjunto como dataset de MLflow: guarda su esquema, perfil y huella (digest)."""
+    return mlflow.data.from_pandas(datos, source=str(fuente), name=nombre, targets=target)
+
+
 def registrar_en_mlflow(
     nombre_run: str,
     pregunta: str,
@@ -440,19 +472,69 @@ def registrar_en_mlflow(
     metricas: dict | None = None,
     parametros: dict | None = None,
     etiquetas: dict | None = None,
+    descripcion: str | None = None,
+    datasets: dict | None = None,
+    modelo_id: str | None = None,
+    metricas_por_dataset: dict[str, dict[str, float]] | None = None,
+    metricas_por_modelo: dict[str, dict[str, dict[str, float]]] | None = None,
 ) -> str:
-    """Registra un run de monitoreo (drift o A/B) en el experimento del equipo; regresa su ID."""
+    """Registra un run de monitoreo (drift o A/B) en el experimento del equipo; regresa su ID.
+
+    Con la misma calidad que los runs de entrenamiento: etiquetas de equipo y commit, descripción,
+    versión de los datos, manifiestos, archivos de configuración y los conjuntos usados como
+    datasets de MLflow (`datasets`: contexto -> dataset_mlflow). Un run de monitoreo no entrena un
+    modelo: con `modelo_id` liga como entrada el modelo que evaluó, y `metricas_por_dataset`
+    (contexto -> métricas) asocia esas métricas al modelo y al dataset donde se midieron, para que
+    aparezcan en la página del modelo. Un A/B evalúa varios modelos: `metricas_por_modelo`
+    (model_id -> contexto -> métricas) liga cada uno con sus métricas; las claves deben distinguir
+    al modelo (por ejemplo, champion_mae y challenger_mae), porque el run guarda un valor por clave.
+    """
     if cfg.MLFLOW_TRACKING_URI:
         mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
     mlflow.set_experiment(cfg.EXPERIMENTO_MLFLOW)
-    base = {"question": pregunta, "fase": cfg.FASE_MONITOREO, "stage_of_work": "monitoring"}
+    base = {
+        "equipo": "07",
+        "question": pregunta,
+        "commit": commit_actual(),
+        "fase": cfg.FASE_MONITOREO,
+        "stage_of_work": "monitoring",
+    }
+    if descripcion:
+        base["mlflow.note.content"] = descripcion
+    datasets = datasets or {}
     with mlflow.start_run(run_name=nombre_run, tags={**base, **(etiquetas or {})}) as run:
-        if parametros:
-            mlflow.log_params(parametros)
+        manifiestos = [
+            m for m in (cfg.RUTA_MANIFIESTO, cfg.RUTA_MANIFIESTO_MONITOREO) if m.exists()
+        ]
+        versiones = {
+            "data_version" if m == cfg.RUTA_MANIFIESTO else "data_version_monitoreo": (
+                dataset.version_datos(m)
+            )
+            for m in manifiestos
+        }
+        mlflow.log_params({**versiones, "mes_monitoreo": cfg.MES_MONITOREO, **(parametros or {})})
+        for contexto, conjunto in datasets.items():
+            mlflow.log_input(conjunto, context=contexto)
         if metricas:
             mlflow.log_metrics(metricas)
+        # Las métricas con model_id ligan el modelo evaluado como entrada del run (en MLflow open
+        # source, mlflow.log_inputs(models=...) solo funciona en Databricks)
+        modelos = {m: dict(c) for m, c in (metricas_por_modelo or {}).items()}
+        if modelo_id:
+            modelos.setdefault(modelo_id, {}).update(metricas_por_dataset or {})
+        for id_modelo, por_contexto in modelos.items():
+            for contexto, valores in por_contexto.items():
+                mlflow.log_metrics(valores, model_id=id_modelo, dataset=datasets.get(contexto))
+            if not por_contexto:
+                mlflow.MlflowClient().log_inputs(
+                    run.info.run_id, datasets=[], models=[LoggedModelInput(id_modelo)]
+                )
         for archivo in archivos:
             mlflow.log_artifact(str(archivo), artifact_path="monitoreo")
+        for manifiesto in manifiestos:
+            mlflow.log_artifact(str(manifiesto), artifact_path="data")
+        for ruta in archivos_configuracion():
+            mlflow.log_artifact(str(ruta), artifact_path="config")
     logger.success(f"Run de monitoreo {nombre_run}: {run.info.run_id}")
     return run.info.run_id
 

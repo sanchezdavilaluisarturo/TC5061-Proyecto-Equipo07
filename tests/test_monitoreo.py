@@ -1,5 +1,7 @@
 """Pruebas de la base de monitoreo: periodos, limpieza del mes nuevo, drift con Evidently y A/B."""
 
+from pathlib import Path
+
 import mlflow
 import numpy as np
 import pandas as pd
@@ -249,16 +251,115 @@ def test_cargar_version_exige_alias_o_version():
         monitoreo.cargar_version("modelo", alias="champion", version=1)
 
 
-def test_registrar_en_mlflow_guarda_metricas_etiquetas_y_artefactos(tmp_path, monkeypatch):
+@pytest.fixture
+def mlflow_local(tmp_path, monkeypatch):
+    """MLflow en SQLite y manifiestos de prueba, para no depender del servidor ni de los datos."""
     monkeypatch.setattr(cfg, "MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path / 'mlflow.db'}")
-    reporte = tmp_path / "reporte.html"
+    for nombre, constante in (
+        ("fuentes.csv", "RUTA_MANIFIESTO"),
+        ("monitoreo.csv", "RUTA_MANIFIESTO_MONITOREO"),
+    ):
+        ruta = tmp_path / nombre
+        ruta.write_text("archivo,periodo,url,registros,sha256\na.csv,2026-10,u,1,abc\n")
+        monkeypatch.setattr(cfg, constante, ruta)
+    return tmp_path
+
+
+def test_registrar_en_mlflow_guarda_metricas_etiquetas_y_artefactos(mlflow_local):
+    reporte = mlflow_local / "reporte.html"
     reporte.write_text("<html></html>")
     id_run = monitoreo.registrar_en_mlflow(
-        "p0-drift-prueba", "p0", [reporte], metricas={"proporcion_drift": 0.25}
+        "p0-drift-prueba",
+        "p0",
+        [reporte],
+        metricas={"proporcion_drift": 0.25},
+        descripcion="Prueba de monitoreo",
     )
     run = mlflow.get_run(id_run)
     assert run.data.metrics["proporcion_drift"] == 0.25
     assert run.data.tags["fase"] == cfg.FASE_MONITOREO
     assert run.data.tags["question"] == "p0"
-    artefactos = mlflow.MlflowClient().list_artifacts(id_run, "monitoreo")
-    assert [artefacto.path for artefacto in artefactos] == ["monitoreo/reporte.html"]
+    assert run.data.tags["equipo"] == "07"
+    assert run.data.tags["commit"]
+    assert run.data.tags["mlflow.note.content"] == "Prueba de monitoreo"
+    assert {"data_version", "data_version_monitoreo"} <= set(run.data.params)
+    cliente = mlflow.MlflowClient()
+    assert [a.path for a in cliente.list_artifacts(id_run, "monitoreo")] == [
+        "monitoreo/reporte.html"
+    ]
+    assert len(cliente.list_artifacts(id_run, "data")) == 2
+    configuracion = {Path(a.path).name for a in cliente.list_artifacts(id_run, "config")}
+    assert {ruta.name for ruta in monitoreo.archivos_configuracion()} == configuracion
+    assert "config.py" in configuracion
+
+
+def test_registrar_en_mlflow_liga_datasets_y_el_modelo_evaluado(mlflow_local):
+    import mlflow.sklearn
+    from sklearn.linear_model import LinearRegression
+
+    datos = pd.DataFrame({"x": [0.0, 1.0, 2.0, 3.0], "y": [0.0, 1.0, 2.0, 3.0]})
+    mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(cfg.EXPERIMENTO_MLFLOW)
+    with mlflow.start_run():
+        modelo = mlflow.sklearn.log_model(
+            LinearRegression().fit(datos[["x"]], datos["y"]), name="m"
+        )
+    evaluacion = monitoreo.dataset_mlflow(datos, "p0_evaluacion", mlflow_local / "e.parquet", "y")
+    referencia = monitoreo.dataset_mlflow(datos, "p0_referencia", mlflow_local / "r.parquet", "y")
+
+    id_run = monitoreo.registrar_en_mlflow(
+        "p0-ab-prueba",
+        "p0",
+        [],
+        datasets={"referencia": referencia, "evaluacion": evaluacion},
+        modelo_id=modelo.model_id,
+        metricas_por_dataset={"evaluacion": {"champion_mae_evaluacion": 0.5}},
+    )
+    run = mlflow.get_run(id_run)
+    contextos = {
+        etiqueta.value
+        for entrada in run.inputs.dataset_inputs
+        for etiqueta in entrada.tags
+        if etiqueta.key == "mlflow.data.context"
+    }
+    assert contextos == {"referencia", "evaluacion"}
+    assert [entrada.model_id for entrada in run.inputs.model_inputs] == [modelo.model_id]
+    assert run.data.metrics["champion_mae_evaluacion"] == 0.5
+    metricas_modelo = mlflow.get_logged_model(modelo.model_id).metrics
+    assert [(m.key, m.dataset_name) for m in metricas_modelo] == [
+        ("champion_mae_evaluacion", "p0_evaluacion")
+    ]
+
+
+def test_registrar_en_mlflow_liga_varios_modelos_evaluados(mlflow_local):
+    import mlflow.sklearn
+    from sklearn.linear_model import LinearRegression
+
+    datos = pd.DataFrame({"x": [0.0, 1.0, 2.0, 3.0], "y": [0.0, 1.0, 2.0, 3.0]})
+    mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(cfg.EXPERIMENTO_MLFLOW)
+    ajustado = LinearRegression().fit(datos[["x"]], datos["y"])
+    with mlflow.start_run():
+        champion = mlflow.sklearn.log_model(ajustado, name="champion")
+        challenger = mlflow.sklearn.log_model(ajustado, name="challenger")
+    evaluacion = monitoreo.dataset_mlflow(datos, "p0_evaluacion", mlflow_local / "e.parquet", "y")
+
+    id_run = monitoreo.registrar_en_mlflow(
+        "p0-ab-prueba",
+        "p0",
+        [],
+        datasets={"evaluacion": evaluacion},
+        metricas_por_modelo={
+            champion.model_id: {"evaluacion": {"champion_mae": 0.6}},
+            challenger.model_id: {"evaluacion": {"challenger_mae": 0.5}},
+        },
+    )
+    run = mlflow.get_run(id_run)
+    ligados = {entrada.model_id for entrada in run.inputs.model_inputs}
+    assert ligados == {champion.model_id, challenger.model_id}
+    assert run.data.metrics["champion_mae"] == 0.6
+    assert run.data.metrics["challenger_mae"] == 0.5
+    del_challenger = mlflow.get_logged_model(challenger.model_id).metrics
+    assert [(m.key, m.dataset_name) for m in del_challenger] == [
+        ("challenger_mae", "p0_evaluacion")
+    ]
