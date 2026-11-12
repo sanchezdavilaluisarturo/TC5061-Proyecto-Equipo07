@@ -1866,13 +1866,14 @@ Requiere haber corrido `make data`.
 make pruebas-monitoreo
 ```
 
-`tests/test_monitoreo.py` (20 pruebas, sin red ni servidor de MLflow) comprueba:
+`tests/test_monitoreo.py` (22 pruebas, sin red ni servidor de MLflow) comprueba:
 
 - Fronteras y brechas de los periodos.
 - Que la limpieza del mes nuevo da el mismo resultado que `dataset.limpiar`.
 - Que el resumen de drift detecta solo las columnas desplazadas, con distancias y con p-values, y coincide con el conteo de Evidently.
 - Que las pruebas A/B eligen la versión con menor pérdida y no declaran ganador sin diferencia real.
 - Que el bootstrap por grupos amplía el intervalo cuando las filas están correlacionadas.
+- Que `registrar_en_mlflow` guarda métricas, etiquetas y artefactos, y liga los datasets y uno o varios modelos evaluados.
 
 ## Estructura de carpetas
 
