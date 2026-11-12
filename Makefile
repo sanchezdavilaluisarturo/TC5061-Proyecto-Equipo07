@@ -259,7 +259,7 @@ help:
 
 
 ## Monitoreo de P3: perfiles por periodo (referencia, valid, actual, evaluacion) y reporte de drift
-.PHONY: monitoreo-p3-perfiles monitoreo-p3-drift monitoreo-p3-drift-anual pruebas-monitoreo-p3
+.PHONY: monitoreo-p3-perfiles monitoreo-p3-drift monitoreo-p3-drift-anual monitoreo-p3-challenger pruebas-monitoreo-p3
 monitoreo-p3-perfiles:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles
 
@@ -271,3 +271,6 @@ monitoreo-p3-drift-anual:
 
 pruebas-monitoreo-p3:
 	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p3.py
+
+monitoreo-p3-challenger:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 challenger

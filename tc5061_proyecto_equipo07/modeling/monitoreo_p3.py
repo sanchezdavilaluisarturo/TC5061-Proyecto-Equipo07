@@ -8,7 +8,7 @@ uso), calculada con las mismas funciones con las que se entrenó el champion:
     evaluacion   perfiles del mes nuevo (2026-10), que ningún modelo ha visto
 valid (2024-10 a 2025-09) también se calcula: es el conjunto con el que se midió la estabilidad.
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift | drift-anual
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift | drift-anual | challenger
 """
 
 from loguru import logger
@@ -16,6 +16,8 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
+from sklearn.metrics import adjusted_rand_score, silhouette_score
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
@@ -72,6 +74,16 @@ def p3_perfiles_por_periodo(viajes: pd.DataFrame) -> dict[str, pd.DataFrame]:
         perfil = p3_perfil_filtrado(viajes[(periodo == nombre).to_numpy()], P3_MIN_SALIDAS[nombre])
         perfiles[nombre] = perfil
         logger.info(f"{nombre}: {len(perfil)} estaciones")
+
+    # Datos del challenger: train, valid y test juntos (hasta MES_FIN) y el mínimo de salidas del
+    # entrenamiento del champion; el mes nuevo y las brechas quedan fuera
+    entrenamiento = periodo.isin(["referencia", "valid", "actual"]).to_numpy()
+    perfiles["entrenamiento_challenger"] = p3_perfil_filtrado(
+        viajes[entrenamiento], cfg.P3_MIN_SALIDAS_TRAIN
+    )
+    logger.info(
+        f"entrenamiento_challenger: {len(perfiles['entrenamiento_challenger'])} estaciones"
+    )
 
     inicio = viajes["inicio_del_viaje"]
     fecha_evaluacion = pd.Period(cfg.MES_MONITOREO, freq="M")
@@ -278,6 +290,63 @@ def drift_anual():
     tabla = pd.DataFrame(filas)
     tabla.to_csv(cfg.MONITOREO_DIR / "p3_drift_mismo_mes_por_anio.csv", index=False)
     logger.info(f"Mismo mes por año contra {cfg.MES_MONITOREO} (champion v{version}):\n{tabla}")
+
+
+def p3_hiperparametros(pipeline) -> dict:
+    """Parámetros escalares de cada paso (`paso__parametro`), sin los objetos de los pasos."""
+    return {k: v for k, v in pipeline.get_params().items() if "__" in k}
+
+
+def p3_reentrenar(champion, perfil: pd.DataFrame):
+    """Challenger: el pipeline del champion con los mismos hiperparámetros, ajustado con `perfil`.
+
+    `clone` copia la configuración (escalador, PCA, K-Means, semilla) sin los parámetros ajustados,
+    así que la única diferencia entre las dos versiones son los datos de entrenamiento.
+    """
+    modelo = clone(champion)
+    if p3_hiperparametros(modelo) != p3_hiperparametros(champion):
+        raise ValueError("El challenger no tiene los hiperparámetros del champion")
+    return modelo.fit(perfil[P3_COLUMNAS_PERFIL])
+
+
+def p3_espacio_comun(champion, perfil: pd.DataFrame) -> np.ndarray:
+    """Variables de `perfil` estandarizadas con el escalador del champion.
+
+    Es el espacio en el que se comparan los dos modelos: la silueta de un modelo medida tras su
+    propio PCA no es comparable con la del otro. Mismo criterio que `train.p3_evaluar_modelo`.
+    """
+    return champion.named_steps["escalador"].transform(perfil[P3_COLUMNAS_PERFIL])
+
+
+def p3_resumen_challenger(champion, challenger, perfil: pd.DataFrame) -> dict[str, float]:
+    """Cómo queda el challenger frente al champion sobre las estaciones con las que se entrenó."""
+    z = p3_espacio_comun(champion, perfil)
+    x = perfil[P3_COLUMNAS_PERFIL]
+    grupos_champion, grupos_challenger = champion.predict(x), challenger.predict(x)
+    return {
+        "estaciones": len(perfil),
+        "silueta_champion": float(silhouette_score(z, grupos_champion)),
+        "silueta_challenger": float(silhouette_score(z, grupos_challenger)),
+        "ari_champion_challenger": float(adjusted_rand_score(grupos_champion, grupos_challenger)),
+        "tam_grupo_min_champion": int(np.bincount(grupos_champion).min()),
+        "tam_grupo_min_challenger": int(np.bincount(grupos_challenger).min()),
+        "varianza_pca_challenger": float(
+            challenger.named_steps["pca"].explained_variance_ratio_.sum()
+        ),
+    }
+
+
+@app.command()
+def challenger():
+    """Entrena el challenger con datos hasta MES_FIN y lo compara con el champion, sin registrarlo.
+
+    Los mismos hiperparámetros del champion; cambian solo los datos (train, valid y test juntos).
+    """
+    perfil = p3_conjuntos()["entrenamiento_challenger"]
+    champion, version, _, _ = p3_cargar_champion()
+    modelo = p3_reentrenar(champion, perfil)
+    resumen = p3_resumen_challenger(champion, modelo, perfil)
+    logger.info(f"Champion v{version} contra challenger:\n{pd.Series(resumen).to_string()}")
 
 
 if __name__ == "__main__":
