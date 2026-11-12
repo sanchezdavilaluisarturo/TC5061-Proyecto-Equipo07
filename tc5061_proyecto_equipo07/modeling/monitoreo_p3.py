@@ -8,7 +8,7 @@ uso), calculada con las mismas funciones con las que se entrenó el champion:
     evaluacion   perfiles del mes nuevo (2026-10), que ningún modelo ha visto
 valid (2024-10 a 2025-09) también se calcula: es el conjunto con el que se midió la estabilidad.
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift | drift-anual | challenger
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift | drift-anual | challenger | ab
 """
 
 from loguru import logger
@@ -18,7 +18,7 @@ import mlflow.sklearn
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
-from sklearn.metrics import adjusted_rand_score, silhouette_score
+from sklearn.metrics import adjusted_rand_score, silhouette_samples, silhouette_score
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
@@ -443,6 +443,144 @@ def challenger(
     grupos = cargado.predict(cargado.input_example)
     logger.success(
         f"challenger = v{nueva} carga y asigna grupo a {len(grupos)} estaciones; champion sigue en v{version}"
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# A/B testing: champion (A) contra challenger (B) sobre las estaciones del mes nuevo
+# ---------------------------------------------------------------------------------------------
+
+
+def p3_bootstrap_silueta(
+    z: np.ndarray,
+    grupos_a: np.ndarray,
+    grupos_b: np.ndarray,
+    n_bootstrap: int = cfg.MONITOREO_BOOTSTRAP,
+    alfa: float = cfg.MONITOREO_ALFA,
+    semilla: int = cfg.SEMILLA,
+) -> tuple[float, float]:
+    """Intervalo bootstrap de la diferencia de silueta media (B - A), remuestreando estaciones.
+
+    La silueta de una estación depende de los grupos de todas las demás, así que las siluetas por
+    estación no son independientes. Por eso cada remuestreo vuelve a calcular la silueta media de
+    cada versión, en vez de remuestrear la diferencia ya calculada.
+    """
+    rng = np.random.default_rng(semilla)
+    diferencias = []
+    while len(diferencias) < n_bootstrap:
+        indices = rng.integers(0, len(z), len(z))
+        # La silueta necesita al menos dos grupos en cada versión
+        if len(np.unique(grupos_a[indices])) < 2 or len(np.unique(grupos_b[indices])) < 2:
+            continue
+        diferencias.append(
+            silhouette_score(z[indices], grupos_b[indices])
+            - silhouette_score(z[indices], grupos_a[indices])
+        )
+    return tuple(np.quantile(diferencias, [alfa / 2, 1 - alfa / 2]))
+
+
+def p3_decidir_ab(p_valor: float, ic_inferior: float, ic_superior: float, alfa: float):
+    """Regla fijada antes de ver los resultados; regresa (versión vigente, motivo).
+
+    El challenger reemplaza al champion solo si la mejora es significativa (Wilcoxon con p < alfa)
+    y el intervalo bootstrap de la diferencia de silueta queda por completo sobre cero. Sin
+    evidencia, el champion se queda: cambiar de versión tiene un costo y no se paga sin pruebas.
+    """
+    if p_valor < alfa and ic_inferior > 0:
+        return "challenger", "mejora significativa"
+    if p_valor < alfa and ic_superior < 0:
+        return "champion", "el challenger es significativamente peor"
+    return "champion", "sin diferencia significativa: el champion se queda"
+
+
+def p3_ab(champion, challenger, perfil: pd.DataFrame, alfa: float = cfg.MONITOREO_ALFA):
+    """A/B de las dos versiones sobre las mismas estaciones; regresa (resultados, por estación).
+
+    La métrica es la silueta de cada estación, medida en el espacio estandarizado del champion
+    (`p3_espacio_comun`): en el espacio propio de cada modelo (tras su PCA) no serían comparables.
+    Las bases comparan una pérdida (menor es mejor), así que se pasa la silueta con signo negativo.
+    """
+    x = perfil[P3_COLUMNAS_PERFIL]
+    z = p3_espacio_comun(champion, perfil)
+    grupos_a, grupos_b = champion.predict(x), challenger.predict(x)
+    silueta_a, silueta_b = silhouette_samples(z, grupos_a), silhouette_samples(z, grupos_b)
+
+    pareado = (
+        monitoreo.comparar_pareado(-silueta_a, -silueta_b, alfa=alfa)
+        if not np.allclose(silueta_a, silueta_b)
+        else None
+    )
+    if pareado is None:
+        # Dos versiones idénticas: no hay nada que contrastar
+        p_valor, p_valor_t = 1.0, 1.0
+    else:
+        p_valor, p_valor_t = pareado["p_valor"], pareado["p_valor_t"]
+    ic_inferior, ic_superior = p3_bootstrap_silueta(z, grupos_a, grupos_b, alfa=alfa)
+    aleatorio = monitoreo.comparar_aleatorio(-silueta_a, -silueta_b, alfa=alfa)
+    vigente, motivo = p3_decidir_ab(p_valor, ic_inferior, ic_superior, alfa)
+
+    media_a, media_b = silueta_a.mean(), silueta_b.mean()
+    resultados = {
+        "estaciones": len(perfil),
+        "silueta_champion": float(media_a),
+        "silueta_challenger": float(media_b),
+        "diferencia": float(media_b - media_a),
+        "cambio_relativo": float((media_b - media_a) / abs(media_a)),
+        "ic_inferior": float(ic_inferior),
+        "ic_superior": float(ic_superior),
+        "p_wilcoxon": float(p_valor),
+        "p_t_pareada": float(p_valor_t),
+        "estaciones_challenger_mejor": int((silueta_b > silueta_a).sum()),
+        "estaciones_champion_mejor": int((silueta_a > silueta_b).sum()),
+        "aleatorio_n_champion": aleatorio["n_a"],
+        "aleatorio_n_challenger": aleatorio["n_b"],
+        "aleatorio_silueta_champion": float(-aleatorio["media_a"]),
+        "aleatorio_silueta_challenger": float(-aleatorio["media_b"]),
+        "aleatorio_p_mann_whitney": float(aleatorio["p_valor"]),
+        "aleatorio_p_welch": float(aleatorio["p_valor_t"]),
+        "ari_champion_challenger": float(adjusted_rand_score(grupos_a, grupos_b)),
+        "estaciones_que_cambian_de_grupo": int(
+            min((grupos_a != grupos_b).sum(), (grupos_a == grupos_b).sum())
+        ),
+        "alfa": alfa,
+        "version_vigente": vigente,
+        "motivo": motivo,
+    }
+    por_estacion = pd.DataFrame(
+        {
+            "grupo_champion": grupos_a,
+            "grupo_challenger": grupos_b,
+            "silueta_champion": silueta_a,
+            "silueta_challenger": silueta_b,
+            "diferencia": silueta_b - silueta_a,
+        },
+        index=perfil.index,
+    )
+    return resultados, por_estacion
+
+
+@app.command()
+def ab():
+    """A/B del champion contra el challenger sobre las estaciones de octubre 2026.
+
+    Prueba principal pareada (mismas estaciones) y, como complemento, un reparto aleatorio de las
+    estaciones entre las dos versiones. Carga las versiones por alias; no escribe en MLflow.
+    """
+    evaluacion = p3_conjuntos()["evaluacion"]
+    champion, version_a, _, _ = p3_cargar_champion()
+    cliente = mlflow.MlflowClient()
+    version_b = int(
+        cliente.get_model_version_by_alias(cfg.P3_MODELO_REGISTRADO, "challenger").version
+    )
+    challenger = mlflow.sklearn.load_model(f"models:/{cfg.P3_MODELO_REGISTRADO}/{version_b}")
+    resultados, por_estacion = p3_ab(champion, challenger, evaluacion)
+    resultados = {"champion_version": version_a, "challenger_version": version_b, **resultados}
+    pd.Series(resultados).to_frame("valor").rename_axis("metrica").to_csv(
+        cfg.MONITOREO_DIR / "p3_ab_resultado.csv"
+    )
+    por_estacion.to_csv(cfg.MONITOREO_DIR / "p3_ab_estaciones.csv")
+    logger.info(
+        f"A/B de P3, champion v{version_a} contra challenger v{version_b}:\n{pd.Series(resultados).to_string()}"
     )
 
 
