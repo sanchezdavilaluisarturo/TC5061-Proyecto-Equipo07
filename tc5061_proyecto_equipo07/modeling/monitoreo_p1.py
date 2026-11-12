@@ -6,7 +6,7 @@ Usa la base común de monitoreo.py. Los conjuntos salen de dos tablas:
     evaluacion                   el mes nuevo, calculado con el mismo pipeline de features sobre
                                  la historia extendida, porque sus rezagos necesitan los días previos
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla | drift
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla | drift | drift-anual
 """
 
 from loguru import logger
@@ -32,6 +32,14 @@ P1_LLAVE = ["origen_id", "hora_inicio"]
 # una cantidad. Las banderas van como categóricas: solo toman 0 o 1
 P1_CATEGORICAS = ["zona", "es_fin_de_semana", "es_festivo"]
 P1_NUMERICAS = [c for c in cfg.P1_VARIABLES if c not in ["origen_id", *P1_CATEGORICAS]]
+# Columnas de demanda del desglose estacional por año
+P1_DEMANDA = [
+    "viajes",
+    "viajes_rezago_1d",
+    "viajes_rezago_7d",
+    f"viajes_promedio_{cfg.P1_SEMANAS_PROMEDIO}sem",
+    "prediccion",
+]
 
 
 def p1_comparar_tablas(entrenamiento: pd.DataFrame, extendida: pd.DataFrame) -> dict[str, int]:
@@ -149,6 +157,39 @@ def p1_mismo_mes(referencia: pd.DataFrame, mes: str = cfg.MES_MONITOREO) -> pd.D
     """Filas de la referencia del mismo mes del año que el mes de evaluación (control estacional)."""
     numero = pd.Period(mes, freq="M").month
     return referencia[referencia["hora_inicio"].dt.month == numero].reset_index(drop=True)
+
+
+def p1_mismo_mes_por_anio(
+    conjuntos: dict[str, pd.DataFrame], mes: str = cfg.MES_MONITOREO
+) -> dict[int, tuple[str, pd.DataFrame]]:
+    """El mismo mes del año en cada año previo, con el periodo al que pertenece.
+
+    Toma referencia, valid y actual: un año en referencia es dato de entrenamiento del champion, así
+    que su error ahí es optimista; en valid y actual es error sobre datos que no vio.
+    """
+    numero = pd.Period(mes, freq="M").month
+    meses = {}
+    for periodo in ("referencia", "valid", "actual"):
+        datos = conjuntos[periodo]
+        del_mes = datos[datos["hora_inicio"].dt.month == numero]
+        for anio, grupo in del_mes.groupby(del_mes["hora_inicio"].dt.year):
+            meses[int(anio)] = (periodo, grupo.reset_index(drop=True))
+    return dict(sorted(meses.items()))
+
+
+def p1_fila_anual(anio: int, periodo: str, datos: pd.DataFrame, modelos: dict) -> dict:
+    """Volumen y error de champion y baseline en el mes de un año."""
+    desempeno = p1_desempeno(modelos, {periodo: datos}).set_index("modelo")["mae"]
+    return {
+        "anio": anio,
+        "periodo": periodo,
+        "filas": len(datos),
+        "estaciones": datos["origen_id"].nunique(),
+        "viajes_promedio": datos["viajes"].mean(),
+        "mae_champion": desempeno["champion"],
+        "mae_baseline": desempeno["baseline"],
+        "ventaja_champion": 1 - desempeno["champion"] / desempeno["baseline"],
+    }
 
 
 def p1_mes_previo(frontera: str) -> str:
@@ -285,6 +326,61 @@ def drift(muestra: int = cfg.MONITOREO_MUESTRA):
             "actual": f"{cfg.FRONTERA_TEST[:7]} a {p1_mes_previo(cfg.FRONTERA_MONITOREO)}",
         },
         etiquetas={"champion_version": str(version), "tipo_monitoreo": "drift"},
+    )
+
+
+@app.command()
+def drift_anual(muestra: int = cfg.MONITOREO_MUESTRA):
+    """Desglose estacional: el mismo mes de cada año previo contra el mes de evaluación.
+
+    Separa el drift real del de un año atípico (por ejemplo, 2020 con la pandemia) y muestra cómo
+    cambia la ventaja del champion sobre el baseline conforme los datos se alejan de su entrenamiento.
+    """
+    conjuntos = p1_conjuntos(cfg.RUTA_P1_DEMANDA, cfg.P1_RUTA_EVALUACION)
+    referencia, evaluacion = conjuntos["referencia"], conjuntos["evaluacion"]
+    modelo, version, _ = p1_cargar_champion()
+    baseline = P1BaselinePromedio().fit(referencia[cfg.P1_VARIABLES], referencia["viajes"])
+    modelos = {"champion": modelo, "baseline": baseline}
+
+    definicion = monitoreo.definicion_datos(P1_DEMANDA, [])
+    actual_m = p1_tabla_reporte(monitoreo.muestrear(evaluacion, muestra), modelo)[P1_DEMANDA]
+    filas, rutas = [], []
+    for anio, (periodo, datos) in p1_mismo_mes_por_anio(conjuntos).items():
+        referencia_m = p1_tabla_reporte(monitoreo.muestrear(datos, muestra), modelo)[P1_DEMANDA]
+        snapshot, rutas_anio = monitoreo.generar_reporte(
+            referencia_m, actual_m, definicion, f"p1_drift_mes_{anio}", carpeta=cfg.MONITOREO_DIR
+        )
+        rutas += rutas_anio
+        drift = monitoreo.resumen_drift(snapshot).set_index("columna")["valor"]
+        fila = p1_fila_anual(anio, periodo, datos, modelos)
+        fila.update({f"drift_{columna}": drift[columna] for columna in P1_DEMANDA})
+        filas.append(fila)
+    anio_evaluacion = pd.Period(cfg.MES_MONITOREO, freq="M").year
+    filas.append(p1_fila_anual(anio_evaluacion, "evaluacion", evaluacion, modelos))
+
+    tabla_anual = pd.DataFrame(filas)
+    ruta = cfg.MONITOREO_DIR / "p1_drift_mismo_mes_por_anio.csv"
+    tabla_anual.to_csv(ruta, index=False)
+    logger.info(
+        f"Mismo mes por año contra {cfg.MES_MONITOREO}:\n{tabla_anual.to_string(index=False)}"
+    )
+
+    metricas = {}
+    for fila in tabla_anual.itertuples():
+        metricas[f"ventaja_champion_{fila.anio}"] = fila.ventaja_champion
+        if pd.notna(getattr(fila, "drift_viajes", np.nan)):
+            metricas[f"drift_viajes_{fila.anio}"] = fila.drift_viajes
+    monitoreo.registrar_en_mlflow(
+        "p1-drift-mismo-mes",
+        "p1",
+        [*rutas, ruta],
+        metricas=metricas,
+        parametros={
+            "champion_version": version,
+            "muestra": muestra,
+            "mes_monitoreo": cfg.MES_MONITOREO,
+        },
+        etiquetas={"champion_version": str(version), "tipo_monitoreo": "drift_estacional"},
     )
 
 

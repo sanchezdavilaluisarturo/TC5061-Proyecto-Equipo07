@@ -246,3 +246,28 @@ def test_drift_genera_reportes_resumen_y_run(config_prueba):
     assert run["params.champion_version"] == str(config_prueba["version"])
     assert "metrics.champion_mae_evaluacion" in runs.columns
     assert 0 <= run["metrics.proporcion_drift_train_test"] <= 1
+
+
+def test_drift_anual_compara_cada_anio_contra_el_mes_nuevo(config_prueba):
+    import mlflow
+
+    monitoreo_p1.drift_anual(muestra=2000)
+    tabla = pd.read_csv(cfg.MONITOREO_DIR / "p1_drift_mismo_mes_por_anio.csv")
+    # Datos sintéticos de 2023-09 a 2026-10: un octubre por periodo y el mes de evaluación
+    assert tabla[["anio", "periodo"]].values.tolist() == [
+        [2023, "referencia"],
+        [2024, "valid"],
+        [2025, "actual"],
+        [2026, "evaluacion"],
+    ]
+    # La demanda sintética crece: mientras más lejano el año, mayor el drift contra 2026
+    drift = tabla.set_index("anio")["drift_viajes"].dropna()
+    assert drift.is_monotonic_decreasing
+    assert pd.isna(tabla.set_index("anio").loc[2026, "drift_viajes"])
+    assert (tabla["viajes_promedio"].diff().dropna() > 0).all()
+
+    runs = mlflow.search_runs(
+        experiment_names=["prueba-p1"], filter_string="tags.tipo_monitoreo = 'drift_estacional'"
+    )
+    assert runs.iloc[0]["tags.mlflow.runName"] == "p1-drift-mismo-mes"
+    assert "metrics.ventaja_champion_2026" in runs.columns

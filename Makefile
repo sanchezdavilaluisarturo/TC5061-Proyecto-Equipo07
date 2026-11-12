@@ -154,6 +154,12 @@ monitoreo-p1-drift:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 drift
 
 
+## Monitoreo de P1: el mismo mes de cada año previo contra el mes nuevo (run p1-drift-mismo-mes)
+.PHONY: monitoreo-p1-drift-anual
+monitoreo-p1-drift-anual:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 drift-anual
+
+
 ## Pruebas del monitoreo de P1
 .PHONY: pruebas-monitoreo-p1
 pruebas-monitoreo-p1:
