@@ -329,3 +329,37 @@ def test_registrar_en_mlflow_liga_datasets_y_el_modelo_evaluado(mlflow_local):
     assert [(m.key, m.dataset_name) for m in metricas_modelo] == [
         ("champion_mae_evaluacion", "p0_evaluacion")
     ]
+
+
+def test_registrar_en_mlflow_liga_varios_modelos_evaluados(mlflow_local):
+    import mlflow.sklearn
+    from sklearn.linear_model import LinearRegression
+
+    datos = pd.DataFrame({"x": [0.0, 1.0, 2.0, 3.0], "y": [0.0, 1.0, 2.0, 3.0]})
+    mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(cfg.EXPERIMENTO_MLFLOW)
+    ajustado = LinearRegression().fit(datos[["x"]], datos["y"])
+    with mlflow.start_run():
+        champion = mlflow.sklearn.log_model(ajustado, name="champion")
+        challenger = mlflow.sklearn.log_model(ajustado, name="challenger")
+    evaluacion = monitoreo.dataset_mlflow(datos, "p0_evaluacion", mlflow_local / "e.parquet", "y")
+
+    id_run = monitoreo.registrar_en_mlflow(
+        "p0-ab-prueba",
+        "p0",
+        [],
+        datasets={"evaluacion": evaluacion},
+        metricas_por_modelo={
+            champion.model_id: {"evaluacion": {"champion_mae": 0.6}},
+            challenger.model_id: {"evaluacion": {"challenger_mae": 0.5}},
+        },
+    )
+    run = mlflow.get_run(id_run)
+    ligados = {entrada.model_id for entrada in run.inputs.model_inputs}
+    assert ligados == {champion.model_id, challenger.model_id}
+    assert run.data.metrics["champion_mae"] == 0.6
+    assert run.data.metrics["challenger_mae"] == 0.5
+    del_challenger = mlflow.get_logged_model(challenger.model_id).metrics
+    assert [(m.key, m.dataset_name) for m in del_challenger] == [
+        ("challenger_mae", "p0_evaluacion")
+    ]
