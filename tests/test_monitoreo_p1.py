@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from typer.testing import CliRunner
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import features
@@ -126,3 +127,10 @@ def test_conjuntos_etiqueta_periodos_y_descarta_brechas(tablas, tmp_path):
 def test_conjuntos_pide_la_tabla_que_falta(tmp_path):
     with pytest.raises(FileNotFoundError, match="features-p1"):
         monitoreo_p1.p1_conjuntos(tmp_path / "no.parquet", tmp_path / "tampoco.parquet")
+
+
+def test_la_linea_de_comandos_expone_tabla():
+    # Con un solo comando, Typer lo ejecutaría sin su nombre y `make monitoreo-p1-tabla` fallaría
+    resultado = CliRunner().invoke(monitoreo_p1.app, ["--help"])
+    assert resultado.exit_code == 0
+    assert "tabla" in resultado.output
