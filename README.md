@@ -1894,6 +1894,27 @@ P3 no modela filas sino estaciones: cada fila de los conjuntos es una estación 
 | Predicción | El grupo que asigna el champion entra como variable categórica | Un cambio en la proporción de estaciones por grupo es la señal del drift que ya afecta al modelo | Huyen (2022, cap. 8) |
 | Método | Los defectos de Evidently: con 1000 filas o menos (aquí cada fila es una estación) usa Kolmogorov-Smirnov, que da un p-value | Un p-value dice si la diferencia es detectable, no qué tan grande es; con 44 pruebas a 0.05 se esperan unos 2 falsos positivos por azar, así que el porcentaje de variables con drift sale algo inflado | Treveil et al. (2020, cap. 7); Evidently AI (s.f.) |
 
+#### A/B testing del champion y el challenger (P3)
+
+```bash
+make monitoreo-p3-challenger   # entrena el challenger; con --registrar lo sube al Registry como v5
+make monitoreo-p3-ab           # compara champion (v4) y challenger (v5) sobre octubre 2026
+```
+
+El challenger es el pipeline del champion (`StandardScaler`, PCA de 11 componentes y K-Means con 2 grupos y semilla 42), copiado con `clone` y ajustado con los perfiles de 399 estaciones de 2020-01 a 2026-09-29 (train, valid y test juntos, con el mismo mínimo de 1000 salidas). La única diferencia entre las dos versiones son los datos. El protocolo quedó fijado en este commit, antes de correr el A/B con octubre 2026.
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Métrica | Silueta de cada estación de octubre 2026, medida en el espacio estandarizado con el escalador del champion | P3 no tiene etiqueta, así que no hay pérdida por fila. La silueta es la métrica con la que se aceptó el champion. En el espacio propio de cada modelo (tras su PCA) las siluetas no serían comparables | Treveil et al. (2020, cap. 7) |
+| Conjunto | Las mismas 469 estaciones de octubre 2026 para las dos versiones | Con las mismas unidades la comparación es directa. Ninguna versión vio ese mes | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
+| Prueba principal | Wilcoxon de rangos con signo sobre la diferencia de silueta por estación, con la t pareada como acompañante | Misma prueba y misma implementación que la base (`comparar_pareado`); no supone normalidad | Treveil et al. (2020, cap. 7); SciPy (s.f.) |
+| Intervalo | Bootstrap de la diferencia de silueta media, remuestreando estaciones y recalculando la silueta de cada versión en cada remuestreo (2000 veces) | La silueta de una estación depende de los grupos de todas las demás, así que las siluetas por estación no son independientes; remuestrear la diferencia ya calculada daría un intervalo demasiado angosto | Treveil et al. (2020, cap. 7) |
+| Prueba complementaria | Reparto aleatorio de las estaciones: cada una recibe solo la silueta de una versión (Mann-Whitney y t de Welch) | Simula el reparto de tráfico de un A/B. No decide; al no ser pareada, necesita más datos para detectar la misma diferencia | Huyen (2022, cap. 9); Treveil et al. (2020, cap. 7) |
+| Regla de decisión | El challenger reemplaza al champion solo si Wilcoxon da p < 0.05 **y** el intervalo bootstrap de la diferencia queda por completo sobre cero. Si no, el champion se queda | Cambiar de versión tiene un costo y no se paga sin evidencia; pedir las dos condiciones evita decidir por un p-value aislado | Treveil et al. (2020, cap. 7) |
+| Relevancia | Además del p-value se reportan la diferencia, el cambio relativo, cuántas estaciones mejoran y el ARI entre las dos versiones | Una diferencia puede ser significativa sin impacto práctico | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
+
+**Limitaciones que se declaran desde ahora.** Octubre es un solo mes (una sola estación del año); los reportes de drift muestran que octubre 2026 se parece más a los de 2022 a 2025 que a los de 2020 y 2021. El champion y el challenger asignan casi igual en sus datos de entrenamiento (ARI 0.89), así que se espera una diferencia pequeña.
+
 #### Pruebas
 
 ```bash
