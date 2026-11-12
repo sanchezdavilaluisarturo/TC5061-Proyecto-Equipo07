@@ -24,7 +24,7 @@ viajes_promedio_4sem,Wasserstein distance (normed),0.1,0.08646720180876491,False
 prediccion,Wasserstein distance (normed),0.1,0.0676289385921713,False,mismo_mes_vs_evaluacion
 dia_semana,Wasserstein distance (normed),0.1,0.05314722687185073,False,mismo_mes_vs_evaluacion
 latitud,Wasserstein distance (normed),0.1,0.04696428350046742,False,mismo_mes_vs_evaluacion
-zona,Jensen-Shannon distance,0.1,0.021810829283860845,False,mismo_mes_vs_evaluacion
+zona,Jensen-Shannon distance,0.1,0.02181082928385995,False,mismo_mes_vs_evaluacion
 es_fin_de_semana,Jensen-Shannon distance,0.1,0.014280188578024138,False,mismo_mes_vs_evaluacion
 hora,Wasserstein distance (normed),0.1,0.008528091799357922,False,mismo_mes_vs_evaluacion
 mes,Jensen-Shannon distance,0.1,0.0,False,mismo_mes_vs_evaluacion
