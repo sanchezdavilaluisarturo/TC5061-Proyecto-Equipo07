@@ -6,7 +6,7 @@ Usa la base común de monitoreo.py. Los conjuntos salen de dos tablas:
     evaluacion                   el mes nuevo, calculado con el mismo pipeline de features sobre
                                  la historia extendida, porque sus rezagos necesitan los días previos
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla | drift | drift-anual | challenger
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla | drift | drift-anual | challenger | ab
 """
 
 import time
@@ -26,6 +26,7 @@ from tc5061_proyecto_equipo07.modeling import registro_p1
 from tc5061_proyecto_equipo07.modeling.predict import p1_predecir
 from tc5061_proyecto_equipo07.modeling.train import (
     P1BaselinePromedio,
+    p1_mae_por_zona,
     p1_parametros,
     p1_registrar_run,
 )
@@ -143,7 +144,12 @@ def p1_modelo_id(version) -> str | None:
 
 
 def p1_cargar_champion():
-    """Carga la versión con alias champion; regresa (Pipeline, versión, etiquetas, model_id).
+    """Carga la versión con alias champion; regresa (Pipeline, versión, etiquetas, model_id)."""
+    return p1_cargar_alias("champion")
+
+
+def p1_cargar_alias(alias: str):
+    """Carga la versión con el alias dado; regresa (Pipeline, versión, etiquetas, model_id).
 
     El model_id liga los runs de monitoreo al modelo que evaluaron, como modelo de entrada.
 
@@ -152,11 +158,9 @@ def p1_cargar_champion():
     """
     if cfg.MLFLOW_TRACKING_URI:
         mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
-    version = mlflow.MlflowClient().get_model_version_by_alias(
-        cfg.P1_MODELO_REGISTRADO, "champion"
-    )
+    version = mlflow.MlflowClient().get_model_version_by_alias(cfg.P1_MODELO_REGISTRADO, alias)
     modelo = mlflow.sklearn.load_model(f"models:/{cfg.P1_MODELO_REGISTRADO}/{version.version}")
-    logger.info(f"{cfg.P1_MODELO_REGISTRADO}: champion = versión {version.version}")
+    logger.info(f"{cfg.P1_MODELO_REGISTRADO}: {alias} = versión {version.version}")
     return modelo, int(version.version), dict(version.tags), p1_modelo_id(version)
 
 
@@ -279,6 +283,70 @@ def p1_parametros_challenger(champion, etiquetas: dict, version: int, n_train: i
             {f"modelo_{k}": regresor[k] for k in cfg.P1_PARAMETROS_XGB if k in regresor}
         )
     return parametros
+
+
+def p1_grupos_estacion_dia(datos: pd.DataFrame) -> np.ndarray:
+    """Código de estación-día de cada fila: la unidad del bootstrap y del reparto aleatorio."""
+    llave = datos["origen_id"].astype(str) + "_" + datos["hora_inicio"].dt.strftime("%Y-%m-%d")
+    return pd.factorize(llave)[0]
+
+
+def p1_segmentos(evaluacion: pd.DataFrame, referencia: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Todas las filas y su división en estaciones que el champion vio al entrenar y nuevas.
+
+    El nivel por estación de P1NivelEstacion se aprendió con train: a una estación que no estaba
+    ahí le asigna el nivel del sistema, así que el champion predice sin su historia.
+    """
+    conocidas = evaluacion["origen_id"].isin(referencia["origen_id"].unique()).to_numpy()
+    return {"todas": np.ones(len(evaluacion), bool), "conocidas": conocidas, "nuevas": ~conocidas}
+
+
+def p1_tabla_ab(
+    evaluacion: pd.DataFrame,
+    prediccion_a: np.ndarray,
+    prediccion_b: np.ndarray,
+    prediccion_baseline: np.ndarray,
+    segmentos: dict[str, np.ndarray],
+) -> pd.DataFrame:
+    """A/B por segmento: pareado (decide) y aleatorio (complemento), con el baseline de contexto.
+
+    La pérdida es el error absoluto por fila; la unidad es la estación-día.
+    """
+    real = evaluacion["viajes"].to_numpy("float64")
+    perdida_a, perdida_b = np.abs(real - prediccion_a), np.abs(real - prediccion_b)
+    perdida_baseline = np.abs(real - prediccion_baseline)
+    grupos = p1_grupos_estacion_dia(evaluacion)
+    filas = []
+    for segmento, filtro in segmentos.items():
+        if not filtro.any():
+            continue
+        contexto = {
+            "segmento": segmento,
+            "estaciones": evaluacion.loc[filtro, "origen_id"].nunique(),
+            "mae_baseline": perdida_baseline[filtro].mean(),
+        }
+        pareado = monitoreo.comparar_pareado(perdida_a[filtro], perdida_b[filtro], grupos[filtro])
+        filas.append({**contexto, **pareado})
+        aleatorio = monitoreo.comparar_aleatorio(
+            perdida_a[filtro], perdida_b[filtro], grupos[filtro]
+        )
+        filas.append({**contexto, **aleatorio})
+    return pd.DataFrame(filas)
+
+
+def p1_tabla_por_zona(
+    evaluacion: pd.DataFrame, predicciones: dict[str, np.ndarray]
+) -> pd.DataFrame:
+    """MAE diario por zona de cada versión (p1_mae_por_zona) y el cambio de B contra A."""
+    por_zona = pd.concat(
+        {
+            nombre: p1_mae_por_zona(evaluacion, prediccion)["mae_diario"]
+            for nombre, prediccion in predicciones.items()
+        },
+        axis=1,
+    ).add_prefix("mae_diario_")
+    por_zona["cambio_b_vs_a"] = por_zona["mae_diario_b"] / por_zona["mae_diario_a"] - 1
+    return por_zona.reset_index()
 
 
 def p1_mes_previo(frontera: str) -> str:
@@ -550,6 +618,102 @@ def challenger():
     nueva = registro_p1.p1_registrar(id_run, "challenger")
     registro_p1.p1_verificar("challenger")
     logger.success(f"Challenger = versión {nueva}; champion sigue en la versión {version}")
+
+
+@app.command()
+def ab():
+    """A/B testing de P1: champion (A) contra challenger (B) sobre el mes de evaluación.
+
+    Criterio fijado antes de ver resultados: error absoluto por fila; B gana si la prueba pareada
+    (Wilcoxon, unidad estación-día) da p < MONITOREO_ALFA y su MAE es menor. La prueba aleatoria y
+    el baseline son contexto. El alias champion no se mueve: la decisión queda como recomendación.
+    """
+    conjuntos = p1_conjuntos(cfg.RUTA_P1_DEMANDA, cfg.P1_RUTA_EVALUACION)
+    referencia, evaluacion = conjuntos["referencia"], conjuntos["evaluacion"]
+    modelo_a, version_a, _, id_a = p1_cargar_alias("champion")
+    modelo_b, version_b, _, id_b = p1_cargar_alias("challenger")
+    if version_a == version_b:
+        raise ValueError("champion y challenger son la misma versión: no hay nada que comparar")
+    baseline = P1BaselinePromedio().fit(referencia[cfg.P1_VARIABLES], referencia["viajes"])
+
+    predicciones = {
+        "a": p1_predecir(modelo_a, evaluacion),
+        "b": p1_predecir(modelo_b, evaluacion),
+        "baseline": p1_predecir(baseline, evaluacion),
+    }
+    tabla = p1_tabla_ab(
+        evaluacion,
+        predicciones["a"],
+        predicciones["b"],
+        predicciones["baseline"],
+        p1_segmentos(evaluacion, referencia),
+    )
+    tabla.insert(0, "version_b", version_b)
+    tabla.insert(0, "version_a", version_a)
+    por_zona = p1_tabla_por_zona(evaluacion, predicciones)
+
+    carpeta = cfg.MONITOREO_DIR
+    carpeta.mkdir(parents=True, exist_ok=True)
+    ruta_ab, ruta_zona = carpeta / "p1_ab.csv", carpeta / "p1_ab_por_zona.csv"
+    tabla.to_csv(ruta_ab, index=False)
+    por_zona.to_csv(ruta_zona, index=False)
+    logger.info(f"A/B v{version_a} (A) contra v{version_b} (B):\n{tabla.to_string(index=False)}")
+    logger.info(f"MAE diario por zona:\n{por_zona.to_string(index=False)}")
+
+    decision = tabla.query("segmento == 'todas' and prueba == 'pareada'").iloc[0]
+    metricas = {
+        "p_valor_pareado": decision["p_valor"],
+        "p_valor_t_pareado": decision["p_valor_t"],
+        "diferencia_mae": decision["diferencia"],
+        "cambio_relativo_mae": decision["cambio_relativo"],
+        "ic_inferior": decision["ic_inferior"],
+        "ic_superior": decision["ic_superior"],
+        "baseline_mae_evaluacion": decision["mae_baseline"],
+    }
+    for fila in tabla.query("prueba == 'pareada'").itertuples():
+        metricas[f"cambio_relativo_mae_{fila.segmento}"] = fila.cambio_relativo
+    aleatoria = tabla.query("segmento == 'todas' and prueba == 'aleatoria'").iloc[0]
+    metricas["p_valor_aleatorio"] = aleatoria["p_valor"]
+
+    ganador = decision["ganador"]
+    texto = {"A": f"champion v{version_a}", "B": f"challenger v{version_b}"}.get(ganador, ganador)
+    monitoreo.registrar_en_mlflow(
+        f"p1-ab-v{version_a}-vs-v{version_b}",
+        "p1",
+        [ruta_ab, ruta_zona],
+        metricas=metricas,
+        parametros={
+            "champion_version": version_a,
+            "challenger_version": version_b,
+            "criterio": "MAE por fila, prueba pareada de Wilcoxon",
+            "alfa": cfg.MONITOREO_ALFA,
+            "bootstrap": cfg.MONITOREO_BOOTSTRAP,
+            "unidad": "estacion_dia",
+        },
+        etiquetas={
+            "tipo_monitoreo": "ab_testing",
+            "ganador": texto,
+            "champion_version": str(version_a),
+            "challenger_version": str(version_b),
+            "autor": "Daniel Sánchez Hernández",
+        },
+        descripcion=(
+            f"A/B testing de P1 sobre {cfg.MES_MONITOREO}: champion v{version_a} (A) contra "
+            f"challenger v{version_b} (B), mismo modelo reentrenado con datos más recientes. "
+            "Prueba pareada (decide) y aleatoria por estación-día, global y por estaciones "
+            "conocidas o nuevas para el champion, más el MAE diario por zona."
+        ),
+        datasets=p1_datasets({"evaluacion": evaluacion}),
+        metricas_por_modelo={
+            id_a: {"evaluacion": {"champion_mae_evaluacion": decision["media_a"]}},
+            id_b: {"evaluacion": {"challenger_mae_evaluacion": decision["media_b"]}},
+        },
+    )
+    logger.success(
+        f"Ganador (prueba pareada, alfa {cfg.MONITOREO_ALFA}): {texto}; "
+        f"MAE {decision['media_a']:.4f} -> {decision['media_b']:.4f} "
+        f"({decision['cambio_relativo']:+.1%}), p = {decision['p_valor']:.2e}"
+    )
 
 
 if __name__ == "__main__":

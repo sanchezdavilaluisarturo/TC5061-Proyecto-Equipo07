@@ -166,6 +166,12 @@ monitoreo-p1-challenger:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 challenger
 
 
+## Monitoreo de P1: A/B testing de champion contra challenger sobre el mes nuevo (run p1-ab-...)
+.PHONY: monitoreo-p1-ab
+monitoreo-p1-ab:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 ab
+
+
 ## Pruebas del monitoreo de P1
 .PHONY: pruebas-monitoreo-p1
 pruebas-monitoreo-p1:
