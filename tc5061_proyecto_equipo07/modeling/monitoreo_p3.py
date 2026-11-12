@@ -84,9 +84,9 @@ def p3_perfiles_por_periodo(viajes: pd.DataFrame) -> dict[str, pd.DataFrame]:
     perfiles["mismo_mes_referencia"] = p3_perfil_filtrado(
         viajes[en_referencia.to_numpy()], cfg.P3_MIN_SALIDAS_EVALUACION * anios_referencia
     )
-    for nombre in perfiles:
+    for nombre, perfil in perfiles.items():
         if nombre.startswith("mismo_mes"):
-            logger.info(f"{nombre}: {len(perfiles[nombre])} estaciones")
+            logger.info(f"{nombre}: {len(perfil)} estaciones")
     return perfiles
 
 
@@ -120,9 +120,7 @@ def p3_conjuntos(ruta=cfg.P3_RUTA_PERFILES_MONITOREO) -> dict[str, pd.DataFrame]
     if not ruta.exists():
         raise FileNotFoundError(f"Falta {ruta.name}; ejecutar `make monitoreo-p3-perfiles`")
     tabla = pd.read_parquet(ruta).set_index("origen_id")
-    return {
-        nombre: grupo.drop(columns="periodo") for nombre, grupo in tabla.groupby("periodo")
-    }
+    return {nombre: grupo.drop(columns="periodo") for nombre, grupo in tabla.groupby("periodo")}
 
 
 def p3_cargar_champion():
@@ -187,7 +185,9 @@ def perfiles():
     logger.success(f"{cfg.P3_RUTA_PERFILES_MONITOREO.name}: {len(tabla)} filas estación-periodo")
 
 
-def p3_comunes(referencia: pd.DataFrame, actual: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def p3_comunes(
+    referencia: pd.DataFrame, actual: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Deja en los dos conjuntos solo las estaciones que están en ambos.
 
     Separa el cambio de comportamiento de las estaciones que ya existían del cambio de composición
@@ -218,7 +218,10 @@ def drift():
     resumenes, cuentas = [], []
     for nombre, (de, a) in comparaciones.items():
         completas = (conjuntos[de], conjuntos[a])
-        for variante, (ref, act) in {"todas": completas, "comunes": p3_comunes(*completas)}.items():
+        for variante, (ref, act) in {
+            "todas": completas,
+            "comunes": p3_comunes(*completas),
+        }.items():
             if nombre == "contraste" and variante == "comunes":
                 continue
             clave = f"{nombre}_{variante}"
