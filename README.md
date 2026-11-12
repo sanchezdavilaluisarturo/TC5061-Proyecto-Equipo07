@@ -1880,6 +1880,7 @@ make pruebas-monitoreo
 make monitoreo-p3-perfiles   # perfiles por periodo; requiere make data y make monitoreo-datos
 make monitoreo-p3-drift      # reportes de Evidently con el champion del Registry
 make monitoreo-p3-drift-anual
+make monitoreo-p3-registrar-drift  # sube a MLflow un run con los reportes ya generados (no los recalcula)
 ```
 
 P3 no modela filas sino estaciones: cada fila de los conjuntos es una estación con 44 variables (la proporción de salidas por hora en días laborales y en fin de semana, el volumen diario, el balance neto, la proporción de viajes circulares y la duración mediana). Los reportes quedan en `reports/monitoreo/p3_drift_*.html`, con el resumen por variable en `p3_drift_resumen.csv`, el conteo por comparación en `p3_drift_conteo.csv` y el desglose por año en `p3_drift_mismo_mes_por_anio.csv`.
@@ -1899,6 +1900,7 @@ P3 no modela filas sino estaciones: cada fila de los conjuntos es una estación 
 ```bash
 make monitoreo-p3-challenger   # entrena el challenger; con --registrar lo sube al Registry como v5
 make monitoreo-p3-ab           # compara champion (v4) y challenger (v5) sobre octubre 2026
+make monitoreo-p3-registrar-ab # sube a MLflow un run con el resultado ya calculado (no lo recalcula)
 ```
 
 El challenger es el pipeline del champion (`StandardScaler`, PCA de 11 componentes y K-Means con 2 grupos y semilla 42), copiado con `clone` y ajustado con los perfiles de 399 estaciones de 2020-01 a 2026-09-29 (train, valid y test juntos, con el mismo mínimo de 1000 salidas). La única diferencia entre las dos versiones son los datos. El protocolo quedó fijado en este commit, antes de correr el A/B con octubre 2026.
@@ -1948,7 +1950,7 @@ Esa caída anual puede deberse al cambio de composición de la red (de 362 a 457
 make pruebas-monitoreo-p3
 ```
 
-`tests/test_monitoreo_p3.py` (22 pruebas, con viajes y estaciones sintéticos, sin red ni servidor de MLflow) comprueba:
+`tests/test_monitoreo_p3.py` (27 pruebas, con viajes y estaciones sintéticos, sin red ni servidor de MLflow; el registro usa un MLflow local en SQLite) comprueba:
 
 - Que los perfiles tienen las 44 variables del modelo, suman 1 por bloque horario y separan los periodos descartando la brecha.
 - Que se filtran las estaciones con pocas salidas y que el mínimo del control estacional crece con los años de la referencia.
@@ -1959,6 +1961,7 @@ make pruebas-monitoreo-p3
 - Que el challenger conserva los hiperparámetros del champion y cambia solo los datos.
 - Que el A/B deja al champion con versiones idénticas o si el challenger es peor, y lo reemplaza solo si separa mejor de forma significativa.
 - Que el intervalo bootstrap de siluetas es reproducible y que la silueta por estación se calcula sobre las mismas estaciones.
+- Que `registrar-drift` y `registrar-ab` guardan métricas, etiquetas y archivos en el run, piden correr antes el cálculo si falta, y el A/B se niega a registrarse si el alias `champion` ya apunta a otra versión que la usada al calcularlo.
 
 #### Resultados (champion v4)
 
@@ -1987,6 +1990,28 @@ Las 45 son las 44 variables más el grupo asignado.
 - **Octubre 2026.** Contra los octubres de 2022 a 2025 el drift está bajo el umbral de 50% (40% a 49%); contra 2020 y 2021 lo supera, por la pandemia. Es drift moderado y reciente, no un cambio de régimen.
 - **Lo que sí es nuevo en octubre 2026.** La duración mediana de los viajes baja a 8.0 minutos, contra 9.3 a 10.0 en todos los octubres anteriores, y marca drift en todas las comparaciones de octubre (no en train contra test). Con solo las estaciones comunes, además, el grupo asignado sí cambia (p = 0.013): el champion ya reparte distinto a las estaciones que ya existían.
 - **Implicación.** Las entradas se mueven, pero el reparto en grupos casi no (solo cambia en octubre 2026 y solo en las estaciones comunes). El drift de las entradas es una alerta temprana, no prueba de que el champion se degrade; eso lo decide el A/B contra el challenger entrenado con datos hasta septiembre 2026, que se mide con la silueta por estación.
+
+#### Recomendación de Continuous Training (P3)
+
+**Recomendación: no reentrenar ahora; vigilar y definir de antemano cuándo se reentrena.** Es una postura moderada: ni reentrenar a ciegas ni dejar el modelo sin revisión.
+
+| Evidencia | Qué dice | Pesa hacia |
+|---|---|---|
+| A/B de octubre 2026 | Challenger con datos hasta septiembre 2026 contra champion v4: diferencia de -0.0018 en silueta, Wilcoxon p = 0.83, intervalo bootstrap [-0.0054, 0.0012] | No reentrenar: reentrenar con datos nuevos no mejoró lo que se mide |
+| Drift de octubre 2026 | 40% a 49% de variables con drift contra los octubres de 2022 a 2025, bajo el umbral de 50%; el grupo asignado no cambia en train contra test (p = 0.71) | No reentrenar: las entradas se mueven, el reparto en grupos casi no |
+| Silueta por periodo | Baja de 0.145 (train) a 0.132 (valid) y 0.103 (test); en octubres es estable (0.063 a 0.075) | Vigilar: la caída anual existe, aunque puede ser composición de la red (362 a 457 estaciones) |
+| Señales nuevas | Duración mediana de 8.0 minutos en octubre 2026 (antes 9.3 a 10.0) y grupo distinto en las estaciones comunes (p = 0.013) | Vigilar: es el primer indicio de un cambio de comportamiento, con un solo mes de datos |
+
+**Qué se propone.**
+
+1. **Revisión mensual** con los comandos que ya existen: `make monitoreo-p3-drift` y `make monitoreo-p3-silueta` sobre el mes nuevo, comparado con el mismo mes de años previos para no confundir estacionalidad con drift.
+2. **Disparadores de reentrenamiento** (propuestos, para calibrar con el equipo; se fijan antes de mirar el siguiente mes, como se hizo con la regla del A/B): (a) la silueta del champion en los últimos 12 meses cae bajo 0.10, es decir, cerca de 30% menos que en train; (b) el grupo asignado a las estaciones comunes cambia de forma significativa (p < 0.05) dos meses seguidos; (c) más de 50% de las variables con drift contra el mismo mes del año previo.
+3. **Reentrenamiento programado** una vez al año, con un año completo nuevo, que es cuando la composición de la red y la estacionalidad quedan cubiertas. El candidato se entrena con la receta del challenger (mismos hiperparámetros, datos hasta el último mes completo), se registra con el alias `challenger` y se compara con el champion en el A/B de siempre; solo lo reemplaza si cumple la misma regla (p < 0.05 e intervalo sobre cero).
+4. **Qué no se automatiza.** El reentrenamiento corre solo cuando salta un disparador, pero la promoción a `champion` sigue siendo una decisión humana con el A/B delante: un modelo no supervisado no tiene etiqueta para validarse solo, y cambiar los grupos cambia lo que ven quienes usan la segmentación.
+
+**Limitaciones.** Los umbrales salen de pocos puntos (un año de valid, uno de test y seis octubres), así que son un punto de partida y no un valor demostrado. La caída de silueta por periodo no se puede separar del cambio de composición de la red con estos datos; un análisis con solo las estaciones comunes lo aclararía.
+
+Huyen (2022, cap. 9) y Treveil et al. (2020, cap. 7) discuten reentrenar por calendario o por señal de degradación; aquí se combinan porque sin etiquetas la degradación solo se aproxima con la silueta y el drift.
 
 ## Estructura de carpetas
 
