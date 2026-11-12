@@ -1894,6 +1894,21 @@ P3 no modela filas sino estaciones: cada fila de los conjuntos es una estación 
 | Predicción | El grupo que asigna el champion entra como variable categórica | Un cambio en la proporción de estaciones por grupo es la señal del drift que ya afecta al modelo | Huyen (2022, cap. 8) |
 | Método | Los defectos de Evidently: con 1000 filas o menos (aquí cada fila es una estación) usa Kolmogorov-Smirnov, que da un p-value | Un p-value dice si la diferencia es detectable, no qué tan grande es; con 44 pruebas a 0.05 se esperan unos 2 falsos positivos por azar, así que el porcentaje de variables con drift sale algo inflado | Treveil et al. (2020, cap. 7); Evidently AI (s.f.) |
 
+#### Pruebas
+
+```bash
+make pruebas-monitoreo-p3
+```
+
+`tests/test_monitoreo_p3.py` (12 pruebas, con viajes sintéticos, sin red ni servidor de MLflow) comprueba:
+
+- Que los perfiles tienen las 44 variables del modelo, suman 1 por bloque horario y separan los periodos descartando la brecha.
+- Que se filtran las estaciones con pocas salidas y que el mínimo del control estacional crece con los años de la referencia.
+- Que el control estacional usa solo el mismo mes de los años previos.
+- Que `perfiles` detecta un perfil calculado distinto al del entrenamiento.
+- Que las estaciones comunes quedan alineadas y que el grupo del champion entra al reporte como cadena.
+- Que el reporte de Evidently marca solo la variable desplazada y usa p-values con 300 estaciones.
+
 #### Resultados (champion v4)
 
 | Comparación | Estaciones (ref. / actual) | Variables con drift | Drift del conjunto |
