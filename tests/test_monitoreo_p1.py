@@ -354,3 +354,90 @@ def test_challenger_se_registra_sin_mover_el_champion(config_prueba):
     assert {k: str(v) for k, v in parametros.items()} == {
         k: str(v) for k, v in del_champion.items()
     }
+
+
+def test_grupos_estacion_dia_agrupan_las_horas_de_un_mismo_dia():
+    datos = pd.DataFrame(
+        {
+            "origen_id": [1, 1, 1, 2],
+            "hora_inicio": pd.to_datetime(
+                ["2026-10-01 08:00", "2026-10-01 18:00", "2026-10-02 08:00", "2026-10-01 08:00"]
+            ),
+        }
+    )
+    grupos = monitoreo_p1.p1_grupos_estacion_dia(datos)
+    assert grupos[0] == grupos[1]
+    assert len(set(grupos)) == 3
+
+
+def test_segmentos_separan_estaciones_conocidas_y_nuevas():
+    referencia = pd.DataFrame({"origen_id": [1, 2]})
+    evaluacion = pd.DataFrame({"origen_id": [1, 2, 3, 3]})
+    segmentos = monitoreo_p1.p1_segmentos(evaluacion, referencia)
+    assert segmentos["todas"].all()
+    assert segmentos["conocidas"].tolist() == [True, True, False, False]
+    assert segmentos["nuevas"].tolist() == [False, False, True, True]
+
+
+def test_tabla_ab_muestra_la_ganancia_donde_el_champion_no_conocia_la_estacion():
+    rng = np.random.default_rng(cfg.SEMILLA)
+    n = 4000
+    evaluacion = pd.DataFrame(
+        {
+            "origen_id": np.repeat([1, 2, 3, 4], n // 4),
+            "hora_inicio": pd.Timestamp("2026-10-01")
+            + pd.to_timedelta(np.tile(np.arange(n // 4), 4), unit="h"),
+            "viajes": rng.poisson(3, n),
+        }
+    )
+    real = evaluacion["viajes"].to_numpy("float64")
+    nuevas = evaluacion["origen_id"].isin([3, 4]).to_numpy()
+    # A falla mucho más en las estaciones nuevas; B las conoce
+    prediccion_a = real + rng.normal(0, 0.5, n) + np.where(nuevas, 2.0, 0.0)
+    prediccion_b = real + rng.normal(0, 0.5, n)
+    referencia = pd.DataFrame({"origen_id": [1, 2]})
+    tabla = monitoreo_p1.p1_tabla_ab(
+        evaluacion,
+        prediccion_a,
+        prediccion_b,
+        np.full(n, real.mean()),
+        monitoreo_p1.p1_segmentos(evaluacion, referencia),
+    )
+    pareada = tabla[tabla["prueba"] == "pareada"].set_index("segmento")
+    assert set(tabla["prueba"]) == {"pareada", "aleatoria"}
+    assert pareada.loc["todas", "ganador"] == "B"
+    assert pareada.loc["nuevas", "cambio_relativo"] < pareada.loc["conocidas", "cambio_relativo"]
+    assert pareada.loc["nuevas", "estaciones"] == 2
+
+
+def test_ab_compara_champion_y_challenger_y_registra_el_run(config_prueba):
+    import mlflow
+
+    monitoreo_p1.challenger()
+    monitoreo_p1.ab()
+
+    tabla = pd.read_csv(cfg.MONITOREO_DIR / "p1_ab.csv")
+    assert {"todas", "conocidas"} <= set(tabla["segmento"])
+    decision = tabla.query("segmento == 'todas' and prueba == 'pareada'").iloc[0]
+    assert decision["ganador"] in {"A", "B", "sin diferencia significativa"}
+    assert decision["n_a"] == decision["n_b"] == len(pd.read_parquet(cfg.P1_RUTA_EVALUACION))
+    assert decision["version_a"] != decision["version_b"]
+    por_zona = pd.read_csv(cfg.MONITOREO_DIR / "p1_ab_por_zona.csv")
+    assert {"zona", "mae_diario_a", "mae_diario_b", "mae_diario_baseline"} <= set(por_zona.columns)
+
+    runs = mlflow.search_runs(
+        experiment_names=["prueba-p1"], filter_string="tags.tipo_monitoreo = 'ab_testing'"
+    )
+    run = mlflow.get_run(runs.iloc[0]["run_id"])
+    assert run.info.run_name == f"p1-ab-v{decision['version_a']}-vs-v{decision['version_b']}"
+    # Los dos modelos evaluados quedan ligados al run, cada uno con su métrica
+    _, _, _, id_a = monitoreo_p1.p1_cargar_alias("champion")
+    _, _, _, id_b = monitoreo_p1.p1_cargar_alias("challenger")
+    assert {m.model_id for m in run.inputs.model_inputs} == {id_a, id_b}
+    assert run.data.metrics["challenger_mae_evaluacion"] == pytest.approx(decision["media_b"])
+    assert "ganador" in run.data.tags
+    # El A/B no mueve el alias champion
+    champion = mlflow.MlflowClient().get_model_version_by_alias(
+        cfg.P1_MODELO_REGISTRADO, "champion"
+    )
+    assert int(champion.version) == config_prueba["version"]
