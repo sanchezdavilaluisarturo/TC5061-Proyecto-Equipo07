@@ -136,6 +136,12 @@ monitoreo-datos:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.monitoreo datos
 
 
+## Monitoreo de P2: estación-bins del mes nuevo, verificados contra la tabla de entrenamiento
+.PHONY: monitoreo-p2-tabla
+monitoreo-p2-tabla:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 tabla
+
+
 ## Pruebas de la base de monitoreo (drift con Evidently y A/B testing)
 .PHONY: pruebas-monitoreo
 pruebas-monitoreo:

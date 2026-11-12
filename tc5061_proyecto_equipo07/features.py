@@ -740,8 +740,8 @@ def p2_descartar_horas_sin_servicio(
 
 def p2_limpiar_viajes(
     viajes: pd.DataFrame,
-    estaciones: pd.DataFrame, 
-    fecha_limite: str = cfg.P2_FECHA_LIMITE_FIN_VIAJE
+    estaciones: pd.DataFrame,
+    fecha_limite: str = cfg.P2_FECHA_LIMITE_FIN_VIAJE,
 ) -> pd.DataFrame:
     """Aplica en orden las reglas de limpieza de P2."""
     viajes = p2_descartar_estaciones_inexistentes(viajes, p2_estaciones_con_capacidad(estaciones))

@@ -407,6 +407,9 @@ MONITOREO_BOOTSTRAP = 2000
 # Etiqueta `fase` de los runs de monitoreo en MLflow
 FASE_MONITOREO = "monitoreo"
 
+# P2: estación-bins del mes de evaluación con su historia "hasta ayer"
+P2_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p2_cambios_evaluacion_{MES_MONITOREO}.parquet"
+
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
 try:
