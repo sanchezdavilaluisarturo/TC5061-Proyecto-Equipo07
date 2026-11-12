@@ -148,6 +148,12 @@ monitoreo-p1-tabla:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla
 
 
+## Monitoreo de P1: reportes de drift, desempeño y estacionalidad del champion (run p1-drift en MLflow)
+.PHONY: monitoreo-p1-drift
+monitoreo-p1-drift:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 drift
+
+
 ## Pruebas del monitoreo de P1
 .PHONY: pruebas-monitoreo-p1
 pruebas-monitoreo-p1:
