@@ -270,3 +270,88 @@ def test_resumen_del_challenger_con_los_mismos_datos_no_cambia_los_grupos():
     assert resumen["ari_champion_challenger"] == pytest.approx(1.0)
     assert resumen["silueta_challenger"] == pytest.approx(resumen["silueta_champion"])
     assert resumen["estaciones"] == len(datos)
+
+
+def datos_con_dos_grupos(n: int = 150, semilla: int = 0) -> pd.DataFrame:
+    """Estaciones de juguete con dos grupos bien separados en las 44 variables."""
+    rng = np.random.default_rng(semilla)
+    centros = np.repeat([-3.0, 3.0], n)[:, None]
+    datos = rng.normal(0, 1, (2 * n, 44)) + centros
+    return pd.DataFrame(datos, columns=mp3.P3_COLUMNAS_PERFIL, index=np.arange(2 * n))
+
+
+@pytest.fixture
+def pocos_remuestreos(monkeypatch):
+    original = mp3.p3_bootstrap_silueta
+    monkeypatch.setattr(
+        mp3, "p3_bootstrap_silueta", lambda *args, **kwargs: original(*args, n_bootstrap=200)
+    )
+
+
+def test_decidir_ab_solo_cambia_de_version_con_mejora_significativa():
+    assert mp3.p3_decidir_ab(0.001, 0.01, 0.05, 0.05)[0] == "challenger"
+    # Significativa en Wilcoxon, pero el intervalo incluye 0: el champion se queda
+    assert mp3.p3_decidir_ab(0.001, -0.01, 0.05, 0.05)[0] == "champion"
+    # Intervalo sobre 0 pero p-value no significativo: el champion se queda
+    assert mp3.p3_decidir_ab(0.20, 0.01, 0.05, 0.05)[0] == "champion"
+    vigente, motivo = mp3.p3_decidir_ab(0.001, -0.05, -0.01, 0.05)
+    assert vigente == "champion" and "peor" in motivo
+
+
+def test_ab_con_versiones_identicas_deja_al_champion(pocos_remuestreos):
+    champion, datos = champion_de_juguete(0)
+    resultados, por_estacion = mp3.p3_ab(champion, mp3.p3_reentrenar(champion, datos), datos)
+    assert resultados["diferencia"] == pytest.approx(0)
+    assert resultados["p_wilcoxon"] == 1.0
+    assert resultados["version_vigente"] == "champion"
+    assert resultados["ari_champion_challenger"] == pytest.approx(1.0)
+    assert (por_estacion["diferencia"].abs() < 1e-12).all()
+
+
+class ChampionAleatorio:
+    """Champion de juguete que asigna el grupo al azar, con el escalador de las estaciones."""
+
+    def __init__(self, datos: pd.DataFrame):
+        self.named_steps = {"escalador": StandardScaler().fit(datos)}
+
+    def predict(self, x: pd.DataFrame) -> np.ndarray:
+        return np.random.default_rng(3).integers(0, 2, len(x))
+
+
+def test_ab_reemplaza_al_champion_si_el_challenger_separa_mejor(pocos_remuestreos):
+    evaluacion = datos_con_dos_grupos()
+    champion = ChampionAleatorio(evaluacion)
+    challenger = mp3.p3_reentrenar(champion_de_juguete(0)[0], evaluacion)
+    resultados, _ = mp3.p3_ab(champion, challenger, evaluacion)
+    assert resultados["silueta_challenger"] > resultados["silueta_champion"]
+    assert resultados["ic_inferior"] > 0
+    assert resultados["version_vigente"] == "challenger"
+
+
+def test_ab_deja_al_champion_si_es_mejor_que_el_challenger(pocos_remuestreos):
+    evaluacion = datos_con_dos_grupos()
+    champion = mp3.p3_reentrenar(champion_de_juguete(0)[0], evaluacion)
+    challenger = ChampionAleatorio(evaluacion)
+    resultados, _ = mp3.p3_ab(champion, challenger, evaluacion)
+    assert resultados["diferencia"] < 0
+    assert resultados["version_vigente"] == "champion"
+    assert "peor" in resultados["motivo"]
+
+
+def test_ab_compara_las_mismas_estaciones_y_guarda_la_silueta_por_estacion(pocos_remuestreos):
+    champion, datos = champion_de_juguete(0)
+    resultados, por_estacion = mp3.p3_ab(champion, mp3.p3_reentrenar(champion, datos), datos)
+    assert list(por_estacion.index) == list(datos.index)
+    assert resultados["estaciones"] == len(datos)
+    assert resultados["silueta_champion"] == pytest.approx(por_estacion["silueta_champion"].mean())
+    # Reparto aleatorio: cada estación va a una sola versión
+    assert resultados["aleatorio_n_champion"] + resultados["aleatorio_n_challenger"] == len(datos)
+
+
+def test_bootstrap_de_siluetas_es_reproducible_y_cero_si_los_grupos_son_iguales():
+    champion, datos = champion_de_juguete(0)
+    z = mp3.p3_espacio_comun(champion, datos)
+    grupos = champion.predict(datos)
+    primero = mp3.p3_bootstrap_silueta(z, grupos, grupos, n_bootstrap=50)
+    assert primero == mp3.p3_bootstrap_silueta(z, grupos, grupos, n_bootstrap=50)
+    assert primero == pytest.approx((0.0, 0.0))
