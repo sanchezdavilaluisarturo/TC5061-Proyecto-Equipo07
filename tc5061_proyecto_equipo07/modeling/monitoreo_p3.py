@@ -13,6 +13,7 @@ Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift |
 
 from loguru import logger
 import mlflow
+from mlflow.models import infer_signature
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
@@ -21,7 +22,7 @@ from sklearn.metrics import adjusted_rand_score, silhouette_score
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
-from tc5061_proyecto_equipo07 import features, monitoreo
+from tc5061_proyecto_equipo07 import dataset, features, monitoreo
 
 app = typer.Typer(add_completion=False)
 
@@ -336,17 +337,113 @@ def p3_resumen_challenger(champion, challenger, perfil: pd.DataFrame) -> dict[st
     }
 
 
+def p3_registrar_challenger(champion, challenger, perfil, resumen, version_champion: int) -> int:
+    """Registra el challenger como versión nueva del modelo de P3 con el alias `challenger`.
+
+    Deja un run con el modelo, sus parámetros y métricas, y copia en las etiquetas de la versión el
+    linaje (commit, datos, run de origen). No mueve el alias `champion`. Regresa el número de versión.
+    """
+    nombre = cfg.P3_MODELO_REGISTRADO
+    mlflow.set_experiment(cfg.P3_EXPERIMENTO)
+    x = perfil[P3_COLUMNAS_PERFIL].astype("float64")
+    commit = monitoreo.commit_actual()
+    version_datos = dataset.version_datos(cfg.RUTA_MANIFIESTO)
+    descripcion = (
+        f"Challenger de P3: los hiperparámetros del champion v{version_champion} ajustados con los "
+        f"perfiles de {perfil.shape[0]} estaciones de {cfg.MES_INICIO} a {cfg.MES_FIN} (train, valid "
+        "y test juntos). Solo cambian los datos; se compara con el champion en el A/B sobre "
+        f"{cfg.MES_MONITOREO}."
+    )
+    with mlflow.start_run(
+        run_name="p3-challenger-datos-2026-09",
+        tags={
+            "equipo": "07",
+            "question": "p3",
+            "tarea": "clustering",
+            "commit": commit,
+            "fase": cfg.FASE_MONITOREO,
+            "stage_of_work": "monitoring",
+            "rol": "challenger",
+            "champion_version": str(version_champion),
+            "mlflow.note.content": descripcion,
+        },
+    ) as run:
+        mlflow.log_params(
+            {
+                **p3_hiperparametros(challenger),
+                "data_version": version_datos,
+                "rango_datos": f"{cfg.MES_INICIO} a {cfg.MES_FIN}",
+                "periodo_train": f"{cfg.MES_INICIO}-01 a 2026-09-29",
+                "min_salidas_train": cfg.P3_MIN_SALIDAS_TRAIN,
+                "n_variables": len(P3_COLUMNAS_PERFIL),
+                "champion_version": version_champion,
+            }
+        )
+        mlflow.log_metrics(
+            {
+                "train_silueta": resumen["silueta_challenger"],
+                "train_silueta_champion": resumen["silueta_champion"],
+                "ari_champion_challenger": resumen["ari_champion_challenger"],
+                "train_tam_grupo_min": resumen["tam_grupo_min_challenger"],
+                "estaciones": resumen["estaciones"],
+            }
+        )
+        info = mlflow.sklearn.log_model(
+            challenger,
+            name="modelo",
+            signature=infer_signature(x, challenger.predict(x)),
+            input_example=x.head(5),
+        )
+    cliente = mlflow.MlflowClient()
+    version = mlflow.register_model(f"models:/{info.model_id}", nombre)
+    cliente.update_model_version(nombre, version.version, description=descripcion)
+    for etiqueta, valor in {
+        "question": "p3",
+        "fase": cfg.FASE_MONITOREO,
+        "rol": "challenger",
+        "commit": commit,
+        "data_version": version_datos,
+        "rango_datos": f"{cfg.MES_INICIO} a {cfg.MES_FIN}",
+        "source_run_id": run.info.run_id,
+        "champion_version": str(version_champion),
+        "train_silueta": f"{resumen['silueta_challenger']:.4f}",
+    }.items():
+        cliente.set_model_version_tag(nombre, version.version, etiqueta, valor)
+    cliente.set_registered_model_alias(nombre, "challenger", version.version)
+    logger.success(f"{nombre} v{version.version} (alias challenger), run {run.info.run_id}")
+    return int(version.version)
+
+
 @app.command()
-def challenger():
-    """Entrena el challenger con datos hasta MES_FIN y lo compara con el champion, sin registrarlo.
+def challenger(
+    registrar: bool = typer.Option(
+        False, "--registrar", help="Registrarlo en el Registry con el alias challenger"
+    ),
+):
+    """Entrena el challenger con datos hasta MES_FIN y lo compara con el champion.
 
     Los mismos hiperparámetros del champion; cambian solo los datos (train, valid y test juntos).
+    Sin `--registrar` no escribe nada en MLflow.
     """
     perfil = p3_conjuntos()["entrenamiento_challenger"]
     champion, version, _, _ = p3_cargar_champion()
     modelo = p3_reentrenar(champion, perfil)
     resumen = p3_resumen_challenger(champion, modelo, perfil)
     logger.info(f"Champion v{version} contra challenger:\n{pd.Series(resumen).to_string()}")
+    if not registrar:
+        return
+    nueva = p3_registrar_challenger(champion, modelo, perfil, resumen, version)
+    cliente = mlflow.MlflowClient()
+    alias_champion = cliente.get_model_version_by_alias(cfg.P3_MODELO_REGISTRADO, "champion")
+    if int(alias_champion.version) != version:
+        raise RuntimeError(
+            f"El alias champion cambió: era v{version}, ahora v{alias_champion.version}"
+        )
+    cargado = mlflow.pyfunc.load_model(f"models:/{cfg.P3_MODELO_REGISTRADO}@challenger")
+    grupos = cargado.predict(cargado.input_example)
+    logger.success(
+        f"challenger = v{nueva} carga y asigna grupo a {len(grupos)} estaciones; champion sigue en v{version}"
+    )
 
 
 if __name__ == "__main__":
