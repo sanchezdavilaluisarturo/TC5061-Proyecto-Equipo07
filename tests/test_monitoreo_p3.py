@@ -4,6 +4,10 @@ entrenamiento y reportes de Evidently sobre perfiles de estaciones. Sin red ni s
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import dataset, monitoreo
@@ -76,6 +80,7 @@ def minimos_chicos(monkeypatch):
     for periodo in mp3.P3_PERIODOS:
         monkeypatch.setitem(mp3.P3_MIN_SALIDAS, periodo, MINIMO)
     monkeypatch.setattr(cfg, "P3_MIN_SALIDAS_EVALUACION", MINIMO)
+    monkeypatch.setattr(cfg, "P3_MIN_SALIDAS_TRAIN", MINIMO)
 
 
 def test_el_perfil_tiene_las_44_variables_del_modelo():
@@ -224,3 +229,44 @@ def test_el_reporte_de_drift_marca_solo_las_variables_desplazadas(tmp_path):
     # Con 300 estaciones por conjunto Evidently usa p-values (K-S), no distancias
     assert resumen.set_index("columna").loc["duracion_mediana_min", "metodo"] == "K-S p_value"
     assert monitoreo.proporcion_drift(snapshot)["columnas_con_drift"] == 1
+
+
+def test_perfil_del_challenger_junta_train_valid_y_test_sin_brecha_ni_mes_nuevo(viajes):
+    perfil = mp3.p3_perfiles_por_periodo(viajes)["entrenamiento_challenger"]
+    # Estación 1: 100 salidas en la referencia, 50 en valid y 50 en test; el viaje de la brecha y
+    # los 50 del mes nuevo no cuentan
+    assert perfil.loc[1, "salidas"] == 200
+    assert sorted(perfil.index) == ESTACIONES
+
+
+def champion_de_juguete(semilla: int = 0):
+    rng = np.random.default_rng(semilla)
+    datos = pd.DataFrame(rng.normal(0, 1, (80, 44)), columns=mp3.P3_COLUMNAS_PERFIL)
+    modelo = Pipeline(
+        [
+            ("escalador", StandardScaler()),
+            ("pca", PCA(n_components=3, random_state=42)),
+            ("kmeans", KMeans(n_clusters=2, n_init=10, random_state=42)),
+        ]
+    )
+    return modelo.fit(datos), datos
+
+
+def test_reentrenar_conserva_los_hiperparametros_y_cambia_solo_los_datos():
+    champion, _ = champion_de_juguete(0)
+    _, otros_datos = champion_de_juguete(1)
+    challenger = mp3.p3_reentrenar(champion, otros_datos)
+    assert challenger is not champion
+    assert mp3.p3_hiperparametros(challenger) == mp3.p3_hiperparametros(champion)
+    assert not np.allclose(
+        challenger.named_steps["escalador"].mean_, champion.named_steps["escalador"].mean_
+    )
+
+
+def test_resumen_del_challenger_con_los_mismos_datos_no_cambia_los_grupos():
+    champion, datos = champion_de_juguete(0)
+    challenger = mp3.p3_reentrenar(champion, datos)
+    resumen = mp3.p3_resumen_challenger(champion, challenger, datos)
+    assert resumen["ari_champion_challenger"] == pytest.approx(1.0)
+    assert resumen["silueta_challenger"] == pytest.approx(resumen["silueta_champion"])
+    assert resumen["estaciones"] == len(datos)
