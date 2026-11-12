@@ -355,3 +355,12 @@ def test_bootstrap_de_siluetas_es_reproducible_y_cero_si_los_grupos_son_iguales(
     primero = mp3.p3_bootstrap_silueta(z, grupos, grupos, n_bootstrap=50)
     assert primero == mp3.p3_bootstrap_silueta(z, grupos, grupos, n_bootstrap=50)
     assert primero == pytest.approx((0.0, 0.0))
+
+
+def test_silueta_por_conjunto_regresa_una_fila_por_conjunto():
+    champion, datos = champion_de_juguete(0)
+    datos = datos.assign(salidas=100.0)
+    tabla = mp3.p3_silueta_por_conjunto(champion, {"a": datos, "b": datos.iloc[:40]})
+    assert tabla["conjunto"].tolist() == ["a", "b"]
+    assert tabla["estaciones"].tolist() == [80, 40]
+    assert (tabla["salidas_mediana"] == 100.0).all()

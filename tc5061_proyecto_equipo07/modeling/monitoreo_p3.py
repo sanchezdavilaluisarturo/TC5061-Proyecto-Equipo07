@@ -8,7 +8,7 @@ uso), calculada con las mismas funciones con las que se entrenó el champion:
     evaluacion   perfiles del mes nuevo (2026-10), que ningún modelo ha visto
 valid (2024-10 a 2025-09) también se calcula: es el conjunto con el que se midió la estabilidad.
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift | drift-anual | challenger | ab
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift | drift-anual | challenger | ab | silueta
 """
 
 from loguru import logger
@@ -582,6 +582,45 @@ def ab():
     logger.info(
         f"A/B de P3, champion v{version_a} contra challenger v{version_b}:\n{pd.Series(resultados).to_string()}"
     )
+
+
+def p3_silueta_por_conjunto(champion, conjuntos: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Silueta del champion, en su espacio estandarizado, en cada conjunto de perfiles."""
+    filas = []
+    for nombre, perfil in conjuntos.items():
+        grupos = champion.predict(perfil[P3_COLUMNAS_PERFIL])
+        filas.append(
+            {
+                "conjunto": nombre,
+                "estaciones": len(perfil),
+                "silueta_champion": float(
+                    silhouette_score(p3_espacio_comun(champion, perfil), grupos)
+                ),
+                "salidas_mediana": float(perfil["salidas"].median()),
+            }
+        )
+    return pd.DataFrame(filas)
+
+
+@app.command()
+def silueta():
+    """Silueta del champion por periodo y por octubre de cada año (revisión posterior al A/B).
+
+    Responde si la silueta baja de octubre 2026 (un mes de datos) frente a la de entrenamiento (años
+    completos) es degradación o un efecto del tamaño del periodo: se compara octubre con octubres.
+    """
+    conjuntos = p3_conjuntos()
+    champion, version, _, _ = p3_cargar_champion()
+    orden = [
+        "referencia",
+        "valid",
+        "actual",
+        *sorted(n for n in conjuntos if n.startswith("mismo_mes_20")),
+        "evaluacion",
+    ]
+    tabla = p3_silueta_por_conjunto(champion, {n: conjuntos[n] for n in orden})
+    tabla.to_csv(cfg.MONITOREO_DIR / "p3_silueta_por_conjunto.csv", index=False)
+    logger.info(f"Silueta del champion v{version} por conjunto:\n{tabla.to_string(index=False)}")
 
 
 if __name__ == "__main__":
