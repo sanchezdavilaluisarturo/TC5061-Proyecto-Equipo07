@@ -179,13 +179,13 @@ def proyecto(tmp_path_factory):
         info = mlflow.sklearn.log_model(
             modelo,
             name="modelo",
-            registered_model_name=cfg.P1_MODELO_REGISTRADO,
             serialization_format="cloudpickle",  # igual que train.py: skops rechaza clases propias
         )
+    # Igual que registro_p1: registrar desde el modelo registrado del run (llena su model_id)
+    version = mlflow.register_model(f"models:/{info.model_id}", cfg.P1_MODELO_REGISTRADO).version
     cliente = mlflow.MlflowClient()
-    version = info.registered_model_version
     cliente.set_registered_model_alias(cfg.P1_MODELO_REGISTRADO, "champion", version)
-    return {"carpeta": carpeta, "uri": uri, "version": int(version)}
+    return {"carpeta": carpeta, "uri": uri, "version": int(version), "modelo_id": info.model_id}
 
 
 @pytest.fixture
@@ -196,7 +196,23 @@ def config_prueba(proyecto, monkeypatch):
     monkeypatch.setattr(cfg, "MONITOREO_DIR", carpeta / "reportes")
     monkeypatch.setattr(cfg, "MLFLOW_TRACKING_URI", proyecto["uri"])
     monkeypatch.setattr(cfg, "EXPERIMENTO_MLFLOW", "prueba-p1")
+    for nombre, constante in (
+        ("fuentes.csv", "RUTA_MANIFIESTO"),
+        ("monitoreo.csv", "RUTA_MANIFIESTO_MONITOREO"),
+    ):
+        ruta = carpeta / nombre
+        ruta.write_text("archivo,periodo,url,registros,sha256\na.csv,2026-10,u,1,abc\n")
+        monkeypatch.setattr(cfg, constante, ruta)
     return proyecto
+
+
+def contextos_del_run(run) -> set[str]:
+    return {
+        etiqueta.value
+        for entrada in run.inputs.dataset_inputs
+        for etiqueta in entrada.tags
+        if etiqueta.key == "mlflow.data.context"
+    }
 
 
 def test_columnas_del_reporte_excluyen_origen_id():
@@ -210,9 +226,10 @@ def test_mismo_mes_solo_trae_octubres():
 
 
 def test_cargar_champion_usa_el_alias(config_prueba):
-    modelo, version, _ = monitoreo_p1.p1_cargar_champion()
+    modelo, version, _, modelo_id = monitoreo_p1.p1_cargar_champion()
     assert version == config_prueba["version"]
     assert hasattr(modelo, "predict")
+    assert modelo_id == config_prueba["modelo_id"]
 
 
 def test_drift_genera_reportes_resumen_y_run(config_prueba):
@@ -246,6 +263,15 @@ def test_drift_genera_reportes_resumen_y_run(config_prueba):
     assert run["params.champion_version"] == str(config_prueba["version"])
     assert "metrics.champion_mae_evaluacion" in runs.columns
     assert 0 <= run["metrics.proporcion_drift_train_test"] <= 1
+    # Misma calidad que los runs de entrenamiento: datasets, modelo evaluado y descripción
+    completo = mlflow.get_run(run["run_id"])
+    assert contextos_del_run(completo) == {"referencia", "valid", "actual", "evaluacion"}
+    _, _, _, modelo_id = monitoreo_p1.p1_cargar_champion()
+    assert [m.model_id for m in completo.inputs.model_inputs] == [modelo_id]
+    assert completo.data.tags["mlflow.note.content"].startswith("Monitoreo de P1")
+    assert completo.data.tags["autor"] == "Daniel Sánchez Hernández"
+    metricas_modelo = {m.key: m.dataset_name for m in mlflow.get_logged_model(modelo_id).metrics}
+    assert metricas_modelo["champion_mae_evaluacion"] == "p1_evaluacion"
 
 
 def test_drift_anual_compara_cada_anio_contra_el_mes_nuevo(config_prueba):
@@ -271,3 +297,15 @@ def test_drift_anual_compara_cada_anio_contra_el_mes_nuevo(config_prueba):
     )
     assert runs.iloc[0]["tags.mlflow.runName"] == "p1-drift-mismo-mes"
     assert "metrics.ventaja_champion_2026" in runs.columns
+    completo = mlflow.get_run(runs.iloc[0]["run_id"])
+    assert contextos_del_run(completo) == {"mes_2023", "mes_2024", "mes_2025", "evaluacion"}
+    assert len(completo.inputs.model_inputs) == 1
+
+
+def test_modelo_id_sale_del_source_de_la_version():
+    from types import SimpleNamespace
+
+    version = SimpleNamespace(model_id=None, source="models:/m-abc123", run_id="r", version="2")
+    assert monitoreo_p1.p1_modelo_id(version) == "m-abc123"
+    version.model_id = "m-directo"
+    assert monitoreo_p1.p1_modelo_id(version) == "m-directo"

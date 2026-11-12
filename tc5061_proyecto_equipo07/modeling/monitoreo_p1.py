@@ -110,8 +110,34 @@ def p1_conjuntos(
     return conjuntos
 
 
+def p1_modelo_id(version) -> str | None:
+    """Id del modelo de MLflow (m-...) del que sale una versión del Registry.
+
+    registro_p1 registra desde `models:/<model_id>`, así que el id está en `source`; el atributo
+    `model_id` de la versión puede venir vacío. Si la versión salió de `runs:/`, se busca el
+    modelo registrado por ese run.
+    """
+    if version.model_id:
+        return version.model_id
+    if version.source.startswith("models:/m-"):
+        return version.source.removeprefix("models:/").split("/")[0]
+    if version.run_id:
+        run = mlflow.get_run(version.run_id)
+        modelos = mlflow.search_logged_models(
+            experiment_ids=[run.info.experiment_id],
+            filter_string=f"source_run_id = '{version.run_id}'",
+            output_format="list",
+        )
+        if modelos:
+            return modelos[0].model_id
+    logger.warning(f"No se encontró el modelo de MLflow de la versión {version.version}")
+    return None
+
+
 def p1_cargar_champion():
-    """Carga la versión con alias champion; regresa (Pipeline, número de versión, etiquetas).
+    """Carga la versión con alias champion; regresa (Pipeline, versión, etiquetas, model_id).
+
+    El model_id liga los runs de monitoreo al modelo que evaluaron, como modelo de entrada.
 
     Se carga con el sabor sklearn con el que se registró: así se predice con `p1_predecir`, igual
     que al entrenar, sin depender de cómo la firma de pyfunc trate la columna categórica `zona`.
@@ -123,7 +149,7 @@ def p1_cargar_champion():
     )
     modelo = mlflow.sklearn.load_model(f"models:/{cfg.P1_MODELO_REGISTRADO}/{version.version}")
     logger.info(f"{cfg.P1_MODELO_REGISTRADO}: champion = versión {version.version}")
-    return modelo, int(version.version), dict(version.tags)
+    return modelo, int(version.version), dict(version.tags), p1_modelo_id(version)
 
 
 def p1_desempeno(modelos: dict, conjuntos: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -189,6 +215,32 @@ def p1_fila_anual(anio: int, periodo: str, datos: pd.DataFrame, modelos: dict) -
         "mae_champion": desempeno["champion"],
         "mae_baseline": desempeno["baseline"],
         "ventaja_champion": 1 - desempeno["champion"] / desempeno["baseline"],
+    }
+
+
+def p1_datasets(conjuntos: dict[str, pd.DataFrame]) -> dict:
+    """Conjuntos de monitoreo como datasets de MLflow, con la tabla de la que salen."""
+    fuentes = {"evaluacion": cfg.P1_RUTA_EVALUACION}
+    return {
+        nombre: monitoreo.dataset_mlflow(
+            datos[P1_COLUMNAS],
+            f"p1_{nombre}",
+            fuentes.get(nombre, cfg.RUTA_P1_DEMANDA),
+            "viajes",
+        )
+        for nombre, datos in conjuntos.items()
+    }
+
+
+def p1_separar_metricas_champion(metricas: dict, conjuntos) -> dict[str, dict[str, float]]:
+    """Saca de `metricas` las del champion por conjunto, para asociarlas a su modelo y dataset."""
+    return {
+        conjunto: {
+            clave: metricas.pop(clave)
+            for clave in (f"champion_mae_{conjunto}", f"champion_rmse_{conjunto}")
+            if clave in metricas
+        }
+        for conjunto in conjuntos
     }
 
 
@@ -261,7 +313,7 @@ def drift(muestra: int = cfg.MONITOREO_MUESTRA):
     """
     conjuntos = p1_conjuntos(cfg.RUTA_P1_DEMANDA, cfg.P1_RUTA_EVALUACION)
     referencia = conjuntos["referencia"]
-    modelo, version, etiquetas = p1_cargar_champion()
+    modelo, version, etiquetas, modelo_id = p1_cargar_champion()
     baseline = P1BaselinePromedio().fit(referencia[cfg.P1_VARIABLES], referencia["viajes"])
 
     evaluados = {c: conjuntos[c] for c in ("valid", "actual", "evaluacion")}
@@ -313,11 +365,21 @@ def drift(muestra: int = cfg.MONITOREO_MUESTRA):
     logger.info(f"Drift por variable:\n{resumen.to_string(index=False)}")
     logger.info(f"Desempeño por conjunto:\n{desempeno.to_string(index=False)}")
 
+    metricas = p1_metricas_drift({"train_test": drift_tt, "estacional": drift_est}, desempeno)
     monitoreo.registrar_en_mlflow(
         "p1-drift",
         "p1",
         [*rutas_tt, *rutas_dt, *rutas_est, ruta_resumen, ruta_desempeno],
-        metricas=p1_metricas_drift({"train_test": drift_tt, "estacional": drift_est}, desempeno),
+        metricas=metricas,
+        metricas_por_dataset=p1_separar_metricas_champion(metricas, evaluados),
+        datasets=p1_datasets(conjuntos),
+        modelo_id=modelo_id,
+        descripcion=(
+            f"Monitoreo de P1 sobre el champion v{version}: drift de datos (train contra test), "
+            f"desempeño (valid contra test) y control estacional ({cfg.MES_MONITOREO} contra el "
+            "mismo mes de la referencia), con Evidently. Champion y baseline evaluados en valid, "
+            "test y el mes nuevo."
+        ),
         parametros={
             "champion_version": version,
             "muestra": muestra,
@@ -325,7 +387,11 @@ def drift(muestra: int = cfg.MONITOREO_MUESTRA):
             "referencia": f"{cfg.MES_INICIO} a {p1_mes_previo(cfg.FRONTERA_VALID)}",
             "actual": f"{cfg.FRONTERA_TEST[:7]} a {p1_mes_previo(cfg.FRONTERA_MONITOREO)}",
         },
-        etiquetas={"champion_version": str(version), "tipo_monitoreo": "drift"},
+        etiquetas={
+            "champion_version": str(version),
+            "tipo_monitoreo": "drift",
+            "autor": "Daniel Sánchez Hernández",
+        },
     )
 
 
@@ -338,14 +404,15 @@ def drift_anual(muestra: int = cfg.MONITOREO_MUESTRA):
     """
     conjuntos = p1_conjuntos(cfg.RUTA_P1_DEMANDA, cfg.P1_RUTA_EVALUACION)
     referencia, evaluacion = conjuntos["referencia"], conjuntos["evaluacion"]
-    modelo, version, _ = p1_cargar_champion()
+    modelo, version, _, modelo_id = p1_cargar_champion()
     baseline = P1BaselinePromedio().fit(referencia[cfg.P1_VARIABLES], referencia["viajes"])
     modelos = {"champion": modelo, "baseline": baseline}
 
     definicion = monitoreo.definicion_datos(P1_DEMANDA, [])
     actual_m = p1_tabla_reporte(monitoreo.muestrear(evaluacion, muestra), modelo)[P1_DEMANDA]
     filas, rutas = [], []
-    for anio, (periodo, datos) in p1_mismo_mes_por_anio(conjuntos).items():
+    por_anio = p1_mismo_mes_por_anio(conjuntos)
+    for anio, (periodo, datos) in por_anio.items():
         referencia_m = p1_tabla_reporte(monitoreo.muestrear(datos, muestra), modelo)[P1_DEMANDA]
         snapshot, rutas_anio = monitoreo.generar_reporte(
             referencia_m, actual_m, definicion, f"p1_drift_mes_{anio}", carpeta=cfg.MONITOREO_DIR
@@ -365,22 +432,41 @@ def drift_anual(muestra: int = cfg.MONITOREO_MUESTRA):
         f"Mismo mes por año contra {cfg.MES_MONITOREO}:\n{tabla_anual.to_string(index=False)}"
     )
 
-    metricas = {}
+    metricas, por_dataset = {}, {}
     for fila in tabla_anual.itertuples():
+        contexto = "evaluacion" if fila.periodo == "evaluacion" else f"mes_{fila.anio}"
         metricas[f"ventaja_champion_{fila.anio}"] = fila.ventaja_champion
+        metricas[f"baseline_mae_{fila.anio}"] = fila.mae_baseline
+        por_dataset[contexto] = {f"champion_mae_{fila.anio}": fila.mae_champion}
         if pd.notna(getattr(fila, "drift_viajes", np.nan)):
             metricas[f"drift_viajes_{fila.anio}"] = fila.drift_viajes
+    datasets = p1_datasets(
+        {f"mes_{anio}": datos for anio, (_, datos) in por_anio.items()}
+        | {"evaluacion": evaluacion}
+    )
     monitoreo.registrar_en_mlflow(
         "p1-drift-mismo-mes",
         "p1",
         [*rutas, ruta],
         metricas=metricas,
+        metricas_por_dataset=por_dataset,
+        datasets=datasets,
+        modelo_id=modelo_id,
+        descripcion=(
+            f"Desglose estacional de P1 sobre el champion v{version}: el mismo mes de cada año "
+            f"previo contra {cfg.MES_MONITOREO}, con el drift de la demanda (Evidently) y la "
+            "ventaja del champion sobre el baseline por año."
+        ),
         parametros={
             "champion_version": version,
             "muestra": muestra,
             "mes_monitoreo": cfg.MES_MONITOREO,
         },
-        etiquetas={"champion_version": str(version), "tipo_monitoreo": "drift_estacional"},
+        etiquetas={
+            "champion_version": str(version),
+            "tipo_monitoreo": "drift_estacional",
+            "autor": "Daniel Sánchez Hernández",
+        },
     )
 
 
