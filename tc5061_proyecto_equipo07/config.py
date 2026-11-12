@@ -406,6 +406,8 @@ MONITOREO_ALFA = 0.05
 MONITOREO_BOOTSTRAP = 2000
 # Etiqueta `fase` de los runs de monitoreo en MLflow
 FASE_MONITOREO = "monitoreo"
+# P1: estación-horas del mes de evaluación, calculadas con el mismo pipeline de features
+P1_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p1_demanda_evaluacion_{MES_MONITOREO}.parquet"
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

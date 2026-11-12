@@ -142,6 +142,18 @@ pruebas-monitoreo:
 	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo.py
 
 
+## Monitoreo de P1: estación-horas del mes nuevo, verificadas contra la tabla de entrenamiento
+.PHONY: monitoreo-p1-tabla
+monitoreo-p1-tabla:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla
+
+
+## Pruebas del monitoreo de P1
+.PHONY: pruebas-monitoreo-p1
+pruebas-monitoreo-p1:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p1.py
+
+
 ## MLflow local de respaldo si el servidor del equipo no responde (usar MLFLOW_TRACKING_URI=http://127.0.0.1:5000)
 .PHONY: mlflow-local
 mlflow-local:
