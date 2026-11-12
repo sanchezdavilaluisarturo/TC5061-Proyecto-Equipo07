@@ -309,3 +309,48 @@ def test_modelo_id_sale_del_source_de_la_version():
     assert monitoreo_p1.p1_modelo_id(version) == "m-abc123"
     version.model_id = "m-directo"
     assert monitoreo_p1.p1_modelo_id(version) == "m-directo"
+
+
+def test_datos_challenger_no_incluyen_el_mes_de_evaluacion(tablas, tmp_path):
+    entrenamiento, extendida = tablas
+    entrenamiento.to_parquet(tmp_path / "e.parquet", index=False)
+    monitoreo_p1.p1_evaluacion(extendida).to_parquet(tmp_path / "v.parquet", index=False)
+    conjuntos = monitoreo_p1.p1_conjuntos(tmp_path / "e.parquet", tmp_path / "v.parquet")
+    datos = monitoreo_p1.p1_datos_challenger(conjuntos)
+    assert datos["hora_inicio"].max() < pd.Timestamp(cfg.FRONTERA_MONITOREO)
+    esperadas = sum(len(conjuntos[c]) for c in ("referencia", "valid", "actual"))
+    assert len(datos) == esperadas
+
+
+def test_challenger_se_registra_sin_mover_el_champion(config_prueba):
+    import mlflow
+    import mlflow.sklearn
+
+    champion_antes, version_champion, _, _ = monitoreo_p1.p1_cargar_champion()
+    monitoreo_p1.challenger()
+
+    cliente = mlflow.MlflowClient()
+    retador = cliente.get_model_version_by_alias(cfg.P1_MODELO_REGISTRADO, "challenger")
+    champion = cliente.get_model_version_by_alias(cfg.P1_MODELO_REGISTRADO, "champion")
+    assert int(champion.version) == version_champion
+    assert int(retador.version) != version_champion
+    # Linaje de la versión: de qué versión sale y con qué datos
+    assert retador.tags["base_version"] == str(version_champion)
+    assert retador.tags["fase"] == cfg.FASE_MONITOREO
+    assert retador.tags["rango_datos"].endswith("2026-09")
+    assert "valid_mae" not in retador.tags
+
+    run = mlflow.get_run(retador.tags["source_run_id"])
+    assert run.info.run_name == cfg.P1_CHALLENGER[0]
+    assert run.data.tags["stage_of_work"] == "challenger"
+    assert run.data.tags["mlflow.note.content"] == cfg.P1_DESCRIPCION_CHALLENGER
+    assert run.data.params["modelo"] == "xgb_challenger"
+    assert [e.tags[0].value for e in run.inputs.dataset_inputs] == ["training"]
+    assert len(run.outputs.model_outputs) == 1
+    # Mismos hiperparámetros que el champion: es una data iteration (str para comparar NaN)
+    retador_modelo = mlflow.sklearn.load_model(f"models:/{cfg.P1_MODELO_REGISTRADO}@challenger")
+    parametros = retador_modelo.named_steps["modelo"].get_params()
+    del_champion = champion_antes.named_steps["modelo"].get_params()
+    assert {k: str(v) for k, v in parametros.items()} == {
+        k: str(v) for k, v in del_champion.items()
+    }
