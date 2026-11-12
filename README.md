@@ -1915,13 +1915,40 @@ El challenger es el pipeline del champion (`StandardScaler`, PCA de 11 component
 
 **Limitaciones que se declaran desde ahora.** Octubre es un solo mes (una sola estación del año); los reportes de drift muestran que octubre 2026 se parece más a los de 2022 a 2025 que a los de 2020 y 2021. El champion y el challenger asignan casi igual en sus datos de entrenamiento (ARI 0.89), así que se espera una diferencia pequeña.
 
+**Resultados del A/B (octubre 2026, 469 estaciones, champion v4 contra challenger v5).**
+
+| Métrica | Champion v4 | Challenger v5 |
+|---|---|---|
+| Silueta media por estación | 0.0728 | 0.0710 |
+| Diferencia (B - A) | -0.0018 (-2.5%) | |
+| Intervalo bootstrap 95% de la diferencia | [-0.0054, 0.0012] | |
+| Wilcoxon (principal) | p = 0.83 | |
+| t pareada | p = 0.24 | |
+| Estaciones con mejor silueta | 241 | 228 |
+| Reparto aleatorio (238 contra 231 estaciones) | 0.0711 | 0.0732 (Mann-Whitney p = 0.80) |
+| ARI entre las dos versiones | 0.84 (19 estaciones cambian de grupo) | |
+
+**Decisión: el champion v4 se queda como versión vigente.** La diferencia no es significativa (p = 0.83 y el intervalo incluye 0), así que no se cumple la regla fijada de antemano. La prueba aleatoria apunta en sentido contrario al pareado, pero con p = 0.80: es ruido, no un efecto. Los datos recientes no mejoraron la segmentación de forma que se pueda distinguir de cero.
+
+**Revisión posterior al A/B** (`make monitoreo-p3-silueta`, exploratoria: se hizo después de ver el resultado, no forma parte del protocolo). La silueta del champion en octubre 2026 (0.073) es mucho menor que en train (0.145), pero comparar un mes con años completos no es justo: en todos los octubres anteriores la silueta del champion también es baja (0.063 a 0.075), porque un mes da perfiles más ruidosos (mediana de unas 950 salidas por estación contra 37 mil en train). En los periodos anuales, en cambio, sí baja con el tiempo:
+
+| Conjunto | Estaciones | Silueta del champion |
+|---|---|---|
+| Train (2020-01 a 2024-09) | 362 | 0.145 |
+| Valid (2024-10 a 2025-09) | 369 | 0.132 |
+| Test (2025-10 a 2026-09) | 457 | 0.103 |
+| Octubre 2020 a 2025 | 274 a 368 | 0.063 a 0.075 |
+| Octubre 2026 | 469 | 0.073 |
+
+Esa caída anual puede deberse al cambio de composición de la red (de 362 a 457 estaciones) y no solo a un cambio de comportamiento; con estos datos no se puede separar.
+
 #### Pruebas
 
 ```bash
 make pruebas-monitoreo-p3
 ```
 
-`tests/test_monitoreo_p3.py` (12 pruebas, con viajes sintéticos, sin red ni servidor de MLflow) comprueba:
+`tests/test_monitoreo_p3.py` (22 pruebas, con viajes y estaciones sintéticos, sin red ni servidor de MLflow) comprueba:
 
 - Que los perfiles tienen las 44 variables del modelo, suman 1 por bloque horario y separan los periodos descartando la brecha.
 - Que se filtran las estaciones con pocas salidas y que el mínimo del control estacional crece con los años de la referencia.
@@ -1929,6 +1956,9 @@ make pruebas-monitoreo-p3
 - Que `perfiles` detecta un perfil calculado distinto al del entrenamiento.
 - Que las estaciones comunes quedan alineadas y que el grupo del champion entra al reporte como cadena.
 - Que el reporte de Evidently marca solo la variable desplazada y usa p-values con 300 estaciones.
+- Que el challenger conserva los hiperparámetros del champion y cambia solo los datos.
+- Que el A/B deja al champion con versiones idénticas o si el challenger es peor, y lo reemplaza solo si separa mejor de forma significativa.
+- Que el intervalo bootstrap de siluetas es reproducible y que la silueta por estación se calcula sobre las mismas estaciones.
 
 #### Resultados (champion v4)
 
