@@ -160,6 +160,12 @@ monitoreo-p1-drift-anual:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 drift-anual
 
 
+## Monitoreo de P1: versión alternativa (champion reentrenado con datos recientes, alias challenger)
+.PHONY: monitoreo-p1-challenger
+monitoreo-p1-challenger:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 challenger
+
+
 ## Pruebas del monitoreo de P1
 .PHONY: pruebas-monitoreo-p1
 pruebas-monitoreo-p1:

@@ -408,6 +408,14 @@ MONITOREO_BOOTSTRAP = 2000
 FASE_MONITOREO = "monitoreo"
 # P1: estación-horas del mes de evaluación, calculadas con el mismo pipeline de features
 P1_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p1_demanda_evaluacion_{MES_MONITOREO}.parquet"
+# Versión alternativa de P1 (data iteration): run, etapa y familia, como en P1_MODELOS. No va en
+# P1_MODELOS porque no se entrena desde cero con `p1-entrenar`: se clona el champion
+P1_CHALLENGER = ("p1-xgb-challenger", "challenger", "xgboost")
+P1_DESCRIPCION_CHALLENGER = (
+    "XGBoost con los mismos hiperparámetros del champion, reentrenado con datos hasta el mes "
+    "previo al de monitoreo (data iteration): referencia, valid y actual sin brechas. Versión "
+    "alternativa del A/B testing; su prueba es el mes de evaluación, que no vio."
+)
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

@@ -6,21 +6,29 @@ Usa la base común de monitoreo.py. Los conjuntos salen de dos tablas:
     evaluacion                   el mes nuevo, calculado con el mismo pipeline de features sobre
                                  la historia extendida, porque sus rezagos necesitan los días previos
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla | drift | drift-anual
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla | drift | drift-anual | challenger
 """
+
+import time
 
 from loguru import logger
 import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import features, monitoreo
+from tc5061_proyecto_equipo07.modeling import registro_p1
 from tc5061_proyecto_equipo07.modeling.predict import p1_predecir
-from tc5061_proyecto_equipo07.modeling.train import P1BaselinePromedio
+from tc5061_proyecto_equipo07.modeling.train import (
+    P1BaselinePromedio,
+    p1_parametros,
+    p1_registrar_run,
+)
 
 app = typer.Typer(add_completion=False)
 
@@ -242,6 +250,35 @@ def p1_separar_metricas_champion(metricas: dict, conjuntos) -> dict[str, dict[st
         }
         for conjunto in conjuntos
     }
+
+
+def p1_datos_challenger(conjuntos: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Datos del challenger: referencia, valid y actual, sin las brechas ni el mes de evaluación."""
+    datos = pd.concat([conjuntos[c] for c in ("referencia", "valid", "actual")], ignore_index=True)
+    if datos["hora_inicio"].max() >= pd.Timestamp(cfg.FRONTERA_MONITOREO):
+        raise ValueError("Los datos del challenger no pueden incluir el mes de evaluación")
+    return datos
+
+
+def p1_parametros_challenger(champion, etiquetas: dict, version: int, n_train: int) -> dict:
+    """Parámetros del run del challenger, con los mismos hiperparámetros que el run del champion.
+
+    Se copian los `modelo_*` del run de origen de la versión, tal como se registraron; si no hay
+    run de origen, se toman del regresor del champion.
+    """
+    parametros = p1_parametros("xgb", n_train)
+    parametros.update({"modelo": "xgb_challenger", "base_version": version})
+    origen = etiquetas.get("source_run_id")
+    if origen:
+        del_origen = mlflow.get_run(origen).data.params
+        parametros.update({k: v for k, v in del_origen.items() if k.startswith("modelo_")})
+        parametros["modelo"] = "xgb_challenger"
+    else:
+        regresor = champion.named_steps["modelo"].get_params()
+        parametros.update(
+            {f"modelo_{k}": regresor[k] for k in cfg.P1_PARAMETROS_XGB if k in regresor}
+        )
+    return parametros
 
 
 def p1_mes_previo(frontera: str) -> str:
@@ -468,6 +505,51 @@ def drift_anual(muestra: int = cfg.MONITOREO_MUESTRA):
             "autor": "Daniel Sánchez Hernández",
         },
     )
+
+
+@app.command()
+def challenger():
+    """Entrena y registra la versión alternativa de P1 con alias challenger (data iteration).
+
+    Clona el champion (mismos hiperparámetros y semilla) y lo reentrena con referencia, valid y
+    actual, de 2020-01 a 2026-09 sin brechas. El run y el registro usan las mismas funciones que los
+    entrenamientos de P1 (p1_registrar_run y registro_p1); el alias champion no se toca.
+    """
+    conjuntos = p1_conjuntos(cfg.RUTA_P1_DEMANDA, cfg.P1_RUTA_EVALUACION)
+    datos = p1_datos_challenger(conjuntos)
+    champion, version, etiquetas, modelo_id = p1_cargar_champion()
+    modelo = clone(champion)
+    logger.info(
+        f"Entrenando el challenger con {len(datos)} filas "
+        f"({datos['hora_inicio'].min():%Y-%m} a {datos['hora_inicio'].max():%Y-%m})"
+    )
+    inicio = time.perf_counter()
+    modelo.fit(datos[cfg.P1_VARIABLES], datos["viajes"])
+    segundos = time.perf_counter() - inicio
+    logger.info(f"Challenger entrenado en {segundos / 60:.1f} min")
+
+    rango = f"{cfg.MES_INICIO} a {p1_mes_previo(cfg.FRONTERA_MONITOREO)}"
+    id_run = p1_registrar_run(
+        "xgb",
+        p1_parametros_challenger(champion, etiquetas, version, len(datos)),
+        {"segundos_entrenamiento": segundos},
+        [],
+        modelo,
+        datos[cfg.P1_VARIABLES].head(3),
+        datos,
+        etiquetas_extra={
+            "fase": cfg.FASE_MONITOREO,
+            "base_version": str(version),
+            "base_source_run_id": etiquetas.get("source_run_id", "desconocido"),
+            "base_model_id": modelo_id or "desconocido",
+            "rango_datos": rango,
+        },
+        identidad=cfg.P1_CHALLENGER,
+        descripcion=cfg.P1_DESCRIPCION_CHALLENGER,
+    )
+    nueva = registro_p1.p1_registrar(id_run, "challenger")
+    registro_p1.p1_verificar("challenger")
+    logger.success(f"Challenger = versión {nueva}; champion sigue en la versión {version}")
 
 
 if __name__ == "__main__":
