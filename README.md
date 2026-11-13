@@ -2113,6 +2113,14 @@ make pruebas-monitoreo-p3
 
 Las 45 son las 44 variables más el grupo asignado.
 
+![P3: reporte de Evidently de octubre 2025 contra octubre 2026, con las columnas con drift primero](reports/monitoreo/figuras/p3_fig2a_evidently_estacional.png)
+
+*Figura 2a. Reporte de Evidently de octubre 2025 contra octubre 2026 (368 / 469 estaciones): 18 de 45 columnas con drift (40%), bajo el umbral de 50%, por lo que no se declara drift del conjunto. Columnas ordenadas con las de menor p-value primero. Reporte completo en `reports/monitoreo/p3_drift_mes_2025.html`.*
+
+![P3: drift por variable con Evidently, train contra test y octubre 2025 contra octubre 2026](reports/monitoreo/figuras/p3_fig2b_drift_por_variable.png)
+
+*Figura 2b. Evidencia de drift por variable (`-log10` del p-value del test K-S; el grupo asignado usa Z-test). En rojo, las variables bajo el umbral de 0.05. Train contra test marca 28 de 45 (62%), pero parte es composición de la red (con las estaciones comunes baja a 25). Octubre contra octubre marca 18 de 45 (40%): el drift reciente es moderado. Las barras de p < 1e-10 están recortadas.*
+
 **Interpretación.**
 
 - **Drift de un año (train contra test).** Se mueven `prop_circulares` y, con todas las estaciones, `log_viajes_por_dia` y `neto_sobre_salidas`; con solo las comunes esas dos dejan de marcar drift, así que parte del cambio era composición de la red. `duracion_mediana_min` no cambia. El grupo asignado tampoco (p = 0.71): el champion reparte las estaciones igual que antes.
