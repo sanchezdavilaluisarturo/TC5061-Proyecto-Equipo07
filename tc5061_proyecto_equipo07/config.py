@@ -409,6 +409,16 @@ FASE_MONITOREO = "monitoreo"
 # P3 en monitoreo: el mes nuevo usa el ritmo mensual de valid (300 salidas en 12 meses = 25 al mes)
 P3_MIN_SALIDAS_EVALUACION = p3_leer_entero("P3_MIN_SALIDAS_EVALUACION", 25)
 P3_RUTA_PERFILES_MONITOREO = PROCESSED_DATA_DIR / "p3_perfiles_monitoreo.parquet"
+# P1: estación-horas del mes de evaluación, calculadas con el mismo pipeline de features
+P1_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p1_demanda_evaluacion_{MES_MONITOREO}.parquet"
+# Versión alternativa de P1 (data iteration): run, etapa y familia, como en P1_MODELOS. No va en
+# P1_MODELOS porque no se entrena desde cero con `p1-entrenar`: se clona el champion
+P1_CHALLENGER = ("p1-xgb-challenger", "challenger", "xgboost")
+P1_DESCRIPCION_CHALLENGER = (
+    "XGBoost con los mismos hiperparámetros del champion, reentrenado con datos hasta el mes "
+    "previo al de monitoreo (data iteration): referencia, valid y actual sin brechas. Versión "
+    "alternativa del A/B testing; su prueba es el mes de evaluación, que no vio."
+)
 
 # P2: estación-bins del mes de evaluación con su historia "hasta ayer"
 P2_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p2_cambios_evaluacion_{MES_MONITOREO}.parquet"

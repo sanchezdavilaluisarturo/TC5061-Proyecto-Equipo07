@@ -1330,8 +1330,14 @@ def p1_registrar_run(
     train: pd.DataFrame,
     curva: pd.DataFrame | None = None,
     etiquetas_extra: dict | None = None,
+    identidad: tuple[str, str, str] | None = None,
+    descripcion: str | None = None,
 ) -> str:
-    """Registra un run de P1 en el experimento del proyecto y regresa su id."""
+    """Registra un run de P1 en el experimento del proyecto y regresa su id.
+
+    `identidad` (nombre del run, etapa, familia) y `descripcion` sirven para runs que no son un
+    modelo de P1_MODELOS, como el challenger del monitoreo; sin ellas se toman de config.py.
+    """
     import mlflow
     import mlflow.data
     from mlflow.models import infer_signature
@@ -1341,7 +1347,7 @@ def p1_registrar_run(
         raise ValueError("MLFLOW_TRACKING_URI no está definida: copiar .env.example a .env")
     mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
     mlflow.set_experiment(cfg.EXPERIMENTO_MLFLOW)
-    nombre_run, etapa, familia = cfg.P1_MODELOS[clave]
+    nombre_run, etapa, familia = identidad or cfg.P1_MODELOS[clave]
     with mlflow.start_run(run_name=nombre_run) as corrida:
         mlflow.set_tags(
             {
@@ -1352,7 +1358,7 @@ def p1_registrar_run(
                 "stage_of_work": etapa,
                 "model_family": familia,
                 "fase": cfg.FASE_ENTREGA,
-                "mlflow.note.content": cfg.P1_DESCRIPCIONES[clave],
+                "mlflow.note.content": descripcion or cfg.P1_DESCRIPCIONES[clave],
                 **(etiquetas_extra or {}),
             }
         )

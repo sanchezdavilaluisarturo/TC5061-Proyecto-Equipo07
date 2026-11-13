@@ -33,17 +33,23 @@ def p1_descripcion_version(run) -> str:
 
 
 def p1_etiquetas_version(run) -> dict[str, str]:
-    """Linaje de la versión: commit, datos, run de origen y, si hay, la búsqueda que la produjo."""
+    """Linaje de la versión: commit, datos, run de origen y, si hay, la búsqueda que la produjo.
+
+    Un challenger del monitoreo no tiene valid separado (se entrena con él): no lleva valid_mae y
+    sí la versión de la que sale.
+    """
     etiquetas = {
         "question": run.data.tags.get("question", "p1"),
         "fase": run.data.tags.get("fase", cfg.FASE_ENTREGA),
         "commit": run.data.tags.get("commit", "desconocido"),
         "data_version": run.data.params.get("data_version", "desconocido"),
         "source_run_id": run.info.run_id,
-        "valid_mae": f"{run.data.metrics['valid_mae']:.4f}",
     }
-    if "busqueda_run_id" in run.data.tags:
-        etiquetas["busqueda_run_id"] = run.data.tags["busqueda_run_id"]
+    if "valid_mae" in run.data.metrics:
+        etiquetas["valid_mae"] = f"{run.data.metrics['valid_mae']:.4f}"
+    for linaje in ("busqueda_run_id", "base_version", "base_source_run_id", "rango_datos"):
+        if linaje in run.data.tags:
+            etiquetas[linaje] = run.data.tags[linaje]
     return etiquetas
 
 
