@@ -172,6 +172,12 @@ monitoreo-p1-ab:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 ab
 
 
+## Monitoreo de P1: promueve el challenger a champion si el último A/B lo declaró ganador
+.PHONY: monitoreo-p1-promover
+monitoreo-p1-promover:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 promover
+
+
 ## Pruebas del monitoreo de P1
 .PHONY: pruebas-monitoreo-p1
 pruebas-monitoreo-p1:

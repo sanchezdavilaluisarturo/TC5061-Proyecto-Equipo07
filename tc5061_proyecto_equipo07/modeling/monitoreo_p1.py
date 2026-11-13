@@ -6,7 +6,8 @@ Usa la base común de monitoreo.py. Los conjuntos salen de dos tablas:
     evaluacion                   el mes nuevo, calculado con el mismo pipeline de features sobre
                                  la historia extendida, porque sus rezagos necesitan los días previos
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla | drift | drift-anual | challenger | ab
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p1
+    tabla | drift | drift-anual | challenger | ab | promover
 """
 
 import time
@@ -352,6 +353,22 @@ def p1_tabla_por_zona(
 def p1_mes_previo(frontera: str) -> str:
     """Mes anterior a una frontera ("2024-10-01" -> "2024-09"), para describir los periodos."""
     return str(pd.Period(frontera, freq="M") - 1)
+
+
+def p1_run_ab(version_a: int, version_b: int):
+    """Último run de A/B entre dos versiones del Registry, o None si no se ha corrido."""
+    runs = mlflow.search_runs(
+        experiment_names=[cfg.EXPERIMENTO_MLFLOW],
+        filter_string=(
+            "tags.tipo_monitoreo = 'ab_testing' "
+            f"and tags.champion_version = '{version_a}' "
+            f"and tags.challenger_version = '{version_b}'"
+        ),
+        order_by=["attributes.start_time DESC"],
+        max_results=1,
+        output_format="list",
+    )
+    return runs[0] if runs else None
 
 
 def p1_metricas_drift(snapshots: dict, desempeno: pd.DataFrame) -> dict[str, float]:
@@ -713,6 +730,42 @@ def ab():
         f"Ganador (prueba pareada, alfa {cfg.MONITOREO_ALFA}): {texto}; "
         f"MAE {decision['media_a']:.4f} -> {decision['media_b']:.4f} "
         f"({decision['cambio_relativo']:+.1%}), p = {decision['p_valor']:.2e}"
+    )
+
+
+@app.command()
+def promover():
+    """Mueve el alias champion al challenger, solo si el último A/B entre los dos lo declaró ganador.
+
+    La versión promovida pierde el alias challenger y guarda el run del A/B que la respalda; la
+    versión reemplazada queda en el historial con la versión que la sustituyó.
+    """
+    if cfg.MLFLOW_TRACKING_URI:
+        mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
+    cliente, nombre = mlflow.MlflowClient(), cfg.P1_MODELO_REGISTRADO
+    champion = cliente.get_model_version_by_alias(nombre, "champion")
+    retador = cliente.get_model_version_by_alias(nombre, "challenger")
+    run = p1_run_ab(int(champion.version), int(retador.version))
+    if run is None:
+        raise ValueError(
+            f"No hay A/B de v{champion.version} contra v{retador.version}; "
+            "ejecutar `make monitoreo-p1-ab`"
+        )
+    ganador = run.data.tags.get("ganador")
+    if ganador != f"challenger v{retador.version}":
+        raise ValueError(
+            f"El A/B {run.info.run_id} no respalda al challenger (ganador: {ganador})"
+        )
+
+    cliente.set_registered_model_alias(nombre, "champion", retador.version)
+    cliente.delete_registered_model_alias(nombre, "challenger")
+    cliente.set_model_version_tag(nombre, retador.version, "ab_run_id", run.info.run_id)
+    cliente.set_model_version_tag(nombre, retador.version, "champion_anterior", champion.version)
+    cliente.set_model_version_tag(nombre, champion.version, "reemplazada_por", retador.version)
+    registro_p1.p1_verificar("champion")
+    logger.success(
+        f"{nombre}: champion = versión {retador.version} (antes {champion.version}), "
+        f"respaldada por el A/B {run.info.run_id}"
     )
 
 
