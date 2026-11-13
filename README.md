@@ -2073,6 +2073,29 @@ El challenger es el pipeline del champion (`StandardScaler`, PCA de 11 component
 
 Esa caída anual puede deberse al cambio de composición de la red (de 362 a 457 estaciones) y no solo a un cambio de comportamiento; con estos datos no se puede separar.
 
+#### Challenger por ventana de entrenamiento (P3): protocolo fijado antes de correrlo
+
+El challenger v5 reentrenó con toda la historia (2020-01 a 2026-09) y no superó al champion v4 (p = 0.83). Optuna ya agotó los hiperparámetros (+0.0006 de silueta). Lo que queda por probar es **desde cuándo** se entrena: 2020 y 2021 (pandemia) dominan la referencia y no se parecen a octubre 2026 (64% a 82% de variables con drift), así que un modelo con datos recientes podría ajustarse mejor. Este protocolo se fijó antes de correr nada, para que la regla no se acomode a los resultados.
+
+| Ventana | Datos de entrenamiento (final) | Entrenamiento del backtest | Qué prueba |
+|---|---|---|---|
+| `completa` | 2020-01 a 2026-09 | 2020-01 a 2025-09 | Control: es el challenger v5 |
+| `sin_pandemia` | 2022-01 a 2026-09 | 2022-01 a 2025-09 | Quitar 2020 y 2021 |
+| `ultimos_3_anios` | 2023-10 a 2026-09 (36 meses) | 2022-10 a 2025-09 (36 meses) | Solo el comportamiento reciente |
+
+- **Qué cambia y qué no.** Los hiperparámetros son los del champion (StandardScaler, PCA(11), K-Means con `k = 2`, semilla 42), copiados con `clone`; cambian solo los datos. Se mantiene el mínimo de 1000 salidas del entrenamiento (`P3_MIN_SALIDAS_TRAIN`) y se reporta cuántas estaciones quedan por ventana.
+- **Por qué hay un backtest.** Octubre 2026 ya se usó una vez, en el A/B de v4 contra v5. Probar tres ventanas contra el mismo mes sería elegir con el conjunto de evaluación. Por eso la ventana se **elige con un backtest fuera de tiempo**: cada ventana se entrena solo con datos anteriores a la frontera de test (2025-10) y se evalúa contra **octubre 2025** (368 estaciones), con el champion v4 como referencia. Octubre 2026 no se usa en la selección.
+- **Prueba.** La misma del A/B: silueta por estación en el espacio estandarizado del champion, comparación pareada (Wilcoxon) y bootstrap de la diferencia. Como se prueban tres ventanas contra el mismo champion, el nivel se corrige (Bonferroni): `alfa = 0.05 / 3 = 0.0167`, y el intervalo es de nivel `1 - alfa`.
+- **Restricciones** (las de la búsqueda con Optuna), todas necesarias para que una ventana sea elegible:
+  1. Grupo más chico de al menos `P3_TAM_MIN_ACEPTABLE` = 20 estaciones.
+  2. Estabilidad (ARI) al menos igual a la del champion. Se calcula igual para todos: ARI entre los grupos que el modelo asigna a las estaciones de su conjunto de entrenamiento y los que asigna a las mismas estaciones en octubre 2025 (el champion, con las estaciones de `referencia`).
+- **Regla de decisión.**
+  1. Una ventana es elegible si cumple las dos restricciones, su p-valor de Wilcoxon es menor que `alfa` y el intervalo de la diferencia queda por completo sobre cero. Si ninguna lo cumple, el champion v4 se queda y el experimento termina ahí, sin tocar octubre 2026.
+  2. Si hay varias elegibles, se toma la de mayor diferencia de silueta en el backtest.
+  3. La ventana elegida se reentrena con su ventana final y se prueba **una sola vez** contra octubre 2026 (mismo `alfa`). Reemplaza al champion solo si pasa también esa prueba; si el backtest y octubre 2026 no coinciden, el champion se queda.
+- **Control de cordura.** La ventana `completa` de octubre 2026 debe reproducir el A/B anterior (diferencia de -0.0018 contra v4); si no, hay un error en el flujo.
+- **Alcance.** Nada se registra en MLflow ni se mueve ningún alias hasta confirmar el resultado.
+
 #### Pruebas
 
 ```bash
