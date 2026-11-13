@@ -2096,6 +2096,24 @@ El challenger v5 reentrenó con toda la historia (2020-01 a 2026-09) y no super�
 - **Control de cordura.** La ventana `completa` de octubre 2026 debe reproducir el A/B anterior (diferencia de -0.0018 contra v4); si no, hay un error en el flujo.
 - **Alcance.** Nada se registra en MLflow ni se mueve ningún alias hasta confirmar el resultado.
 
+
+#### Resultados del backtest de ventanas (P3)
+
+Comando: `make monitoreo-p3-backtest-ventanas` (tabla completa en `reports/monitoreo/p3_backtest_ventanas.csv`). Evaluación: octubre 2025, 368 estaciones. Champion v4: silueta 0.0634 y ARI de estabilidad 0.485. Nivel `alfa = 0.0167`; los intervalos son de nivel 98.3%.
+
+| Ventana | Estaciones (entrenamiento) | Silueta | Diferencia | Intervalo de la diferencia | p (Wilcoxon) | Grupo más chico | ARI | ¿Elegible? |
+|---|---:|---:|---:|---|---:|---:|---:|---|
+| `completa` | 372 | 0.0659 | +0.0025 (+3.9%) | [-0.0007, 0.0065] | 0.044 | 172 | 0.610 | No |
+| `sin_pandemia` | 371 | 0.0658 | +0.0024 (+3.7%) | [-0.0009, 0.0063] | 0.055 | 172 | 0.672 | No |
+| `ultimos_3_anios` | 371 | 0.0657 | +0.0022 (+3.5%) | [-0.0026, 0.0077] | 0.295 | 177 | 0.654 | No |
+
+**Decisión: ninguna ventana es elegible; el champion v4 se queda.** Las tres cumplen las restricciones (grupo más chico de al menos 20 estaciones y estabilidad mayor que la del champion), pero ninguna mejora de forma significativa con el nivel corregido: la mejor, `completa`, tiene p = 0.044 (mayor que 0.0167) y su intervalo incluye cero. Según el protocolo, no se prueba contra octubre 2026 y no se registra nada en MLflow ni se mueve ningún alias.
+
+- **La ventana no importa.** Las tres mejoran la silueta en 0.0022 a 0.0025 y con el mismo signo, pero la diferencia entre ventanas es menor que la incertidumbre de cada una. Recortar la historia (quitar 2020-2021 o usar solo 36 meses) no aporta nada frente a `completa`.
+- **Lo que sí se ve es una ventaja pequeña de cualquier modelo reentrenado.** Es coherente con que los tres incluyen el año de valid, que el champion no vio. Es una hipótesis, no algo que este backtest pruebe, y la ventaja no pasa la prueba.
+- **Estabilidad.** Las tres ventanas dan un ARI mayor que el del champion (0.61 a 0.67 contra 0.485). Esta medida (los mismos grupos en las estaciones comunes entre su entrenamiento y octubre 2025) no es la de la tabla del modelo base, que usa el año de valid, así que no se compara con el 0.66 de arriba.
+- **Qué falta para insistir.** Probar otra cosa (variables nuevas, otro algoritmo) exige un protocolo nuevo fijado antes de correr; repetir el backtest con otras ventanas hasta que alguna pase sería elegir con el resultado.
+
 #### Pruebas
 
 ```bash
