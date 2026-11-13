@@ -583,7 +583,8 @@ Por zona (suma diaria de las estaciones, en test):
 | Versión | Run de origen | Alias |
 |---|---|---|
 | 1 | `p1-xgb-optuna`, 20 trials (`32b4517a11e54fd686b7f1bd7a84224d`) | — (queda en el historial) |
-| 2 | `p1-xgb-optuna`, 40 trials (`eae9b6f4f3244161a13b3d230f32f70f`) | `champion` |
+| 2 | `p1-xgb-optuna`, 40 trials (`eae9b6f4f3244161a13b3d230f32f70f`) | — (champion hasta el Entregable 8; reemplazada por la v3) |
+| 3 | `p1-xgb-challenger` (`2c8af50671024701a8a05c6cb6c23838`), la v2 reentrenada con datos hasta 2026-09 (ver [Monitoreo de P1](#monitoreo-de-p1)) | `champion`, promovida con el A/B `c71d095c02194a6e85263f8b61145375` |
 
 `register` no elige el campeón: registra el run que se le indica. Para promover otro, se registra su run (queda como versión nueva y el alias se mueve); con `-P alias=challenger` queda registrado sin reemplazar al campeón. El modelo se carga por alias, así que quien lo usa no cambia su código cuando se promueve una versión nueva:
 
@@ -1376,7 +1377,7 @@ La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que
 
 ### Despliegue en el EC2
 
-La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7mlops.com. La acción `deploy-api.yml` la actualiza con cada push a `api_rest` (es decir, al hacer merge de un PR) que toque `tc5061_proyecto_equipo07/`, el `Dockerfile`, los `requirements*.txt` o el propio workflow; también se puede lanzar a mano en *Actions > Run workflow*.
+La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7mlops.com. La acción `deploy-api.yml` la actualiza con cada push a `api_rest` o a `monitoreo_drift` (es decir, al hacer merge de un PR) que toque `tc5061_proyecto_equipo07/`, el `Dockerfile`, los `requirements*.txt` o el propio workflow; también se puede lanzar a mano en *Actions > Run workflow*.
 
 | Acción | Dónde corre | Qué deja al terminar |
 |---|---|---|
@@ -1866,13 +1867,141 @@ Requiere haber corrido `make data`.
 make pruebas-monitoreo
 ```
 
-`tests/test_monitoreo.py` (20 pruebas, sin red ni servidor de MLflow) comprueba:
+`tests/test_monitoreo.py` (22 pruebas, sin red ni servidor de MLflow) comprueba:
 
 - Fronteras y brechas de los periodos.
 - Que la limpieza del mes nuevo da el mismo resultado que `dataset.limpiar`.
 - Que el resumen de drift detecta solo las columnas desplazadas, con distancias y con p-values, y coincide con el conteo de Evidently.
 - Que las pruebas A/B eligen la versión con menor pérdida y no declaran ganador sin diferencia real.
 - Que el bootstrap por grupos amplía el intervalo cuando las filas están correlacionadas.
+- Que `registrar_en_mlflow` guarda métricas, etiquetas y artefactos, y liga los datasets y uno o varios modelos evaluados.
+
+### Monitoreo de P1
+
+Código: `modeling/monitoreo_p1.py`. Se monitoreó el champion de P1 de ese momento (v2, XGBoost de la búsqueda de 40 trials), que se entrenó con train (2020-01 a 2024-09) y predice viajes por estación-hora. Con el resultado del A/B, el champion pasó a ser la v3.
+
+```bash
+make monitoreo-datos            # mes nuevo (2026-10) con la misma limpieza
+make monitoreo-p1-tabla         # estación-horas del mes nuevo, verificadas contra la tabla de entrenamiento
+make monitoreo-p1-drift         # run p1-drift: drift, desempeño y control estacional
+make monitoreo-p1-drift-anual   # run p1-drift-mismo-mes: el mismo mes de cada año contra 2026-10
+make monitoreo-p1-challenger    # versión 3 en el Registry, alias challenger
+make monitoreo-p1-ab            # run p1-ab-v2-vs-v3: A/B testing
+make monitoreo-p1-promover      # champion = challenger, solo si el último A/B lo declaró ganador
+```
+
+Requiere `make data`, `make features-p1` y el champion en el Registry. Los HTML y JSON de Evidently se guardan en `reports/monitoreo/` y como artefactos de cada run (carpeta `monitoreo/`), no en Git; los CSV de resultados sí se versionan.
+
+#### Decisiones
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Tabla del mes nuevo | `p1_tabla_modelado` recalcula la tabla sobre la historia completa más 2026-10 y se compara contra la de entrenamiento: 16103922 estación-horas idénticas. Las 929 filas de más (antes de 2026-10) son horas posteriores al último viaje de su estación en la tabla original: aparecen porque con el mes nuevo la estación sigue activa | Si las features del mes nuevo no se calculan exactamente igual que las de entrenamiento, el drift que se mida sería del pipeline y no de los datos (*train-serving skew*) | Huyen (2022, cap. 8) |
+| Columnas del reporte | Las 14 variables del modelo menos `origen_id`, más el target `viajes` y la predicción del champion (15 columnas); `zona`, `es_fin_de_semana` y `es_festivo` como categóricas | `origen_id` es un identificador: su distribución es la mezcla de estaciones, que ya reflejan `latitud`, `longitud` y `capacidad`. Evidently trata cada columna según el tipo que se le declara | Evidently AI (s.f.); Huyen (2022, cap. 8) |
+| Tres reportes | Drift y calidad: train contra test. Desempeño (`RegressionPreset`): valid contra test. Control estacional: los octubres de train contra 2026-10 | El desempeño no se mide en train porque el nivel por estación de `P1NivelEstacion` se aprendió con su propio target y su error sale artificialmente bajo. El control estacional compara el mismo mes para que la temporada no se confunda con drift | Huyen (2022, cap. 8) |
+| Desglose por año | El octubre de cada año (2020 a 2025) contra 2026-10, solo con las columnas de demanda (`viajes`, rezagos, promedio de 4 semanas y predicción), más el error de champion y baseline por año | Separa un año atípico (2020, con la pandemia) de un cambio sostenido, y muestra si el cambio es reciente | Huyen (2022, cap. 8) |
+| Estaciones nuevas para el champion | Son las que no aparecen en train (110 de 469 en 2026-10). `monitoreo-datos` reporta 0 frente a la nomenclatura de entrenamiento porque esa nomenclatura es de 2026-09 y ya incluye las estaciones abiertas después de train | `P1NivelEstacion` asigna el nivel del sistema a una estación que no vio: el champion predice sin su historia. Un cambio en los valores posibles de una variable (*feature change*) degrada el modelo aunque no aparezca como drift | Huyen (2022, cap. 8) |
+| Versión alternativa | `clone` del champion (mismos hiperparámetros y semilla) entrenado desde cero con 2020-01 a 2026-09 sin brechas (16080870 filas, 2.1 min). Se registra con las mismas funciones que los entrenamientos (`p1_registrar_run` y `registro_p1`) como versión 3 con alias `challenger` | Solo cambian los datos (*data iteration*), así que la diferencia del A/B mide el valor de reentrenar con datos frescos. Reentrenar desde cero (*stateless retraining*) es el punto de partida del Continuous Training | Huyen (2022, cap. 9); MLflow (s.f.-a) |
+| Linaje de la versión 3 | Mismas etiquetas que las demás versiones, más `base_version`, `base_source_run_id` y `rango_datos` (el run lleva también `base_model_id`). Su `data_version` es el mismo de la v2 (`c3b84e1ab511`), porque sus datos están dentro del rango del manifiesto del proyecto; lo que cambia es la ventana, que queda en `rango_datos` | Cada versión debe poder reproducirse con sus datos y su código | Treveil et al. (2020, cap. 7); MLflow (s.f.-a) |
+| Unidad y segmentos del A/B | Estación-día (bootstrap y reparto aleatorio); el resultado se reporta para todas las estaciones, las conocidas y las nuevas para el champion | Las horas de una misma estación y día están correlacionadas. Los segmentos ponen a prueba la hipótesis de que el champion pierde por las estaciones que no conoce | Treveil et al. (2020, cap. 7) |
+| Métrica de negocio | MAE diario por zona (`p1_mae_por_zona`), la misma de la Fase 2 | El operador planea la flota por zona y día; un error que no se cancela al sumar las horas indica un sesgo del modelo | Treveil et al. (2020, cap. 7) |
+| Promoción en un paso aparte | `monitoreo-p1-ab` solo deja la decisión en la etiqueta `ganador`. `monitoreo-p1-promover` mueve el alias `champion` al challenger solo si el último A/B entre esas dos versiones lo declaró ganador; quita el alias `challenger` y deja el linaje en el Registry: `ab_run_id` y `champion_anterior` en la versión promovida, `reemplazada_por` en la anterior | Promover cambia el modelo que sirve la API: la decisión queda explícita, con su evidencia, y el modelo nuevo solo reemplaza al vigente si demostró ser mejor | Huyen (2022, cap. 9); Treveil et al. (2020, cap. 7); MLflow (s.f.-a) |
+
+#### Resultados
+
+**Drift.** Ninguna comparación llega al umbral de drift del conjunto (la mitad de las columnas), pero la demanda sí se movió cuando se quita el efecto de la temporada:
+
+| Comparación | Columnas con drift | Principales (distancia) |
+|---|---|---|
+| Train contra test | 3 de 15 | `dias_desde_apertura` 1.99, `longitud` 0.122, `capacidad` 0.107 |
+| Octubres de train contra 2026-10 | 6 de 15 | `viajes_rezago_1d` 0.132, `viajes` 0.126, `viajes_rezago_7d` 0.113 |
+
+- `dias_desde_apertura` crece con el tiempo, así que su drift es por construcción.
+- `longitud` y `capacidad` cambian porque la red tiene estaciones nuevas, en otras ubicaciones y con otro tamaño.
+- Entre train y test la demanda no tiene drift: el cambio es reciente.
+
+**Desglose por año.** Drift de `viajes` del octubre de cada año contra 2026-10:
+
+| 2020 | 2021 | 2022 | 2023 | 2024 | 2025 |
+|---|---|---|---|---|---|
+| 0.35 | 0.19 | 0.04 | 0.05 | 0.126 | 0.125 |
+
+- 2020 y 2021 son atípicos (pandemia).
+- 2024 y 2025 rebasan el umbral de 0.1: de octubre de 2025 a octubre de 2026 los viajes promedio por estación-hora pasan de 1.83 a 2.19 (+20 %) y las estaciones en operación, de 370 a 469 (+27 %).
+
+**Desempeño del champion.** La ventaja sobre el baseline se pierde en el mes nuevo:
+
+| Conjunto | MAE champion | MAE baseline | Ventaja |
+|---|---|---|---|
+| Valid | 0.9617 | 1.0189 | 5.6 % |
+| Test | 0.9852 | 1.0135 | 2.8 % |
+| 2026-10 | 1.2277 | 1.2005 | −2.3 % |
+
+**A/B testing.** Champion v2 (A) contra challenger v3 (B) sobre 2026-10, prueba pareada (decide):
+
+| Segmento | Estaciones | MAE v2 | MAE v3 | Cambio | IC 95 % de B − A | MAE baseline |
+|---|---|---|---|---|---|---|
+| Todas | 469 | 1.2277 | 1.1425 | −6.9 % | [−0.090, −0.080] | 1.2005 |
+| Conocidas | 359 | 1.3487 | 1.2740 | −5.5 % | [−0.081, −0.069] | 1.3409 |
+| Nuevas | 110 | 0.8293 | 0.7095 | −14.4 % | [−0.125, −0.115] | 0.7382 |
+
+- En los tres segmentos el p-value de Wilcoxon y de la t pareada es menor a 1e-95 (el 0 que reporta el log es un valor más chico de lo que se puede representar). La prueba aleatoria confirma la dirección: −5.5 % global, p = 7.0e-31.
+- La ganancia es mayor en las estaciones nuevas, como predecía la hipótesis: ahí el champion era 12 % peor que el baseline y la v3 queda 4 % mejor.
+- En las conocidas también mejora, porque la v3 vio el aumento de demanda de 2025 y 2026.
+- La v3 recupera la ventaja sobre el baseline: 4.8 % menos MAE.
+
+MAE diario por zona (viajes por día):
+
+| Zona | v2 | v3 | Baseline | Cambio v3 contra v2 |
+|---|---|---|---|---|
+| GDL | 3994.0 | 1581.0 | 2148.9 | −60 % |
+| TLQ | 47.1 | 27.4 | 36.6 | −42 % |
+| ZPN | 357.3 | 298.2 | 311.1 | −17 % |
+
+El error diario de la v2 en GDL casi duplica el del baseline: sus errores por hora no se cancelan al sumar el día, señal de un sesgo sistemático frente a la demanda nueva.
+
+#### Recomendación de Continuous Training
+
+| Decisión | Qué se recomienda | Por qué | Lectura |
+|---|---|---|---|
+| Promover la v3 (hecho) | El alias `champion` se movió a la versión 3 con `make monitoreo-p1-promover`. La API carga el champion al arrancar (ver [Cómo carga los modelos](#cómo-carga-los-modelos)): tomó la v3 en el siguiente despliegue automático, sin cambiar la imagen ni el código. `/salud` respondía `"p1": {"alias": "champion", "version": 2}` antes de ese despliegue y `"version": 3` después | Gana la prueba pareada con una diferencia significativa y relevante (6.9 %), en los tres segmentos y en las tres zonas | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
+| Cadencia | Reentrenar cada mes, cuando el portal publique el mes nuevo, con los mismos hiperparámetros y los datos hasta el mes previo | Los datos llegan cada mes y reentrenar cuesta unos 2 minutos. Con un solo A/B no se puede fijar la cadencia óptima: para eso hay que medir el valor de la frescura de los datos, entrenando con ventanas que terminan en meses distintos | Huyen (2022, cap. 9) |
+| Compuerta | Antes de cada promoción, correr el A/B champion/challenger sobre el mes nuevo con el mismo protocolo; `monitoreo-p1-promover` no promueve sin ese respaldo | Un modelo nuevo solo reemplaza al vigente si demuestra ser mejor con datos que ninguno de los dos vio | Huyen (2022, cap. 9); Treveil et al. (2020, cap. 7) |
+| Disparadores | Además del calendario: drift de la demanda (`viajes` y sus rezagos) contra el mismo mes del año anterior, o estaciones con viajes que no estaban en los datos de entrenamiento | Son las dos causas de la degradación que mostró este monitoreo; las demás columnas pueden moverse sin afectar al modelo | Huyen (2022, cap. 8) |
+| Búsqueda de hiperparámetros | Repetir la búsqueda con Optuna solo cuando el reentrenamiento deje de mejorar al champion | Cambiar los datos y el modelo al mismo tiempo impide saber qué produjo la mejora (*data iteration* contra *model iteration*) | Huyen (2022, cap. 9) |
+| Etapa | Hoy el reentrenamiento es manual (`make monitoreo-p1-challenger`, `make monitoreo-p1-ab` y `make monitoreo-p1-promover`); el siguiente paso es automatizarlo con un workflow programado | Es el paso de reentrenamiento manual a automatizado desde cero (*stateless*) | Huyen (2022, cap. 9) |
+
+#### Limitaciones
+
+- Se evaluó un solo mes (octubre); un A/B en otra temporada podría dar una diferencia distinta.
+- El mes de evaluación sale del portal, no del tráfico de la API, que no guarda un registro de sus predicciones.
+- La v2 se entrenó solo con train y la v3 con dos años más de datos: el A/B mide el valor de esos datos, no el de un mes de reentrenamiento.
+
+#### Runs en MLflow
+
+| Run | Run ID |
+|---|---|
+| `p1-drift` | `3efde2a7e2e54084ae309fc44a7ee2ce` |
+| `p1-drift-mismo-mes` | `8b1ea2d08e6c453c87ccb050bf044c55` |
+| `p1-xgb-challenger` | `2c8af50671024701a8a05c6cb6c23838` |
+| `p1-ab-v2-vs-v3` | `c71d095c02194a6e85263f8b61145375` |
+
+Cada run lleva los datasets de MLflow que usó, el modelo evaluado ligado como entrada (en el A/B, los dos), el commit, la descripción, `data_version`, los manifiestos y los archivos de configuración.
+
+#### Pruebas
+
+```bash
+make pruebas-monitoreo-p1
+```
+
+`tests/test_monitoreo_p1.py` (23 pruebas, con datos sintéticos y un MLflow local) comprueba:
+
+- Que la tabla extendida reproduce la de entrenamiento y que las filas de más son horas posteriores al último viaje.
+- Que la evaluación solo trae el mes nuevo y sus rezagos usan septiembre.
+- Que los reportes excluyen `origen_id`, y que el drift y el desglose anual generan sus reportes, resúmenes y runs.
+- Que el challenger no incluye el mes de evaluación, copia los hiperparámetros y se registra sin mover el champion.
+- Que el A/B agrupa por estación-día, separa estaciones conocidas y nuevas, y registra el run con los dos modelos.
+- Que la promoción no ocurre sin un A/B que declare ganador al challenger y, cuando ocurre, mueve el alias y deja el linaje.
 
 ### Monitoreo de P3 (segmentación de estaciones)
 

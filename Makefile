@@ -142,6 +142,48 @@ pruebas-monitoreo:
 	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo.py
 
 
+## Monitoreo de P1: estación-horas del mes nuevo, verificadas contra la tabla de entrenamiento
+.PHONY: monitoreo-p1-tabla
+monitoreo-p1-tabla:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla
+
+
+## Monitoreo de P1: reportes de drift, desempeño y estacionalidad del champion (run p1-drift en MLflow)
+.PHONY: monitoreo-p1-drift
+monitoreo-p1-drift:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 drift
+
+
+## Monitoreo de P1: el mismo mes de cada año previo contra el mes nuevo (run p1-drift-mismo-mes)
+.PHONY: monitoreo-p1-drift-anual
+monitoreo-p1-drift-anual:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 drift-anual
+
+
+## Monitoreo de P1: versión alternativa (champion reentrenado con datos recientes, alias challenger)
+.PHONY: monitoreo-p1-challenger
+monitoreo-p1-challenger:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 challenger
+
+
+## Monitoreo de P1: A/B testing de champion contra challenger sobre el mes nuevo (run p1-ab-...)
+.PHONY: monitoreo-p1-ab
+monitoreo-p1-ab:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 ab
+
+
+## Monitoreo de P1: promueve el challenger a champion si el último A/B lo declaró ganador
+.PHONY: monitoreo-p1-promover
+monitoreo-p1-promover:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 promover
+
+
+## Pruebas del monitoreo de P1
+.PHONY: pruebas-monitoreo-p1
+pruebas-monitoreo-p1:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p1.py
+
+
 ## MLflow local de respaldo si el servidor del equipo no responde (usar MLFLOW_TRACKING_URI=http://127.0.0.1:5000)
 .PHONY: mlflow-local
 mlflow-local:
