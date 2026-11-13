@@ -478,3 +478,137 @@ def test_registrar_ab_falla_si_el_champion_cambio_desde_el_calculo(registro_loca
     escribir_resultado_ab(registro_local, champion_version=3)
     with pytest.raises(ValueError, match="volver a correr"):
         mp3.registrar_ab()
+
+
+# ---------------------------------------------------------------------------------------------
+# Challenger por ventana de entrenamiento
+# ---------------------------------------------------------------------------------------------
+
+
+def test_inicio_de_ventana_por_inicio_fijo_o_por_meses_hacia_atras():
+    assert mp3.p3_inicio_ventana("completa", pd.Period("2026-09", freq="M")) is None
+    assert mp3.p3_inicio_ventana("sin_pandemia", pd.Period("2026-09", freq="M")) == pd.Timestamp(
+        "2022-01-01"
+    )
+    # 36 meses terminando en el último mes, incluyéndolo: 2023-10 a 2026-09 y 2022-10 a 2025-09
+    assert mp3.p3_inicio_ventana(
+        "ultimos_3_anios", pd.Period("2026-09", freq="M")
+    ) == pd.Timestamp("2023-10-01")
+    assert mp3.p3_inicio_ventana(
+        "ultimos_3_anios", pd.Period("2025-09", freq="M")
+    ) == pd.Timestamp("2022-10-01")
+
+
+def test_una_ventana_desconocida_se_rechaza():
+    with pytest.raises(ValueError, match="Ventana desconocida"):
+        mp3.p3_inicio_ventana("inventada", pd.Period("2026-09", freq="M"))
+    with pytest.raises(ValueError, match="Ventana desconocida"):
+        mp3.p3_clave_entrenamiento("inventada")
+
+
+def test_la_ventana_completa_es_el_perfil_del_challenger_actual():
+    assert mp3.p3_clave_entrenamiento("completa") == "entrenamiento_challenger"
+    assert mp3.p3_clave_entrenamiento("sin_pandemia") == "entrenamiento_challenger_sin_pandemia"
+
+
+def test_las_ventanas_finales_recortan_el_inicio_del_entrenamiento(viajes):
+    perfiles = mp3.p3_perfiles_por_periodo(viajes)
+    # Estación 1: 60 salidas en 2021-10, 40 en 2022-03, 50 en valid y 50 en test
+    assert perfiles["entrenamiento_challenger"].loc[1, "salidas"] == 200
+    assert perfiles["entrenamiento_challenger_sin_pandemia"].loc[1, "salidas"] == 140
+    assert perfiles["entrenamiento_challenger_ultimos_3_anios"].loc[1, "salidas"] == 100
+
+
+def test_el_backtest_solo_usa_datos_anteriores_a_la_frontera_de_test(viajes):
+    perfiles = mp3.p3_perfiles_por_periodo(viajes)
+    # Sin el test (2026-03), sin la brecha y sin el mes nuevo: 100 de la referencia + 50 de valid
+    assert perfiles["backtest_completa"].loc[1, "salidas"] == 150
+    assert perfiles["backtest_sin_pandemia"].loc[1, "salidas"] == 90
+    # 2022-10 a 2025-09: solo valid
+    assert perfiles["backtest_ultimos_3_anios"].loc[1, "salidas"] == 50
+    for ventana in cfg.P3_VENTANAS_CHALLENGER:
+        assert (
+            perfiles[f"backtest_{ventana}"].loc[1, "salidas"]
+            <= perfiles["backtest_completa"].loc[1, "salidas"]
+        )
+
+
+def test_estabilidad_es_uno_si_el_modelo_asigna_igual_en_los_dos_conjuntos():
+    champion, datos = champion_de_juguete(0)
+    assert mp3.p3_estabilidad(champion, datos, datos) == pytest.approx(1.0)
+
+
+def test_estabilidad_usa_solo_las_estaciones_comunes():
+    champion, datos = champion_de_juguete(0)
+    evaluacion = datos.iloc[:30]
+    assert mp3.p3_estabilidad(champion, datos, evaluacion) == pytest.approx(1.0)
+
+
+def test_evaluar_ventana_con_los_mismos_datos_no_es_elegible(pocos_remuestreos):
+    champion, datos = champion_de_juguete(0)
+    fila = mp3.p3_evaluar_ventana(champion, "sin_pandemia", datos, datos, ari_champion=1.0)
+    assert fila["ventana"] == "sin_pandemia"
+    assert fila["estaciones_entrenamiento"] == len(datos)
+    assert fila["diferencia"] == pytest.approx(0)
+    assert fila["mejora_significativa"] is False
+    assert fila["elegible"] is False
+    # Bonferroni: tres ventanas contra el mismo champion
+    assert fila["alfa"] == pytest.approx(cfg.MONITOREO_ALFA / len(cfg.P3_VENTANAS_CHALLENGER))
+
+
+def test_una_restriccion_incumplida_descarta_la_ventana_aunque_mejore(
+    pocos_remuestreos, monkeypatch
+):
+    evaluacion = datos_con_dos_grupos()
+    champion = ChampionAleatorio(evaluacion)
+    entrenamiento = evaluacion
+    # El champion aleatorio no se puede clonar: el modelo de la ventana se arma antes
+    modelo_ventana = mp3.p3_reentrenar(champion_de_juguete(0)[0], evaluacion)
+    monkeypatch.setattr(mp3, "p3_reentrenar", lambda campeon, perfil: modelo_ventana)
+    fila_libre = mp3.p3_evaluar_ventana(champion, "completa", entrenamiento, evaluacion, 0.0)
+    assert fila_libre["mejora_significativa"] is True and fila_libre["elegible"] is True
+    # Con una estabilidad mínima que el challenger no alcanza, deja de ser elegible
+    fila_estricta = mp3.p3_evaluar_ventana(champion, "completa", entrenamiento, evaluacion, 2.0)
+    assert fila_estricta["mejora_significativa"] is True
+    assert fila_estricta["cumple_estabilidad"] is False and fila_estricta["elegible"] is False
+    # Con un tamaño mínimo imposible tampoco
+    monkeypatch.setattr(cfg, "P3_TAM_MIN_ACEPTABLE", len(entrenamiento) + 1)
+    fila_chica = mp3.p3_evaluar_ventana(champion, "completa", entrenamiento, evaluacion, 0.0)
+    assert fila_chica["cumple_tamano"] is False and fila_chica["elegible"] is False
+
+
+def test_elegir_ventana_toma_la_elegible_de_mayor_diferencia_o_ninguna():
+    tabla = pd.DataFrame(
+        {
+            "ventana": ["completa", "sin_pandemia", "ultimos_3_anios"],
+            "diferencia": [0.001, 0.004, 0.009],
+            "elegible": [True, True, False],
+        }
+    )
+    assert mp3.p3_elegir_ventana(tabla) == "sin_pandemia"
+    assert mp3.p3_elegir_ventana(tabla.assign(elegible=False)) is None
+
+
+def test_registrar_una_ventana_distinta_de_completa_no_esta_soportado():
+    import typer
+
+    with pytest.raises(typer.BadParameter, match="completa"):
+        mp3.challenger(registrar=True, ventana="sin_pandemia")
+
+
+def test_ab_con_ventana_guarda_aparte_y_no_toca_el_ab_de_v5(
+    tmp_path, monkeypatch, pocos_remuestreos
+):
+    champion, datos = champion_de_juguete(0)
+    monkeypatch.setattr(cfg, "MONITOREO_DIR", tmp_path)
+    conjuntos = {"evaluacion": datos, "entrenamiento_challenger_sin_pandemia": datos}
+    monkeypatch.setattr(mp3, "p3_conjuntos", lambda: conjuntos)
+    monkeypatch.setattr(mp3, "p3_cargar_champion", lambda: (champion, 4, {}, None))
+    mp3.ab(ventana="sin_pandemia")
+    resultado = pd.read_csv(tmp_path / "p3_ab_sin_pandemia_resultado.csv", index_col="metrica")
+    assert resultado.loc["ventana", "valor"] == "sin_pandemia"
+    assert float(resultado.loc["alfa", "valor"]) == pytest.approx(
+        cfg.MONITOREO_ALFA / len(cfg.P3_VENTANAS_CHALLENGER)
+    )
+    assert (tmp_path / "p3_ab_sin_pandemia_estaciones.csv").exists()
+    assert not (tmp_path / "p3_ab_resultado.csv").exists()
