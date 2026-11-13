@@ -23,7 +23,7 @@ from sklearn.metrics import (
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
-from tc5061_proyecto_equipo07 import dataset, features, monitoreo
+from tc5061_proyecto_equipo07 import dataset, features, monitoreo, plots
 from tc5061_proyecto_equipo07.modeling.predict import p2_decidir_clase
 from tc5061_proyecto_equipo07.modeling.train import (
     P2BaselineHistorico,
@@ -48,6 +48,8 @@ P2_COLUMNAS_CONJUNTO = [*cfg.P2_FEATURES_CON_HISTORICO, "clase", "estacion", "di
 P2_MIN_POSITIVOS = 30
 
 P2_RIESGOS = {1: "sin_bicis", 2: "sin_anclajes"}
+# Reportes de drift de Evidently y el nombre de su comparación en el resumen y las métricas
+P2_COMPARACIONES_DRIFT = {"p2_drift_train_test": "train_test", "p2_drift_estacional": "estacional"}
 
 
 def p2_leer_viajes(desde: pd.Timestamp, ruta=cfg.RUTA_VIAJES_LIMPIOS_EXTENDIDOS) -> pd.DataFrame:
@@ -202,78 +204,84 @@ def p2_predecir(version: dict, datos: pd.DataFrame) -> tuple[np.ndarray, np.ndar
     return proba, p2_decidir_clase(proba, version["umbrales"])
 
 
-def p2_estaciones_nuevas(datos: pd.DataFrame, estaciones_referencia: np.ndarray) -> np.ndarray:
-    """True en las filas de estaciones que no aparecen en la referencia (abrieron después de train).
+def p2_metricas(y: np.ndarray, proba: np.ndarray, pred: np.ndarray) -> dict[str, float]:
+    """Métricas de un grupo de filas, separando lo que puede cambiar con el tiempo.
 
-    El modelo nunca vio esas estaciones; su riesgo, su capacidad y su flujo pueden ser distintos.
-    """
-    return ~datos["estacion"].isin(estaciones_referencia).to_numpy()
-
-
-def p2_metricas_sin_umbral(y: np.ndarray, proba: np.ndarray) -> dict[str, float]:
-    """Métricas que separan las tres cosas que pueden cambiar con el tiempo.
-
-    prevalencia_*   cuánto riesgo hubo
-    prediccion_*    probabilidad media que da el modelo; igual a la prevalencia si está calibrado
+    prevalencia_*   cuánto riesgo hubo (depende de los datos, no del modelo)
+    prediccion_*    probabilidad media del modelo; calibracion_* = prediccion / prevalencia (1 = bien)
     auc_*           si ordena bien las filas por riesgo; no depende de la prevalencia
     lift_ap_*       AP entre prevalencia: cuántas veces mejor que el azar
+    ap_*, log_loss  las del entrenamiento: dependen de la prevalencia, comparan modelos sobre las
+                    mismas filas pero no periodos entre sí
+    f1_*            con los umbrales del modelo
     """
     metricas = {}
-    riesgo, p_riesgo = y > 0, 1 - proba[:, 0]
-    for k, nombre in P2_RIESGOS.items():
+    for k, riesgo in P2_RIESGOS.items():
         positivo = y == k
-        metricas[f"prevalencia_{nombre}"] = float(positivo.mean())
-        metricas[f"prediccion_{nombre}"] = float(proba[:, k].mean())
+        prevalencia, prediccion = positivo.mean(), proba[:, k].mean()
         suficiente = P2_MIN_POSITIVOS <= positivo.sum() < len(y)
-        metricas[f"auc_{nombre}"] = roc_auc_score(positivo, proba[:, k]) if suficiente else np.nan
-        metricas[f"lift_ap_{nombre}"] = (
-            average_precision_score(positivo, proba[:, k]) / positivo.mean()
-            if suficiente
-            else np.nan
-        )
+        metricas |= {
+            f"prevalencia_{riesgo}": prevalencia,
+            f"prediccion_{riesgo}": prediccion,
+            f"calibracion_{riesgo}": prediccion / prevalencia if prevalencia else np.nan,
+            f"auc_{riesgo}": roc_auc_score(positivo, proba[:, k]) if suficiente else np.nan,
+            f"lift_ap_{riesgo}": (
+                average_precision_score(positivo, proba[:, k]) / prevalencia
+                if suficiente
+                else np.nan
+            ),
+        }
+    riesgo = y > 0
     suficiente = P2_MIN_POSITIVOS <= riesgo.sum() < len(y)
-    metricas["auc_riesgo"] = roc_auc_score(riesgo, p_riesgo) if suficiente else np.nan
-    return metricas
+    metricas["auc_riesgo"] = roc_auc_score(riesgo, 1 - proba[:, 0]) if suficiente else np.nan
+    _, _, f1, _ = precision_recall_fscore_support(y, pred, labels=[1, 2], zero_division=0)
+    return {
+        **metricas,
+        **p2_calcular_metricas(y, proba),
+        "f1_sin_bicis": f1[0],
+        "f1_sin_anclajes": f1[1],
+    }
 
 
 def p2_desempeno(
     modelos: dict[str, dict],
     conjuntos: dict[str, pd.DataFrame],
     estaciones_referencia: np.ndarray,
+    por_mes: bool = False,
 ) -> pd.DataFrame:
-    """Desempeño de cada modelo por conjunto y cohorte, sobre todas sus filas.
+    """Métricas de cada modelo por conjunto (o por mes, con `por_mes`) y cohorte de estaciones.
 
-    Sin umbral: prevalencia, predicción media, AUC y AP entre prevalencia (p2_metricas_sin_umbral).
-    Con las del entrenamiento: AP y log-loss (dependen de la prevalencia: comparan modelos sobre
-    las mismas filas, no periodos entre sí) y F1 con los umbrales de cada modelo.
+    Cohortes: todas, conocidas (con filas en la referencia) y nuevas (abrieron después de train;
+    el modelo nunca las vio y su riesgo, capacidad y flujo pueden ser distintos).
     """
     filas = []
     for conjunto, datos in conjuntos.items():
         y = datos["clase"].to_numpy()
-        nuevas = p2_estaciones_nuevas(datos, estaciones_referencia)
-        cohortes = {"todas": np.ones(len(datos), bool), "conocidas": ~nuevas, "nuevas": nuevas}
+        nuevas = ~datos["estacion"].isin(estaciones_referencia).to_numpy()
+        if por_mes:
+            grupos = datos["dia"].dt.to_period("M").astype(str).to_numpy()
+        else:
+            grupos = np.full(len(datos), conjunto)
         for nombre, version in modelos.items():
             proba, pred = p2_predecir(version, datos)
-            for cohorte, en_cohorte in cohortes.items():
-                if not (y[en_cohorte] > 0).any():
-                    continue
-                y_c, proba_c = y[en_cohorte], proba[en_cohorte]
-                _, _, f1, _ = precision_recall_fscore_support(
-                    y_c, pred[en_cohorte], labels=[1, 2], zero_division=0
-                )
-                filas.append(
-                    {
-                        "modelo": nombre,
-                        "conjunto": conjunto,
-                        "cohorte": cohorte,
-                        "filas": int(en_cohorte.sum()),
-                        "proporcion_estaciones_nuevas": float(nuevas.mean()),
-                        **p2_metricas_sin_umbral(y_c, proba_c),
-                        **p2_calcular_metricas(y_c, proba_c),
-                        "f1_sin_bicis": f1[0],
-                        "f1_sin_anclajes": f1[1],
-                    }
-                )
+            for grupo in np.unique(grupos):
+                del_grupo = grupos == grupo
+                cohortes = {"todas": del_grupo, "conocidas": del_grupo & ~nuevas}
+                cohortes["nuevas"] = del_grupo & nuevas
+                for cohorte, filas_c in cohortes.items():
+                    if not (y[filas_c] > 0).any():
+                        continue
+                    filas.append(
+                        {
+                            "modelo": nombre,
+                            "conjunto": conjunto,
+                            **({"mes": grupo} if por_mes else {}),
+                            "cohorte": cohorte,
+                            "filas": int(filas_c.sum()),
+                            "proporcion_estaciones_nuevas": float(nuevas[del_grupo].mean()),
+                            **p2_metricas(y[filas_c], proba[filas_c], pred[filas_c]),
+                        }
+                    )
     return pd.DataFrame(filas)
 
 
@@ -327,54 +335,53 @@ def p2_mismo_mes(referencia: pd.DataFrame, mes: str = cfg.MES_MONITOREO) -> pd.D
     return referencia[referencia["dia"].dt.month == numero].reset_index(drop=True)
 
 
-def p2_metricas_drift(snapshots: dict, desempeno: pd.DataFrame) -> dict[str, float]:
-    """Métricas del run: columnas con drift por reporte, desempeño de la cohorte `todas`, y AUC y
-    calibración de las otras dos cohortes (el CSV de desempeño trae todo)."""
-    metricas = {}
-    for nombre, snapshot in snapshots.items():
-        proporcion = monitoreo.proporcion_drift(snapshot)
-        metricas[f"columnas_con_drift_{nombre}"] = proporcion["columnas_con_drift"]
-        metricas[f"proporcion_drift_{nombre}"] = proporcion["proporcion_drift"]
-    excluidas = {"modelo", "conjunto", "cohorte", "filas"}
-    for fila in desempeno.to_dict("records"):
-        prefijo = f"{fila['modelo']}_"
-        sufijo = f"_{fila['conjunto']}"
-        if fila["cohorte"] == "todas":
-            valores = [c for c in fila if c not in excluidas]
-        else:
-            valores = ["auc_riesgo", "prevalencia_sin_bicis", "prediccion_sin_bicis"]
-            sufijo = f"_{fila['cohorte']}{sufijo}"
-        for valor in valores:
-            if pd.notna(fila[valor]):
-                metricas[f"{prefijo}{valor}{sufijo}"] = float(fila[valor])
-    champion = desempeno.query("modelo == 'champion' and cohorte == 'todas'").set_index("conjunto")
-    for conjunto in ("actual", "evaluacion"):
-        cambio = champion.loc[conjunto, "auc_riesgo"] / champion.loc["valid", "auc_riesgo"] - 1
-        metricas[f"champion_cambio_auc_riesgo_{conjunto}_vs_valid"] = cambio
-        for riesgo in ("sin_bicis", "sin_anclajes"):
-            # 1 = calibrado; 2 = el champion predice el doble del riesgo real
-            metricas[f"champion_calibracion_{riesgo}_{conjunto}"] = (
-                champion.loc[conjunto, f"prediccion_{riesgo}"]
-                / champion.loc[conjunto, f"prevalencia_{riesgo}"]
-            )
-    return metricas
+def p2_metricas_run(snapshots: dict, desempeno: pd.DataFrame) -> tuple[dict, dict]:
+    """Métricas del run de drift: solo las que sostienen la lectura; los CSV traen todo.
 
-
-def p2_separar_metricas_champion(metricas: dict, conjuntos) -> dict[str, dict[str, float]]:
-    """Saca de `metricas` las del champion en cada conjunto (cohorte `todas`), para asociarlas a su
-    modelo y dataset en MLflow; las de cohortes y cambios se quedan como métricas del run."""
-    return {
-        conjunto: {
-            clave: metricas.pop(clave)
-            for clave in list(metricas)
-            if clave.startswith("champion_")
-            and clave.endswith(f"_{conjunto}")
-            and not any(
-                p in clave for p in ("_cambio_", "_calibracion_", "_conocidas_", "_nuevas_")
-            )
+    Regresa (del run, del champion por conjunto). Las del champion son su desempeño en cada
+    conjunto y van a su página en MLflow; las del run son el drift, la prevalencia, la calibración,
+    el AUC por cohorte de estaciones y el baseline como referencia.
+    """
+    run = {}
+    for reporte, comparacion in P2_COMPARACIONES_DRIFT.items():
+        proporcion = monitoreo.proporcion_drift(snapshots[reporte])
+        run[f"columnas_con_drift_{comparacion}"] = proporcion["columnas_con_drift"]
+        run[f"proporcion_drift_{comparacion}"] = proporcion["proporcion_drift"]
+    filas = desempeno.set_index(["modelo", "cohorte", "conjunto"])
+    del_champion = {}
+    for conjunto in desempeno["conjunto"].unique():
+        champion, baseline = (
+            filas.loc[("champion", "todas", conjunto)],
+            filas.loc[("baseline", "todas", conjunto)],
+        )
+        del_champion[conjunto] = {
+            f"champion_{m}_{conjunto}": champion[m]
+            for m in ("auc_riesgo", "ap_riesgo", "log_loss", "f1_sin_bicis", "f1_sin_anclajes")
         }
-        for conjunto in conjuntos
-    }
+        for m in (
+            "proporcion_estaciones_nuevas",
+            "prevalencia_sin_bicis",
+            "prevalencia_sin_anclajes",
+        ):
+            run[f"{m}_{conjunto}"] = champion[m]
+        for m in ("calibracion_sin_bicis", "calibracion_sin_anclajes"):
+            run[f"champion_{m}_{conjunto}"] = champion[m]
+        for m in ("auc_riesgo", "ap_riesgo"):
+            run[f"baseline_{m}_{conjunto}"] = baseline[m]
+        for cohorte in ("conocidas", "nuevas"):
+            if ("champion", cohorte, conjunto) in filas.index:
+                for m in ("auc_riesgo", "calibracion_sin_bicis"):
+                    run[f"champion_{m}_{cohorte}_{conjunto}"] = filas.loc[
+                        ("champion", cohorte, conjunto), m
+                    ]
+    auc = {c: m[f"champion_auc_riesgo_{c}"] for c, m in del_champion.items()}
+    for conjunto in ("actual", "evaluacion"):
+        run[f"champion_cambio_auc_riesgo_{conjunto}_vs_valid"] = auc[conjunto] / auc["valid"] - 1
+
+    def limpiar(metricas: dict) -> dict[str, float]:
+        return {k: float(v) for k, v in metricas.items() if pd.notna(v)}
+
+    return limpiar(run), {c: limpiar(m) for c, m in del_champion.items()}
 
 
 def p2_datasets(conjuntos: dict[str, pd.DataFrame], referencia_muestra: pd.DataFrame) -> dict:
@@ -450,28 +457,24 @@ def tabla():
 
 @app.command()
 def drift(muestra: int = cfg.MONITOREO_MUESTRA):
-    """Reportes de drift, desempeño y estacionalidad del champion, registrados como run en MLflow.
+    """Drift, desempeño y serie mensual del champion, registrados como un run en MLflow.
 
-    1. Drift y calidad: referencia (train) contra actual (test), con probabilidades y predicción.
-    2. Desempeño: valid contra actual y valid contra el mes de evaluación, con la clase real y las
-       probabilidades (ClassificationPreset).
-    3. Estacionalidad: el mismo mes en la referencia contra el mes de evaluación.
-    El desempeño completo (por conjunto y cohorte de estaciones) va en p2_desempeno.csv.
+    Reportes de Evidently: drift de referencia (train) contra actual (test), desempeño con
+    probabilidades de valid contra actual y contra el mes nuevo, y control estacional (el mismo mes
+    de la referencia contra el mes nuevo). Tablas: desempeño por conjunto y por mes, por cohorte de
+    estaciones, y el mismo mes de cada año; gráfica de la serie mensual.
     """
     conjuntos = p2_conjuntos(cfg.RUTA_P2_CAMBIOS, cfg.P2_RUTA_EVALUACION)
-    # De la referencia solo se usan sus estaciones, una muestra y sus octubres: se libera el resto
+    # De la referencia solo se usan sus estaciones, una muestra y su mismo mes: se libera el resto
     referencia = conjuntos.pop("referencia")
-    estaciones_referencia = referencia["estacion"].unique()
-    referencia_m = monitoreo.muestrear(referencia, muestra)
-    mismo_mes = p2_mismo_mes(referencia)
+    estaciones = referencia["estacion"].unique()
+    referencia_m, mismo_mes = monitoreo.muestrear(referencia, muestra), p2_mismo_mes(referencia)
     del referencia
     champion = p2_cargar_alias("champion")
-    baseline = p2_baseline(conjuntos["valid"])
-
-    evaluados = {c: conjuntos[c] for c in ("valid", "actual", "evaluacion")}
-    desempeno = p2_desempeno(
-        {"champion": champion, "baseline": baseline}, evaluados, estaciones_referencia
-    )
+    modelos = {"champion": champion, "baseline": p2_baseline(conjuntos["valid"])}
+    desempeno = p2_desempeno(modelos, conjuntos, estaciones)
+    # El mismo mes de cada año de train entra a la serie como control estacional
+    mensual = p2_desempeno(modelos, {"referencia": mismo_mes, **conjuntos}, estaciones, True)
     ap_valid = desempeno.query(
         "modelo == 'champion' and conjunto == 'valid' and cohorte == 'todas'"
     )["ap_riesgo"].iloc[0]
@@ -484,87 +487,93 @@ def drift(muestra: int = cfg.MONITOREO_MUESTRA):
     def muestra_de(datos: pd.DataFrame) -> pd.DataFrame:
         return p2_tabla_reporte(monitoreo.muestrear(datos, muestra), champion)
 
-    tabla_referencia = p2_tabla_reporte(referencia_m, champion)
-    actual_m = muestra_de(conjuntos["actual"])
+    actual_m, evaluacion_m = muestra_de(conjuntos["actual"]), muestra_de(conjuntos["evaluacion"])
     valid_m = p2_tabla_desempeno(muestra_de(conjuntos["valid"]))
-    evaluacion_m = muestra_de(conjuntos["evaluacion"])
-    numericas = P2_NUMERICAS + P2_PROBABILIDADES
-    sin_tarea = monitoreo.definicion_datos(numericas, P2_CATEGORICAS + ["clase", "prediccion"])
+    sin_tarea = monitoreo.definicion_datos(
+        P2_NUMERICAS + P2_PROBABILIDADES, P2_CATEGORICAS + ["clase", "prediccion"]
+    )
     con_tarea = p2_definicion_desempeno()
-    carpeta = cfg.MONITOREO_DIR
-    drift_tt, rutas_tt = monitoreo.generar_reporte(
-        tabla_referencia, actual_m, sin_tarea, "p2_drift_train_test", carpeta=carpeta
-    )
-    _, rutas_dt = monitoreo.generar_reporte(
-        valid_m,
-        p2_tabla_desempeno(actual_m),
-        con_tarea,
-        "p2_desempeno_valid_test",
-        "clasificacion",
-        carpeta,
-    )
-    _, rutas_de = monitoreo.generar_reporte(
-        valid_m,
-        p2_tabla_desempeno(evaluacion_m),
-        con_tarea,
-        "p2_desempeno_valid_evaluacion",
-        "clasificacion",
-        carpeta,
-    )
-    drift_est, rutas_est = monitoreo.generar_reporte(
-        muestra_de(mismo_mes),
-        evaluacion_m,
-        sin_tarea,
-        "p2_drift_estacional",
-        carpeta=carpeta,
-    )
+    reportes = {  # nombre: (referencia, actual, esquema, tarea)
+        "p2_drift_train_test": (
+            p2_tabla_reporte(referencia_m, champion),
+            actual_m,
+            sin_tarea,
+            None,
+        ),
+        "p2_desempeno_valid_test": (
+            valid_m,
+            p2_tabla_desempeno(actual_m),
+            con_tarea,
+            "clasificacion",
+        ),
+        "p2_desempeno_valid_evaluacion": (
+            valid_m,
+            p2_tabla_desempeno(evaluacion_m),
+            con_tarea,
+            "clasificacion",
+        ),
+        "p2_drift_estacional": (muestra_de(mismo_mes), evaluacion_m, sin_tarea, None),
+    }
+    carpeta, snapshots, archivos = cfg.MONITOREO_DIR, {}, []
+    for nombre, (de_referencia, de_actual, esquema, tarea) in reportes.items():
+        snapshots[nombre], rutas = monitoreo.generar_reporte(
+            de_referencia, de_actual, esquema, nombre, tarea, carpeta
+        )
+        archivos += rutas
 
     resumen = pd.concat(
         [
-            monitoreo.resumen_drift(drift_tt).assign(comparacion="train_vs_test"),
-            monitoreo.resumen_drift(drift_est).assign(comparacion="mismo_mes_vs_evaluacion"),
+            monitoreo.resumen_drift(snapshots[reporte]).assign(comparacion=comparacion)
+            for reporte, comparacion in P2_COMPARACIONES_DRIFT.items()
         ],
         ignore_index=True,
     )
-    ruta_resumen = carpeta / "p2_drift_resumen.csv"
-    ruta_desempeno = carpeta / "p2_desempeno.csv"
-    resumen.to_csv(ruta_resumen, index=False)
-    desempeno.to_csv(ruta_desempeno, index=False)
-    logger.info(f"Drift por variable:\n{resumen.to_string(index=False)}")
+    mes = f"-{pd.Period(cfg.MES_MONITOREO, freq='M').month:02d}"
+    tablas = {
+        "p2_drift_resumen": resumen,
+        "p2_desempeno": desempeno,
+        "p2_serie_mensual": mensual,
+        "p2_mismo_mes_por_anio": mensual[
+            mensual["mes"].str.endswith(mes) & (mensual["cohorte"] == "todas")
+        ],
+    }
+    for nombre, contenido in tablas.items():
+        archivos.append(carpeta / f"{nombre}.csv")
+        contenido.to_csv(archivos[-1], index=False)
+    figura = plots.p2_grafica_serie_mensual(mensual)
+    archivos.append(plots.p3_guardar_figura(figura, carpeta / "p2_serie_mensual.png"))
     columnas = [
         "modelo",
         "conjunto",
         "cohorte",
-        "filas",
         "auc_riesgo",
-        "prevalencia_sin_bicis",
-        "prediccion_sin_bicis",
+        "calibracion_sin_bicis",
         "ap_riesgo",
-        "log_loss",
     ]
-    logger.info(f"Desempeño por conjunto y cohorte:\n{desempeno[columnas].to_string(index=False)}")
+    logger.info(f"Drift por variable:\n{resumen.to_string(index=False)}")
+    logger.info(f"Desempeño:\n{desempeno[columnas].round(4).to_string(index=False)}")
 
-    metricas = p2_metricas_drift({"train_test": drift_tt, "estacional": drift_est}, desempeno)
+    metricas, del_champion = p2_metricas_run(snapshots, desempeno)
     version = champion["version"]
     return monitoreo.registrar_en_mlflow(
         "p2-drift",
         "p2",
-        [*rutas_tt, *rutas_dt, *rutas_de, *rutas_est, ruta_resumen, ruta_desempeno],
+        archivos,
         metricas=metricas,
-        metricas_por_dataset=p2_separar_metricas_champion(metricas, evaluados),
-        datasets=p2_datasets(evaluados, referencia_m),
+        metricas_por_dataset=del_champion,
+        datasets=p2_datasets(conjuntos, referencia_m),
         modelo_id=champion["modelo_id"],
         descripcion=(
-            f"Monitoreo de P2 sobre el champion v{version}: drift de datos (train contra test), "
-            f"desempeño (valid contra test y contra {cfg.MES_MONITOREO}, con probabilidades) y "
-            f"control estacional ({cfg.MES_MONITOREO} contra el mismo mes de la referencia), con "
-            "Evidently. Champion y baseline histórico evaluados en valid, test y el mes nuevo, por "
-            "cohorte de estaciones (conocidas en train o nuevas), con AUC y calibración además "
-            "de AP, log-loss y F1."
+            f"Monitoreo de P2 sobre el champion v{version}, con Evidently: drift de datos (train "
+            f"contra test), desempeño con probabilidades (valid contra test y contra "
+            f"{cfg.MES_MONITOREO}) y control estacional (el mismo mes de la referencia contra "
+            f"{cfg.MES_MONITOREO}). Champion y baseline histórico por conjunto y por mes, por "
+            "cohorte de estaciones (conocidas en train o nuevas): AUC, calibración, AP, log-loss y F1."
         ),
         parametros={
             "champion_version": version,
             "muestra": muestra,
+            "min_positivos": P2_MIN_POSITIVOS,
             "referencia": f"{cfg.MES_INICIO} a {p2_mes_previo(cfg.FRONTERA_VALID)}",
             "actual": f"{cfg.FRONTERA_TEST[:7]} a {p2_mes_previo(cfg.FRONTERA_MONITOREO)}",
             **{f"umbral_{cfg.P2_CLASES[k]}": v for k, v in champion["umbrales"].items()},
