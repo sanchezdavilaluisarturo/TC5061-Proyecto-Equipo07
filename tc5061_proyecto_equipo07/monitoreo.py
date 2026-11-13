@@ -520,7 +520,8 @@ def registrar_en_mlflow(
         # Las métricas con model_id ligan el modelo evaluado como entrada del run (en MLflow open
         # source, mlflow.log_inputs(models=...) solo funciona en Databricks)
         modelos = {m: dict(c) for m, c in (metricas_por_modelo or {}).items()}
-        if modelo_id:
+        # Sin modelo_id, las métricas por dataset se registran igual (como métricas del run)
+        if modelo_id or metricas_por_dataset:
             modelos.setdefault(modelo_id, {}).update(metricas_por_dataset or {})
         for id_modelo, por_contexto in modelos.items():
             for contexto, valores in por_contexto.items():

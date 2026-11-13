@@ -406,6 +406,9 @@ MONITOREO_ALFA = 0.05
 MONITOREO_BOOTSTRAP = 2000
 # Etiqueta `fase` de los runs de monitoreo en MLflow
 FASE_MONITOREO = "monitoreo"
+# P3 en monitoreo: el mes nuevo usa el ritmo mensual de valid (300 salidas en 12 meses = 25 al mes)
+P3_MIN_SALIDAS_EVALUACION = p3_leer_entero("P3_MIN_SALIDAS_EVALUACION", 25)
+P3_RUTA_PERFILES_MONITOREO = PROCESSED_DATA_DIR / "p3_perfiles_monitoreo.parquet"
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135
