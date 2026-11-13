@@ -612,3 +612,241 @@ def test_ab_con_ventana_guarda_aparte_y_no_toca_el_ab_de_v5(
     )
     assert (tmp_path / "p3_ab_sin_pandemia_estaciones.csv").exists()
     assert not (tmp_path / "p3_ab_resultado.csv").exists()
+
+
+# ---------------------------------------------------------------------------------------------
+# Challenger por variables
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def pocos_remuestreos_ari(monkeypatch):
+    original = mp3.p3_ari_bootstrap
+    monkeypatch.setattr(
+        mp3, "p3_ari_bootstrap", lambda *args, **kwargs: original(*args, n_bootstrap=200, **kwargs)
+    )
+
+
+def perfil_con_picos() -> pd.DataFrame:
+    rng = np.random.default_rng(0)
+    perfil = pd.DataFrame(
+        rng.random((40, len(mp3.P3_COLUMNAS_PERFIL))), columns=mp3.P3_COLUMNAS_PERFIL
+    )
+    perfil.index.name = "origen_id"
+    return perfil
+
+
+def test_hellinger_aplica_raiz_a_las_horas_y_deja_los_indicadores():
+    perfil = perfil_con_picos()
+    salida = mp3.p3_raiz_horarias(perfil)
+    horarias = [c for c in perfil.columns if c not in mp3.P3_INDICADORES]
+    assert np.allclose(salida[horarias], np.sqrt(perfil[horarias]))
+    assert np.allclose(salida[mp3.P3_INDICADORES], perfil[mp3.P3_INDICADORES])
+    assert list(salida.columns) == list(perfil.columns)
+    # No modifica la entrada
+    assert not np.allclose(perfil[horarias], salida[horarias])
+
+
+def test_hellinger_rechaza_proporciones_negativas():
+    perfil = perfil_con_picos()
+    perfil.loc[0, "lab_h08"] = -0.1
+    with pytest.raises(ValueError, match="negativas"):
+        mp3.p3_raiz_horarias(perfil)
+
+
+def test_quitar_horas_vacias_quita_exactamente_las_de_config():
+    salida = mp3.p3_quitar_horas_vacias(perfil_con_picos())
+    assert set(perfil_con_picos().columns) - set(salida.columns) == set(
+        cfg.P3_COLUMNAS_HORAS_VACIAS
+    )
+
+
+def test_la_regla_de_horas_vacias_usa_el_umbral_sobre_la_media():
+    perfil = perfil_con_picos()
+    perfil["lab_h00"] = 0.001
+    perfil["fin_h05"] = 0.0099
+    perfil["lab_h06"] = 0.0101
+    vacias = mp3.p3_horas_vacias(perfil)
+    assert "lab_h00" in vacias and "fin_h05" in vacias and "lab_h06" not in vacias
+    # Los indicadores nunca se consideran horas, aunque su media sea baja
+    perfil["prop_circulares"] = 0.0
+    assert "prop_circulares" not in mp3.p3_horas_vacias(perfil)
+
+
+@pytest.mark.parametrize("variante", ["identica", *cfg.P3_VARIANTES_VARIABLES])
+def test_cada_variante_conserva_pca_y_kmeans_y_predice_con_las_44_columnas(variante):
+    champion, datos = champion_de_juguete(0)
+    datos = datos.abs()  # son proporciones: la raíz de Hellinger exige valores no negativos
+    modelo = mp3.p3_construir_variante(champion, variante).fit(datos)
+
+    def hiper(m, prefijo):
+        return {k: v for k, v in mp3.p3_hiperparametros(m).items() if k.startswith(prefijo)}
+
+    for prefijo in ("pca__", "kmeans__"):
+        assert hiper(modelo, prefijo) == hiper(champion, prefijo)
+    assert len(modelo.predict(datos)) == len(datos)
+
+
+def test_robusto_cambia_el_escalador_y_las_demas_agregan_pasos_previos():
+    champion, _ = champion_de_juguete(0)
+    from sklearn.preprocessing import RobustScaler
+
+    assert isinstance(
+        mp3.p3_construir_variante(champion, "robusto").named_steps["escalador"], RobustScaler
+    )
+    assert next(n for n, _ in mp3.p3_construir_variante(champion, "hellinger").steps) == "raiz"
+    assert next(n for n, _ in mp3.p3_construir_variante(champion, "sin_horas_vacias").steps) == (
+        "sin_vacias"
+    )
+    assert [n for n, _ in mp3.p3_construir_variante(champion, "combinada").steps][:2] == [
+        "raiz",
+        "sin_vacias",
+    ]
+    # El champion no se modifica
+    assert [n for n, _ in champion.steps] == ["escalador", "pca", "kmeans"]
+
+
+def test_una_variante_desconocida_se_rechaza():
+    champion, _ = champion_de_juguete(0)
+    with pytest.raises(ValueError, match="Variante desconocida"):
+        mp3.p3_construir_variante(champion, "inventada")
+
+
+def test_el_alfa_de_variantes_corrige_por_el_numero_de_variantes():
+    assert mp3.p3_alfa_variantes() == pytest.approx(0.05 / 4)
+
+
+def test_bootstrap_de_ari_es_reproducible_y_cero_si_los_modelos_son_iguales():
+    g1, g2 = np.array([0, 1] * 20), np.array([0, 1, 1, 0] * 10)
+    primero = mp3.p3_ari_bootstrap(g1, g2, g1, g2, alfa=0.05, n_bootstrap=100)
+    assert primero == (0.0, 0.0)
+    otro_a, otro_b = np.array([0, 0, 1, 1] * 10), np.array([0, 1, 0, 1] * 10)
+    uno = mp3.p3_ari_bootstrap(g1, g2, otro_a, otro_b, alfa=0.05, n_bootstrap=100)
+    assert uno == mp3.p3_ari_bootstrap(g1, g2, otro_a, otro_b, alfa=0.05, n_bootstrap=100)
+
+
+def test_variante_identica_da_diferencia_cero_y_no_es_elegible(
+    pocos_remuestreos, pocos_remuestreos_ari
+):
+    champion, datos = champion_de_juguete(0)
+    fila = mp3.p3_evaluar_variante(champion, "identica", datos, datos, datos, datos, alfa=0.0125)
+    assert fila["diferencia_ari"] == pytest.approx(0)
+    assert fila["ic_inferior_ari"] == pytest.approx(0)
+    assert fila["estabilidad_mayor"] is False
+    assert fila["elegible"] is False
+
+
+class ChampionInestable(ChampionAleatorio):
+    """Champion de juguete cuyos grupos cambian en cada llamada: su estabilidad entre periodos es nula."""
+
+    def __init__(self, datos: pd.DataFrame):
+        super().__init__(datos)
+        self.llamadas = 0
+
+    def predict(self, x: pd.DataFrame) -> np.ndarray:
+        self.llamadas += 1
+        return np.random.default_rng(self.llamadas).integers(0, 2, len(x))
+
+
+def test_variante_estable_que_cumple_las_restricciones_es_elegible(
+    pocos_remuestreos, pocos_remuestreos_ari, monkeypatch
+):
+    datos = datos_con_dos_grupos()
+    champion = ChampionInestable(datos)
+    variante = champion_de_juguete(0)[0]
+    monkeypatch.setattr(mp3, "p3_construir_variante", lambda campeon, v: variante)
+    fila = mp3.p3_evaluar_variante(champion, "hellinger", datos, datos, datos, datos, alfa=0.0125)
+    assert fila["ari_variante"] == pytest.approx(1.0)
+    assert fila["diferencia_ari"] > 0.5 and fila["ic_inferior_ari"] > 0
+    assert fila["cumple_piso_silueta"] is True and fila["cumple_tamano"] is True
+    assert fila["elegible"] is True
+
+
+def test_la_variante_no_es_elegible_si_su_silueta_es_significativamente_peor(
+    pocos_remuestreos, pocos_remuestreos_ari, monkeypatch
+):
+    datos = datos_con_dos_grupos()
+    champion = champion_de_juguete(0)[0]
+    # La variante asigna grupos al azar: estable por construcción, pero separa peor que el champion
+    azar = ChampionAleatorio(datos)
+
+    class Azar:
+        def fit(self, x):
+            return self
+
+        def predict(self, x):
+            return azar.predict(x)
+
+    monkeypatch.setattr(mp3, "p3_construir_variante", lambda campeon, v: Azar())
+    fila = mp3.p3_evaluar_variante(champion, "robusto", datos, datos, datos, datos, alfa=0.0125)
+    assert fila["cumple_piso_silueta"] is False
+    assert fila["elegible"] is False
+
+
+def test_el_tamano_minimo_de_grupo_descarta_la_variante(
+    pocos_remuestreos, pocos_remuestreos_ari, monkeypatch
+):
+    datos = datos_con_dos_grupos()
+    champion = ChampionInestable(datos)
+    variante = champion_de_juguete(0)[0]
+    monkeypatch.setattr(mp3, "p3_construir_variante", lambda campeon, v: variante)
+    monkeypatch.setattr(cfg, "P3_TAM_MIN_ACEPTABLE", len(datos) + 1)
+    fila = mp3.p3_evaluar_variante(champion, "hellinger", datos, datos, datos, datos, alfa=0.0125)
+    assert fila["cumple_tamano"] is False and fila["elegible"] is False
+
+
+def test_elegir_variante_toma_la_de_mayor_diferencia_de_estabilidad_o_ninguna():
+    tabla = pd.DataFrame(
+        {
+            "variante": ["hellinger", "robusto", "combinada"],
+            "diferencia_ari": [0.05, 0.20, 0.30],
+            "elegible": [True, True, False],
+        }
+    )
+    assert mp3.p3_elegir_variante(tabla) == "robusto"
+    assert mp3.p3_elegir_variante(tabla.assign(elegible=False)) is None
+
+
+def conjuntos_de_variables(datos: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    return {n: datos for n in ("referencia", "mismo_mes_2024", "mismo_mes_2025", "evaluacion")}
+
+
+def test_backtest_de_variables_escribe_la_tabla_sin_usar_octubre_2026(
+    tmp_path, monkeypatch, pocos_remuestreos, pocos_remuestreos_ari
+):
+    champion, datos = champion_de_juguete(0)
+    conjuntos = conjuntos_de_variables(datos.abs())  # proporciones: no negativas
+    monkeypatch.setattr(cfg, "MONITOREO_DIR", tmp_path)
+    conjuntos["evaluacion"] = None  # si el backtest lo tocara, fallaría
+    monkeypatch.setattr(mp3, "p3_conjuntos", lambda: conjuntos)
+    monkeypatch.setattr(mp3, "p3_cargar_champion", lambda: (champion, 4, {}, None))
+    monkeypatch.setattr(mp3, "p3_horas_vacias", lambda ref: cfg.P3_COLUMNAS_HORAS_VACIAS)
+    mp3.backtest_variables()
+    tabla = pd.read_csv(tmp_path / "p3_backtest_variables.csv")
+    assert list(tabla["variante"]) == cfg.P3_VARIANTES_VARIABLES
+    assert tabla["alfa"].eq(0.05 / 4).all()
+    assert tabla["elegida"].sum() <= 1
+
+
+def test_el_backtest_se_detiene_si_la_regla_de_horas_vacias_cambia(monkeypatch):
+    datos = champion_de_juguete(0)[1]
+    monkeypatch.setattr(mp3, "p3_conjuntos", lambda: conjuntos_de_variables(datos))
+    monkeypatch.setattr(mp3, "p3_horas_vacias", lambda ref: ["lab_h00"])
+    with pytest.raises(RuntimeError, match="horas vacías"):
+        mp3.backtest_variables()
+
+
+def test_ab_variable_usa_octubre_2025_a_2026_y_guarda_aparte(
+    tmp_path, monkeypatch, pocos_remuestreos, pocos_remuestreos_ari
+):
+    champion, datos = champion_de_juguete(0)
+    conjuntos = conjuntos_de_variables(datos.abs())  # proporciones: no negativas
+    monkeypatch.setattr(cfg, "MONITOREO_DIR", tmp_path)
+    conjuntos["mismo_mes_2024"] = None  # la confirmación no usa octubre 2024
+    monkeypatch.setattr(mp3, "p3_conjuntos", lambda: conjuntos)
+    monkeypatch.setattr(mp3, "p3_cargar_champion", lambda: (champion, 4, {}, None))
+    mp3.ab_variable(variante="robusto")
+    resultado = pd.read_csv(tmp_path / "p3_ab_variable_robusto_resultado.csv", index_col="metrica")
+    assert resultado.loc["variante", "valor"] == "robusto"
+    assert float(resultado.loc["alfa", "valor"]) == pytest.approx(0.05 / 4)
+    assert not (tmp_path / "p3_backtest_variables.csv").exists()

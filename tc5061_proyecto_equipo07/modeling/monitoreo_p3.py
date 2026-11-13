@@ -8,7 +8,7 @@ uso), calculada con las mismas funciones con las que se entrenó el champion:
     evaluacion   perfiles del mes nuevo (2026-10), que ningún modelo ha visto
 valid (2024-10 a 2025-09) también se calcula: es el conjunto con el que se midió la estabilidad.
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift | drift-anual | challenger | ab | silueta | backtest-ventanas
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles | drift | drift-anual | challenger | ab | silueta | backtest-ventanas | backtest-variables | ab-variable
 """
 
 from loguru import logger
@@ -19,6 +19,8 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.metrics import adjusted_rand_score, silhouette_samples, silhouette_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import FunctionTransformer, RobustScaler
 import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
@@ -930,6 +932,224 @@ def backtest_ventanas():
         logger.warning(
             "Ninguna ventana es elegible: el champion se queda y el experimento termina"
         )
+
+
+# ---------------------------------------------------------------------------------------------
+# Challenger por variables: otra preparación de las 44 variables, con los datos del champion
+# ---------------------------------------------------------------------------------------------
+
+
+def p3_raiz_horarias(x: pd.DataFrame) -> pd.DataFrame:
+    """Raíz cuadrada de las proporciones horarias (transformación de Hellinger); los indicadores no."""
+    x = x.copy()
+    horarias = [c for c in x.columns if c not in P3_INDICADORES]
+    if (x[horarias] < 0).any().any():
+        raise ValueError("Las proporciones horarias no pueden ser negativas")
+    x[horarias] = np.sqrt(x[horarias])
+    return x
+
+
+def p3_quitar_horas_vacias(x: pd.DataFrame) -> pd.DataFrame:
+    """Quita las horas fijadas como vacías en `config.P3_COLUMNAS_HORAS_VACIAS`."""
+    return x.drop(columns=cfg.P3_COLUMNAS_HORAS_VACIAS)
+
+
+def p3_horas_vacias(referencia: pd.DataFrame) -> list[str]:
+    """Horas cuya proporción media en la referencia es menor al umbral (la regla del protocolo)."""
+    horarias = [c for c in P3_COLUMNAS_PERFIL if c not in P3_INDICADORES]
+    return [c for c in horarias if referencia[c].mean() < cfg.P3_UMBRAL_HORA_VACIA]
+
+
+def p3_construir_variante(champion, variante: str) -> Pipeline:
+    """Pipeline sin ajustar: el del champion con otra preparación de variables.
+
+    Mismos PCA y K-Means (se comprueba). Las transformaciones van dentro del pipeline, así que la
+    entrada sigue siendo la misma de 44 columnas. `identica` es el control: no cambia nada.
+    """
+    conocidas = ["identica", *cfg.P3_VARIANTES_VARIABLES]
+    if variante not in conocidas:
+        raise ValueError(f"Variante desconocida: {variante}; usar {conocidas}")
+    pasos = list(clone(champion).steps)
+    if variante == "robusto":
+        pasos[0] = ("escalador", RobustScaler())
+    previos = []
+    if variante in ("hellinger", "combinada"):
+        previos.append(("raiz", FunctionTransformer(p3_raiz_horarias)))
+    if variante in ("sin_horas_vacias", "combinada"):
+        previos.append(("sin_vacias", FunctionTransformer(p3_quitar_horas_vacias)))
+    modelo = Pipeline(previos + pasos)
+    for prefijo in ("pca__", "kmeans__"):
+        igual = {k: v for k, v in p3_hiperparametros(modelo).items() if k.startswith(prefijo)} == {
+            k: v for k, v in p3_hiperparametros(champion).items() if k.startswith(prefijo)
+        }
+        if not igual:
+            raise ValueError(
+                f"La variante {variante} no conserva los hiperparámetros de {prefijo}"
+            )
+    return modelo
+
+
+def p3_alfa_variantes() -> float:
+    """Nivel de significancia corregido (Bonferroni) por las variantes que se prueban."""
+    return cfg.MONITOREO_ALFA / len(cfg.P3_VARIANTES_VARIABLES)
+
+
+def p3_ari_bootstrap(
+    grupos_a1,
+    grupos_a2,
+    grupos_b1,
+    grupos_b2,
+    alfa: float,
+    n_bootstrap: int = cfg.MONITOREO_BOOTSTRAP,
+    semilla: int = cfg.P3_SEMILLA,
+) -> tuple[float, float]:
+    """Intervalo de nivel `1 - alfa` de la diferencia de ARI (B menos A) entre dos periodos.
+
+    A y B asignan grupos a las mismas estaciones en dos periodos (`1` y `2`). Se remuestrean las
+    estaciones con las mismas posiciones para los dos modelos, así la diferencia es pareada.
+    """
+    a1, a2, b1, b2 = (np.asarray(g) for g in (grupos_a1, grupos_a2, grupos_b1, grupos_b2))
+    rng = np.random.default_rng(semilla)
+    n = len(a1)
+    diferencias = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        pos = rng.integers(0, n, n)
+        diferencias[i] = adjusted_rand_score(b1[pos], b2[pos]) - adjusted_rand_score(
+            a1[pos], a2[pos]
+        )
+    return tuple(float(v) for v in np.quantile(diferencias, [alfa / 2, 1 - alfa / 2]))
+
+
+def p3_evaluar_variante(
+    champion,
+    variante: str,
+    entrenamiento: pd.DataFrame,
+    mes_1: pd.DataFrame,
+    mes_2: pd.DataFrame,
+    evaluacion: pd.DataFrame,
+    alfa: float,
+) -> dict:
+    """Ajusta la variante con `entrenamiento` y la compara con el champion según el protocolo.
+
+    Criterio principal: diferencia de estabilidad (ARI de los grupos de las estaciones comunes a
+    `mes_1` y `mes_2`). Piso: la silueta en el espacio del champion sobre `evaluacion` no puede ser
+    significativamente peor. Restricción: grupo más chico de al menos `P3_TAM_MIN_ACEPTABLE`.
+    """
+    columnas = P3_COLUMNAS_PERFIL
+    modelo = p3_construir_variante(champion, variante).fit(entrenamiento[columnas])
+    tam_min = int(np.bincount(modelo.predict(entrenamiento[columnas])).min())
+    comunes = mes_1.index.intersection(mes_2.index)
+    x1, x2 = mes_1.loc[comunes, columnas], mes_2.loc[comunes, columnas]
+    grupos_champion = (champion.predict(x1), champion.predict(x2))
+    grupos_variante = (modelo.predict(x1), modelo.predict(x2))
+    ari_champion = float(adjusted_rand_score(*grupos_champion))
+    ari_variante = float(adjusted_rand_score(*grupos_variante))
+    ic_inferior, ic_superior = p3_ari_bootstrap(*grupos_champion, *grupos_variante, alfa=alfa)
+    silueta, _ = p3_ab(champion, modelo, evaluacion, alfa=alfa)
+    peor = silueta["p_wilcoxon"] < alfa and silueta["ic_superior"] < 0
+    cumple_tamano = tam_min >= cfg.P3_TAM_MIN_ACEPTABLE
+    estable = ic_inferior > 0
+    return {
+        "variante": variante,
+        "estaciones_entrenamiento": len(entrenamiento),
+        "estaciones_comunes": len(comunes),
+        "ari_champion": ari_champion,
+        "ari_variante": ari_variante,
+        "diferencia_ari": ari_variante - ari_champion,
+        "ic_inferior_ari": ic_inferior,
+        "ic_superior_ari": ic_superior,
+        "silueta_champion": silueta["silueta_champion"],
+        "silueta_variante": silueta["silueta_challenger"],
+        "diferencia_silueta": silueta["diferencia"],
+        "p_wilcoxon_silueta": silueta["p_wilcoxon"],
+        "ic_superior_silueta": silueta["ic_superior"],
+        "tam_grupo_min": tam_min,
+        "cumple_tamano": cumple_tamano,
+        "estabilidad_mayor": bool(estable),
+        "cumple_piso_silueta": not peor,
+        "elegible": bool(cumple_tamano and estable and not peor),
+        "alfa": alfa,
+    }
+
+
+def p3_elegir_variante(tabla: pd.DataFrame) -> str | None:
+    """Variante elegible de mayor diferencia de estabilidad; None si ninguna (el champion se queda)."""
+    elegibles = tabla[tabla["elegible"]]
+    if elegibles.empty:
+        return None
+    return str(elegibles.loc[elegibles["diferencia_ari"].idxmax(), "variante"])
+
+
+@app.command()
+def backtest_variables():
+    """Backtest de las variantes de variables: estabilidad entre octubre 2024 y octubre 2025.
+
+    Todas se ajustan con los perfiles de `referencia` (los datos del champion). El piso de silueta
+    se mide en octubre 2025. No usa octubre 2026, no escribe en MLflow ni mueve alias.
+    """
+    conjuntos = p3_conjuntos()
+    esperadas = p3_horas_vacias(conjuntos["referencia"])
+    if esperadas != cfg.P3_COLUMNAS_HORAS_VACIAS:
+        raise RuntimeError(
+            f"La regla de horas vacías da {esperadas}, no {cfg.P3_COLUMNAS_HORAS_VACIAS}; "
+            "revisar el protocolo antes de seguir"
+        )
+    champion, version, _, _ = p3_cargar_champion()
+    alfa = p3_alfa_variantes()
+    mes_2024, mes_2025 = conjuntos["mismo_mes_2024"], conjuntos["mismo_mes_2025"]
+    logger.info(
+        f"Backtest de variables: estabilidad oct 2024 a oct 2025, champion v{version}, alfa {alfa:.4f}"
+    )
+    filas = [
+        p3_evaluar_variante(
+            champion, v, conjuntos["referencia"], mes_2024, mes_2025, mes_2025, alfa
+        )
+        for v in cfg.P3_VARIANTES_VARIABLES
+    ]
+    tabla = pd.DataFrame(filas)
+    elegida = p3_elegir_variante(tabla)
+    tabla["elegida"] = tabla["variante"] == elegida
+    cfg.MONITOREO_DIR.mkdir(parents=True, exist_ok=True)
+    tabla.to_csv(cfg.MONITOREO_DIR / "p3_backtest_variables.csv", index=False)
+    logger.info(f"Backtest de variables:\n{tabla.T.to_string()}")
+    if elegida:
+        logger.success(
+            f"Variante elegida: {elegida}; confirmar con `make monitoreo-p3-ab-variable`"
+        )
+    else:
+        logger.warning(
+            "Ninguna variante es elegible: el champion se queda y el experimento termina"
+        )
+
+
+@app.command()
+def ab_variable(
+    variante: str = typer.Option(..., "--variante", help="Variante elegida en el backtest"),
+):
+    """Confirmación única de la variante elegida: estabilidad oct 2025 a oct 2026 y piso en oct 2026.
+
+    Mismo protocolo y mismo `alfa` que el backtest. No escribe en MLflow ni mueve alias.
+    """
+    conjuntos = p3_conjuntos()
+    champion, version, _, _ = p3_cargar_champion()
+    fila = p3_evaluar_variante(
+        champion,
+        variante,
+        conjuntos["referencia"],
+        conjuntos["mismo_mes_2025"],
+        conjuntos["evaluacion"],
+        conjuntos["evaluacion"],
+        p3_alfa_variantes(),
+    )
+    fila = {"champion_version": version, **fila}
+    pd.Series(fila).to_frame("valor").rename_axis("metrica").to_csv(
+        cfg.MONITOREO_DIR / f"p3_ab_variable_{variante}_resultado.csv"
+    )
+    logger.info(f"Confirmación de la variante {variante}:\n{pd.Series(fila).to_string()}")
+    if fila["elegible"]:
+        logger.success("La variante pasa también contra octubre 2026")
+    else:
+        logger.warning("La variante no pasa contra octubre 2026: el champion se queda")
 
 
 if __name__ == "__main__":

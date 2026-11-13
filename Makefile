@@ -301,7 +301,7 @@ help:
 
 
 ## Monitoreo de P3: perfiles por periodo (referencia, valid, actual, evaluacion) y reporte de drift
-.PHONY: monitoreo-p3-perfiles monitoreo-p3-drift monitoreo-p3-drift-anual monitoreo-p3-challenger monitoreo-p3-ab monitoreo-p3-backtest-ventanas monitoreo-p3-ab-ventana monitoreo-p3-silueta monitoreo-p3-registrar-drift monitoreo-p3-registrar-ab pruebas-monitoreo-p3
+.PHONY: monitoreo-p3-perfiles monitoreo-p3-drift monitoreo-p3-drift-anual monitoreo-p3-challenger monitoreo-p3-ab monitoreo-p3-backtest-ventanas monitoreo-p3-ab-ventana monitoreo-p3-backtest-variables monitoreo-p3-ab-variable monitoreo-p3-silueta monitoreo-p3-registrar-drift monitoreo-p3-registrar-ab pruebas-monitoreo-p3
 monitoreo-p3-perfiles:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles
 
@@ -326,6 +326,13 @@ monitoreo-p3-backtest-ventanas:
 # A/B final de una ventana contra octubre 2026: make monitoreo-p3-ab-ventana VENTANA=sin_pandemia
 monitoreo-p3-ab-ventana:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 ab --ventana $(VENTANA)
+
+monitoreo-p3-backtest-variables:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 backtest-variables
+
+# Confirmación única de la variante elegida: make monitoreo-p3-ab-variable VARIANTE=hellinger
+monitoreo-p3-ab-variable:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 ab-variable --variante $(VARIANTE)
 
 monitoreo-p3-silueta:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 silueta
