@@ -154,6 +154,12 @@ pruebas-monitoreo:
 	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo.py
 
 
+## Pruebas del monitoreo de P2
+.PHONY: pruebas-monitoreo-p2
+pruebas-monitoreo-p2:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p2.py
+
+
 ## Monitoreo de P1: estación-horas del mes nuevo, verificadas contra la tabla de entrenamiento
 .PHONY: monitoreo-p1-tabla
 monitoreo-p1-tabla:
