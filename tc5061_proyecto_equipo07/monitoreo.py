@@ -476,6 +476,7 @@ def registrar_en_mlflow(
     datasets: dict | None = None,
     modelo_id: str | None = None,
     metricas_por_dataset: dict[str, dict[str, float]] | None = None,
+    metricas_por_modelo: dict[str, dict[str, dict[str, float]]] | None = None,
 ) -> str:
     """Registra un run de monitoreo (drift o A/B) en el experimento del equipo; regresa su ID.
 
@@ -484,7 +485,9 @@ def registrar_en_mlflow(
     datasets de MLflow (`datasets`: contexto -> dataset_mlflow). Un run de monitoreo no entrena un
     modelo: con `modelo_id` liga como entrada el modelo que evaluó, y `metricas_por_dataset`
     (contexto -> métricas) asocia esas métricas al modelo y al dataset donde se midieron, para que
-    aparezcan en la página del modelo.
+    aparezcan en la página del modelo. Un A/B evalúa varios modelos: `metricas_por_modelo`
+    (model_id -> contexto -> métricas) liga cada uno con sus métricas; las claves deben distinguir
+    al modelo (por ejemplo, champion_mae y challenger_mae), porque el run guarda un valor por clave.
     """
     if cfg.MLFLOW_TRACKING_URI:
         mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
@@ -516,12 +519,16 @@ def registrar_en_mlflow(
             mlflow.log_metrics(metricas)
         # Las métricas con model_id ligan el modelo evaluado como entrada del run (en MLflow open
         # source, mlflow.log_inputs(models=...) solo funciona en Databricks)
-        for contexto, valores in (metricas_por_dataset or {}).items():
-            mlflow.log_metrics(valores, model_id=modelo_id, dataset=datasets.get(contexto))
-        if modelo_id and not metricas_por_dataset:
-            mlflow.MlflowClient().log_inputs(
-                run.info.run_id, datasets=[], models=[LoggedModelInput(modelo_id)]
-            )
+        modelos = {m: dict(c) for m, c in (metricas_por_modelo or {}).items()}
+        if modelo_id:
+            modelos.setdefault(modelo_id, {}).update(metricas_por_dataset or {})
+        for id_modelo, por_contexto in modelos.items():
+            for contexto, valores in por_contexto.items():
+                mlflow.log_metrics(valores, model_id=id_modelo, dataset=datasets.get(contexto))
+            if not por_contexto:
+                mlflow.MlflowClient().log_inputs(
+                    run.info.run_id, datasets=[], models=[LoggedModelInput(id_modelo)]
+                )
         for archivo in archivos:
             mlflow.log_artifact(str(archivo), artifact_path="monitoreo")
         for manifiesto in manifiestos:
