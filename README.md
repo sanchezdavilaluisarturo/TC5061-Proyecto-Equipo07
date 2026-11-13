@@ -2164,13 +2164,27 @@ Comando: `make monitoreo-p3-backtest-variables` (tabla completa en `reports/moni
 - **Lectura conjunta con el backtest de ventanas.** Ni cambiar el periodo de entrenamiento ni cambiar la preparación de las variables mejora al champion. Es coherente con la silueta baja del modelo (0.145) y con que el límite no esté en el preprocesamiento, sino en que las estaciones forman un continuo más que dos grupos separados. Es una hipótesis: este experimento no la prueba.
 - **Qué falta para insistir.** Variables nuevas (capacidad, zona, distancia al centro) o un algoritmo distinto exigen un protocolo nuevo fijado antes de correr; repetir el backtest con otras variantes hasta que una pase sería elegir con el resultado.
 
+
+#### Resumen: intentos por superar al champion v4 (P3)
+
+| Intento | Qué cambia | Criterio | Resultado | Decisión |
+|---|---|---|---|---|
+| Hiperparámetros (Optuna, 40 a 80 trials) | `n_components`, pesos por bloque y `k` | Silueta en el espacio del baseline, con restricciones | +0.0005 a +0.0006, dentro del ruido entre semillas | Marginal; el champion sigue con `k = 2` |
+| Challenger v5 | Datos hasta septiembre 2026, mismos hiperparámetros | Silueta pareada contra octubre 2026 (`p < 0.05` e intervalo sobre 0) | -0.0018, p = 0.83 | El champion se queda |
+| Ventana de entrenamiento | Desde cuándo se entrena (`completa`, `sin_pandemia`, `ultimos_3_anios`) | Backtest contra octubre 2025: silueta pareada, `alfa = 0.0167`, tamaño y estabilidad | +0.0022 a +0.0025; la mejor con p = 0.044, mayor que 0.0167 | Ninguna elegible; el champion se queda |
+| Variables | Preparación de las 44 variables (`hellinger`, `sin_horas_vacias`, `robusto`, `combinada`) | Estabilidad entre octubres con intervalo bootstrap, piso de silueta, `alfa = 0.0125` | Diferencia de ARI de -0.079 a +0.022, con intervalos que incluyen cero | Ninguna elegible; el champion se queda |
+
+Los dos últimos intentos siguieron el mismo método: el protocolo se fijó y se commiteó antes de correr nada, la selección se hizo con un backtest que no toca octubre 2026 y el nivel se corrigió por el número de candidatos probados. Octubre 2026 se usó una sola vez, en el A/B de v5.
+
+**Conclusión.** Ningún cambio de datos, de periodo ni de preparación de variables supera al champion v4, y ninguno estuvo cerca de hacerlo. Con 358 a 372 estaciones las pruebas solo detectan mejoras grandes, así que el resultado es "no hay evidencia de mejora", no "se demostró que no hay efecto". Queda sin probar el cambio de variables de fondo (capacidad, zona, distancia al centro) o de algoritmo, que exigirían un protocolo nuevo fijado antes de correr.
+
 #### Pruebas
 
 ```bash
 make pruebas-monitoreo-p3
 ```
 
-`tests/test_monitoreo_p3.py` (27 pruebas, con viajes y estaciones sintéticos, sin red ni servidor de MLflow; el registro usa un MLflow local en SQLite) comprueba:
+`tests/test_monitoreo_p3.py` (60 pruebas, con viajes y estaciones sintéticos, sin red ni servidor de MLflow; el registro usa un MLflow local en SQLite) comprueba:
 
 - Que los perfiles tienen las 44 variables del modelo, suman 1 por bloque horario y separan los periodos descartando la brecha.
 - Que se filtran las estaciones con pocas salidas y que el mínimo del control estacional crece con los años de la referencia.
@@ -2181,6 +2195,8 @@ make pruebas-monitoreo-p3
 - Que el challenger conserva los hiperparámetros del champion y cambia solo los datos.
 - Que el A/B deja al champion con versiones idénticas o si el challenger es peor, y lo reemplaza solo si separa mejor de forma significativa.
 - Que el intervalo bootstrap de siluetas es reproducible y que la silueta por estación se calcula sobre las mismas estaciones.
+- Que las ventanas de entrenamiento recortan el inicio, que el backtest solo usa datos anteriores a la frontera de test y que una restricción incumplida descarta la ventana aunque mejore.
+- Que cada variante de variables conserva el PCA y el K-Means del champion, acepta las 44 columnas y rechaza proporciones negativas; que una variante idéntica da diferencia de estabilidad cero y no es elegible; y que el backtest de variables no usa octubre 2026 y la confirmación no usa octubre 2024.
 - Que `registrar-drift` y `registrar-ab` guardan métricas, etiquetas y archivos en el run, piden correr antes el cálculo si falta, y el A/B se niega a registrarse si el alias `champion` ya apunta a otra versión que la usada al calcularlo.
 
 #### Resultados (champion v4)
@@ -2220,13 +2236,14 @@ Las 45 son las 44 variables más el grupo asignado.
 | A/B de octubre 2026 | Challenger con datos hasta septiembre 2026 contra champion v4: diferencia de -0.0018 en silueta, Wilcoxon p = 0.83, intervalo bootstrap [-0.0054, 0.0012] | No reentrenar: reentrenar con datos nuevos no mejoró lo que se mide |
 | Drift de octubre 2026 | 40% a 49% de variables con drift contra los octubres de 2022 a 2025, bajo el umbral de 50%; el grupo asignado no cambia en train contra test (p = 0.71) | No reentrenar: las entradas se mueven, el reparto en grupos casi no |
 | Silueta por periodo | Baja de 0.145 (train) a 0.132 (valid) y 0.103 (test); en octubres es estable (0.063 a 0.075) | Vigilar: la caída anual existe, aunque puede ser composición de la red (362 a 457 estaciones) |
+| Intentos de mejora (ventanas y variables) | Entrenar con otro periodo o preparar distinto las variables tampoco supera al champion: ninguna ventana (la mejor, p = 0.044 con `alfa = 0.0167`) ni variante (diferencia de ARI de -0.079 a +0.022, con intervalos que incluyen cero) es elegible | No reentrenar: con las alternativas probadas, ninguna justifica cambiar el modelo |
 | Señales nuevas | Duración mediana de 8.0 minutos en octubre 2026 (antes 9.3 a 10.0) y grupo distinto en las estaciones comunes (p = 0.013) | Vigilar: es el primer indicio de un cambio de comportamiento, con un solo mes de datos |
 
 **Qué se propone.**
 
 1. **Revisión mensual** con los comandos que ya existen: `make monitoreo-p3-drift` y `make monitoreo-p3-silueta` sobre el mes nuevo, comparado con el mismo mes de años previos para no confundir estacionalidad con drift.
 2. **Disparadores de reentrenamiento** (propuestos, para calibrar con el equipo; se fijan antes de mirar el siguiente mes, como se hizo con la regla del A/B): (a) la silueta del champion en los últimos 12 meses cae bajo 0.10, es decir, cerca de 30% menos que en train; (b) el grupo asignado a las estaciones comunes cambia de forma significativa (p < 0.05) dos meses seguidos; (c) más de 50% de las variables con drift contra el mismo mes del año previo.
-3. **Reentrenamiento programado** una vez al año, con un año completo nuevo, que es cuando la composición de la red y la estacionalidad quedan cubiertas. El candidato se entrena con la receta del challenger (mismos hiperparámetros, datos hasta el último mes completo), se registra con el alias `challenger` y se compara con el champion en el A/B de siempre; solo lo reemplaza si cumple la misma regla (p < 0.05 e intervalo sobre cero).
+3. **Reentrenamiento programado** una vez al año, con un año completo nuevo, que es cuando la composición de la red y la estacionalidad quedan cubiertas. El candidato se entrena con la receta del challenger (mismos hiperparámetros, datos hasta el último mes completo), se registra con el alias `challenger` y se compara con el champion en el A/B de siempre; solo lo reemplaza si cumple la misma regla (p < 0.05 e intervalo sobre cero). Los backtests de ventanas y de variables respaldan mantener esa receta: ni recortar la historia ni cambiar la preparación de las variables mejoró al champion.
 4. **Qué no se automatiza.** El reentrenamiento corre solo cuando salta un disparador, pero la promoción a `champion` sigue siendo una decisión humana con el A/B delante: un modelo no supervisado no tiene etiqueta para validarse solo, y cambiar los grupos cambia lo que ven quienes usan la segmentación.
 
 **Limitaciones.** Los umbrales salen de pocos puntos (un año de valid, uno de test y seis octubres), así que son un punto de partida y no un valor demostrado. La caída de silueta por periodo no se puede separar del cambio de composición de la red con estos datos; un análisis con solo las estaciones comunes lo aclararía.
