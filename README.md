@@ -1377,7 +1377,7 @@ La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que
 
 ### Despliegue en el EC2
 
-La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7mlops.com. La acción `deploy-api.yml` la actualiza con cada push a `api_rest` (es decir, al hacer merge de un PR) que toque `tc5061_proyecto_equipo07/`, el `Dockerfile`, los `requirements*.txt` o el propio workflow; también se puede lanzar a mano en *Actions > Run workflow*.
+La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7mlops.com. La acción `deploy-api.yml` la actualiza con cada push a `api_rest` o a `monitoreo_drift` (es decir, al hacer merge de un PR) que toque `tc5061_proyecto_equipo07/`, el `Dockerfile`, los `requirements*.txt` o el propio workflow; también se puede lanzar a mano en *Actions > Run workflow*.
 
 | Acción | Dónde corre | Qué deja al terminar |
 |---|---|---|
@@ -1964,7 +1964,7 @@ El error diario de la v2 en GDL casi duplica el del baseline: sus errores por ho
 
 | Decisión | Qué se recomienda | Por qué | Lectura |
 |---|---|---|---|
-| Promover la v3 (hecho) | El alias `champion` se movió a la versión 3 con `make monitoreo-p1-promover`. La API carga el champion al arrancar, así que sirve la v3 desde el siguiente reinicio del contenedor (ver [Cómo carga los modelos](#cómo-carga-los-modelos)) | Gana la prueba pareada con una diferencia significativa y relevante (6.9 %), en los tres segmentos y en las tres zonas | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
+| Promover la v3 (hecho) | El alias `champion` se movió a la versión 3 con `make monitoreo-p1-promover`. La API carga el champion al arrancar (ver [Cómo carga los modelos](#cómo-carga-los-modelos)): tomó la v3 en el siguiente despliegue automático, sin cambiar la imagen ni el código. `/salud` respondía `"p1": {"alias": "champion", "version": 2}` antes de ese despliegue y `"version": 3` después | Gana la prueba pareada con una diferencia significativa y relevante (6.9 %), en los tres segmentos y en las tres zonas | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
 | Cadencia | Reentrenar cada mes, cuando el portal publique el mes nuevo, con los mismos hiperparámetros y los datos hasta el mes previo | Los datos llegan cada mes y reentrenar cuesta unos 2 minutos. Con un solo A/B no se puede fijar la cadencia óptima: para eso hay que medir el valor de la frescura de los datos, entrenando con ventanas que terminan en meses distintos | Huyen (2022, cap. 9) |
 | Compuerta | Antes de cada promoción, correr el A/B champion/challenger sobre el mes nuevo con el mismo protocolo; `monitoreo-p1-promover` no promueve sin ese respaldo | Un modelo nuevo solo reemplaza al vigente si demuestra ser mejor con datos que ninguno de los dos vio | Huyen (2022, cap. 9); Treveil et al. (2020, cap. 7) |
 | Disparadores | Además del calendario: drift de la demanda (`viajes` y sus rezagos) contra el mismo mes del año anterior, o estaciones con viajes que no estaban en los datos de entrenamiento | Son las dos causas de la degradación que mostró este monitoreo; las demás columnas pueden moverse sin afectar al modelo | Huyen (2022, cap. 8) |
