@@ -1,0 +1,43 @@
+columna,metodo,umbral,valor,drift,comparacion
+longitude,Wasserstein distance (normed),0.1,0.12354290246233746,True,train_vs_test
+dpcapacity,Wasserstein distance (normed),0.1,0.11031249096225405,True,train_vs_test
+neto_8_relativo,Wasserstein distance (normed),0.1,0.08303236116515658,False,train_vs_test
+salidas_4,Wasserstein distance (normed),0.1,0.07617861071701289,False,train_vs_test
+cumsum_dia_relativo,Wasserstein distance (normed),0.1,0.07563281205421722,False,train_vs_test
+neto_4_relativo,Wasserstein distance (normed),0.1,0.07236047207686397,False,train_vs_test
+entradas_4,Wasserstein distance (normed),0.1,0.06946450778382046,False,train_vs_test
+neto_2_relativo,Wasserstein distance (normed),0.1,0.06631248656997409,False,train_vs_test
+salidas_2,Wasserstein distance (normed),0.1,0.06315588906364868,False,train_vs_test
+entradas_2,Wasserstein distance (normed),0.1,0.06190950321701592,False,train_vs_test
+hist_sin_bicis,Wasserstein distance (normed),0.1,0.05712858896343539,False,train_vs_test
+neto_1_relativo,Wasserstein distance (normed),0.1,0.056387239700095036,False,train_vs_test
+prob_sin_bicis,Wasserstein distance (normed),0.1,0.04101756928838685,False,train_vs_test
+latitude,Wasserstein distance (normed),0.1,0.03487241059315358,False,train_vs_test
+prob_sin_anclajes,Wasserstein distance (normed),0.1,0.023364802846182708,False,train_vs_test
+hist_sin_anclajes,Wasserstein distance (normed),0.1,0.02172054098106785,False,train_vs_test
+clase,Jensen-Shannon distance,0.1,0.014557744154435436,False,train_vs_test
+prediccion,Jensen-Shannon distance,0.1,0.013555647709516132,False,train_vs_test
+hora_sin,Wasserstein distance (normed),0.1,0.00805554995881593,False,train_vs_test
+hora_cos,Wasserstein distance (normed),0.1,0.004576867110809453,False,train_vs_test
+es_fin_semana,Jensen-Shannon distance,0.1,0.0015175184005544867,False,train_vs_test
+longitude,Wasserstein distance (normed),0.1,0.22709399929785298,True,mismo_mes_vs_evaluacion
+dpcapacity,Wasserstein distance (normed),0.1,0.18460995913949646,True,mismo_mes_vs_evaluacion
+salidas_4,Wasserstein distance (normed),0.1,0.15044918505670518,True,mismo_mes_vs_evaluacion
+salidas_2,Wasserstein distance (normed),0.1,0.14101655241440278,True,mismo_mes_vs_evaluacion
+entradas_4,Wasserstein distance (normed),0.1,0.1379241830090317,True,mismo_mes_vs_evaluacion
+entradas_2,Wasserstein distance (normed),0.1,0.130066999343374,True,mismo_mes_vs_evaluacion
+cumsum_dia_relativo,Wasserstein distance (normed),0.1,0.06958951918310376,False,mismo_mes_vs_evaluacion
+latitude,Wasserstein distance (normed),0.1,0.05632372321739384,False,mismo_mes_vs_evaluacion
+neto_8_relativo,Wasserstein distance (normed),0.1,0.056068593688269226,False,mismo_mes_vs_evaluacion
+neto_4_relativo,Wasserstein distance (normed),0.1,0.050234926238164536,False,mismo_mes_vs_evaluacion
+prob_sin_bicis,Wasserstein distance (normed),0.1,0.04805780149087569,False,mismo_mes_vs_evaluacion
+neto_2_relativo,Wasserstein distance (normed),0.1,0.04349054367507403,False,mismo_mes_vs_evaluacion
+hist_sin_bicis,Wasserstein distance (normed),0.1,0.04091652936622098,False,mismo_mes_vs_evaluacion
+neto_1_relativo,Wasserstein distance (normed),0.1,0.027976593872945474,False,mismo_mes_vs_evaluacion
+hist_sin_anclajes,Wasserstein distance (normed),0.1,0.02075579591164693,False,mismo_mes_vs_evaluacion
+prob_sin_anclajes,Wasserstein distance (normed),0.1,0.014250214198294161,False,mismo_mes_vs_evaluacion
+prediccion,Jensen-Shannon distance,0.1,0.012374468795382478,False,mismo_mes_vs_evaluacion
+es_fin_semana,Jensen-Shannon distance,0.1,0.012133512453124884,False,mismo_mes_vs_evaluacion
+clase,Jensen-Shannon distance,0.1,0.00860329879895225,False,mismo_mes_vs_evaluacion
+hora_sin,Wasserstein distance (normed),0.1,0.0022058792588836593,False,mismo_mes_vs_evaluacion
+hora_cos,Wasserstein distance (normed),0.1,0.0020579057698904904,False,mismo_mes_vs_evaluacion
