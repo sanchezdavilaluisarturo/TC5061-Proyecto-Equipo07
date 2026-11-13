@@ -2114,6 +2114,35 @@ Comando: `make monitoreo-p3-backtest-ventanas` (tabla completa en `reports/monit
 - **Estabilidad.** Las tres ventanas dan un ARI mayor que el del champion (0.61 a 0.67 contra 0.485). Esta medida (los mismos grupos en las estaciones comunes entre su entrenamiento y octubre 2025) no es la de la tabla del modelo base, que usa el año de valid, así que no se compara con el 0.66 de arriba.
 - **Qué falta para insistir.** Probar otra cosa (variables nuevas, otro algoritmo) exige un protocolo nuevo fijado antes de correr; repetir el backtest con otras ventanas hasta que alguna pase sería elegir con el resultado.
 
+
+#### Challenger por variables (P3): protocolo fijado antes de correrlo
+
+El backtest de ventanas no encontró nada: reentrenar con otros periodos no mejora al champion. Lo que queda es **cómo se preparan las variables**. Dos hallazgos en la referencia (362 estaciones) lo motivan:
+
+- 40 de las 44 variables son proporciones horarias que suman 1 por bloque (datos composicionales), muy correlacionadas entre sí. Con `StandardScaler` cada hora pesa igual, y las horas casi vacías (`lab_h00`, `lab_h05`, `fin_h00`, `fin_h05`, de media menor a 1%) cuentan tanto como los picos de las 8:00 y las 18:00.
+- Dos indicadores tienen colas largas: `prop_circulares` (asimetría 2.9, máximo 0.30 con media 0.08) y `neto_sobre_salidas` (asimetría 1.7).
+
+| Variante | Qué cambia | Hipótesis |
+|---|---|---|
+| `hellinger` | Raíz cuadrada de las 40 proporciones horarias, antes del escalador | Estabiliza la varianza de datos composicionales: los picos dejan de dominar y las horas bajas dejan de ser ruido |
+| `sin_horas_vacias` | Quita las horas con proporción media menor a 1% en la referencia (`lab_h00`, `lab_h05`, `fin_h00`, `fin_h05`) | Esas dimensiones aportan casi solo ruido y pesan como las demás |
+| `robusto` | `RobustScaler` (mediana y rango intercuartil) en lugar de `StandardScaler` | Las colas largas de los indicadores arrastran media y desviación |
+| `combinada` | `hellinger` y `sin_horas_vacias` juntas | Ver si los dos efectos se suman |
+
+- **Qué cambia y qué no.** El PCA (11 componentes), el K-Means (`k = 2`, semilla 42) y los datos de entrenamiento son los del champion v4: perfiles de `referencia`, 362 estaciones. Así lo único que cambia es la preparación de las variables. Cada variante recibe las mismas 44 columnas y hace la transformación dentro del `Pipeline`, de modo que el contrato de la API no cambiaría. La lista de horas vacías se calculó con la referencia y se fija en `config.py`; el backtest comprueba que la regla sigue dando la misma lista.
+- **Por qué no se usa la silueta como criterio principal.** La silueta en el espacio estandarizado del champion mide qué tan bien separa un modelo en la geometría que eligió el otro, así que penaliza por construcción a cualquier variante que cambie las variables. El criterio principal es la **estabilidad**: el ARI entre los grupos que el modelo asigna a las mismas estaciones en dos octubres distintos. No depende de la geometría de cada modelo.
+- **Backtest.** Todas las variantes y el champion asignan grupos a las estaciones que están en octubre 2024 y en octubre 2025 (ambos posteriores a los datos de entrenamiento, que terminan en 2024-09). La diferencia de ARI (variante menos champion) lleva un intervalo bootstrap sobre las estaciones, con las mismas remuestras para los dos modelos. Octubre 2026 no se usa en la selección.
+- **Nivel.** Se prueban cuatro variantes contra el mismo champion: `alfa = 0.05 / 4 = 0.0125` (Bonferroni) y el intervalo es de nivel `1 - alfa`.
+- **Regla de decisión.** Una variante es elegible si cumple las tres condiciones:
+  1. Su intervalo de la diferencia de estabilidad queda por completo sobre cero.
+  2. Piso de silueta: en el espacio del champion y en octubre 2025 no es significativamente peor (misma comparación pareada del A/B: no se cumple si Wilcoxon da `p < alfa` y el intervalo queda por completo bajo cero).
+  3. Su grupo más chico, en la referencia, tiene al menos `P3_TAM_MIN_ACEPTABLE` = 20 estaciones.
+
+  Si ninguna es elegible, el champion v4 se queda y el experimento termina sin tocar octubre 2026. Si hay varias, se toma la de mayor diferencia de estabilidad.
+- **Confirmación única.** La variante elegida se prueba una sola vez con la misma regla, con la estabilidad entre octubre 2025 y octubre 2026 y el piso de silueta en octubre 2026 (469 estaciones). Reemplaza al champion solo si pasa también esa prueba.
+- **Control de cordura.** Una variante que no cambia nada debe dar diferencia de estabilidad cero y el champion se queda (prueba automática).
+- **Alcance.** Nada se registra en MLflow ni se mueve ningún alias hasta confirmar el resultado.
+
 #### Pruebas
 
 ```bash
