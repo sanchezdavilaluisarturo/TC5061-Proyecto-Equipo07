@@ -1,0 +1,6 @@
+comparacion,estaciones_referencia,estaciones_actual,columnas_con_drift,proporcion_drift,umbral_proporcion
+train_test_todas,362,457,28,0.6222222222222222,0.5
+train_test_comunes,359,359,25,0.5555555555555556,0.5
+estacional_todas,300,469,36,0.8,0.5
+estacional_comunes,297,297,29,0.6444444444444445,0.5
+contraste_todas,362,469,37,0.8222222222222222,0.5

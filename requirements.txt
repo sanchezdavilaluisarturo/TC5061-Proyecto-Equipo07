@@ -656,7 +656,7 @@ sortedcontainers==2.4.0
     # via cyclonedx-python-lib
 soupsieve==2.10 ; python_full_version < '3.11.5'
     # via beautifulsoup4
-soupsieve==3.0.3 ; python_full_version >= '3.11.5'
+soupsieve==4.0.1 ; python_full_version >= '3.11.5'
     # via beautifulsoup4
 sqlalchemy==2.1.4
     # via
