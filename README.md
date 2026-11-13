@@ -2143,6 +2143,27 @@ El backtest de ventanas no encontró nada: reentrenar con otros periodos no mejo
 - **Control de cordura.** Una variante que no cambia nada debe dar diferencia de estabilidad cero y el champion se queda (prueba automática).
 - **Alcance.** Nada se registra en MLflow ni se mueve ningún alias hasta confirmar el resultado.
 
+
+#### Resultados del backtest de variables (P3)
+
+Comando: `make monitoreo-p3-backtest-variables` (tabla completa en `reports/monitoreo/p3_backtest_variables.csv`). Todas las variantes se ajustaron con los 362 perfiles de `referencia`. Estabilidad: 358 estaciones comunes a octubre 2024 y octubre 2025. Nivel `alfa = 0.0125`; los intervalos son de nivel 98.75%. Champion v4: ARI de estabilidad 0.448 y silueta 0.0634 (octubre 2025).
+
+| Variante | ARI de la variante | Diferencia de estabilidad | Intervalo de la diferencia | Silueta en el espacio del champion (diferencia) | Grupo más chico | ¿Elegible? |
+|---|---:|---:|---|---:|---:|---|
+| `hellinger` | 0.470 | +0.022 | [-0.081, 0.144] | -0.0038 (p = 0.012) | 165 | No |
+| `sin_horas_vacias` | 0.440 | -0.007 | [-0.097, 0.083] | -0.0043 (p < 0.001) | 160 | No |
+| `robusto` | 0.369 | -0.079 | [-0.186, 0.031] | +0.0001 (p = 0.077) | 155 | No |
+| `combinada` | 0.425 | -0.023 | [-0.122, 0.080] | -0.0069 (p < 0.001) | 164 | No |
+
+**Decisión: ninguna variante es elegible; el champion v4 se queda.** Ninguna tiene un intervalo de estabilidad por completo sobre cero. Según el protocolo no se prueba contra octubre 2026 y no se registra nada en MLflow ni se mueve ningún alias.
+
+- **Ninguna variante es más estable.** La mejor, `hellinger`, sube el ARI en 0.022, pero su intervalo va de -0.081 a 0.144. `robusto` es la que más baja (-0.079): la escala por mediana y rango intercuartil no ayuda con estos perfiles.
+- **Quitar las horas casi vacías no mejora nada.** `sin_horas_vacias` da una diferencia de -0.007 y una silueta algo peor. La hipótesis de que esas cuatro horas aportaban ruido no se sostiene con estos datos.
+- **Limitación de la prueba.** Con 358 estaciones el intervalo de la diferencia mide entre 0.18 y 0.22 de ancho, así que esta prueba solo detectaría mejoras grandes de estabilidad (del orden de 0.1 o más). El resultado es "no hay evidencia de mejora", no "se demostró que no hay efecto".
+- **El piso de silueta es permisivo.** Por la regla fijada, una variante falla el piso solo si Wilcoxon da `p < alfa` y además el intervalo queda por completo bajo cero. `hellinger` (p = 0.012), `sin_horas_vacias` y `combinada` tienen Wilcoxon significativo, pero sus intervalos incluyen cero, así que pasan el piso. No cambia la decisión, porque ninguna cumple el criterio principal. La silueta en el espacio del champion baja en tres de las cuatro, como se esperaba al cambiar la geometría.
+- **Lectura conjunta con el backtest de ventanas.** Ni cambiar el periodo de entrenamiento ni cambiar la preparación de las variables mejora al champion. Es coherente con la silueta baja del modelo (0.145) y con que el límite no esté en el preprocesamiento, sino en que las estaciones forman un continuo más que dos grupos separados. Es una hipótesis: este experimento no la prueba.
+- **Qué falta para insistir.** Variables nuevas (capacidad, zona, distancia al centro) o un algoritmo distinto exigen un protocolo nuevo fijado antes de correr; repetir el backtest con otras variantes hasta que una pase sería elegir con el resultado.
+
 #### Pruebas
 
 ```bash
