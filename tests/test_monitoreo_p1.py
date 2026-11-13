@@ -441,3 +441,55 @@ def test_ab_compara_champion_y_challenger_y_registra_el_run(config_prueba):
         cfg.P1_MODELO_REGISTRADO, "champion"
     )
     assert int(champion.version) == config_prueba["version"]
+
+
+def run_ab_simulado(champion: int, challenger: int, ganador: str) -> str:
+    """Run con las etiquetas que deja `ab`, para fijar el ganador sin depender de los datos."""
+    import mlflow
+
+    etiquetas = {
+        "tipo_monitoreo": "ab_testing",
+        "champion_version": str(champion),
+        "challenger_version": str(challenger),
+        "ganador": ganador,
+    }
+    with mlflow.start_run(run_name=f"p1-ab-v{champion}-vs-v{challenger}", tags=etiquetas) as run:
+        return run.info.run_id
+
+
+def test_promover_exige_un_ab_que_respalde_al_challenger(config_prueba):
+    import mlflow
+
+    monitoreo_p1.challenger()
+    cliente = mlflow.MlflowClient()
+    retador = int(
+        cliente.get_model_version_by_alias(cfg.P1_MODELO_REGISTRADO, "challenger").version
+    )
+    with pytest.raises(ValueError, match="No hay A/B"):
+        monitoreo_p1.promover()
+    run_ab_simulado(config_prueba["version"], retador, f"champion v{config_prueba['version']}")
+    with pytest.raises(ValueError, match="no respalda"):
+        monitoreo_p1.promover()
+    champion = cliente.get_model_version_by_alias(cfg.P1_MODELO_REGISTRADO, "champion")
+    assert int(champion.version) == config_prueba["version"]
+
+
+def test_promover_mueve_el_champion_y_deja_el_linaje(config_prueba):
+    import mlflow
+
+    monitoreo_p1.challenger()
+    cliente, nombre = mlflow.MlflowClient(), cfg.P1_MODELO_REGISTRADO
+    anterior = config_prueba["version"]
+    retador = int(cliente.get_model_version_by_alias(nombre, "challenger").version)
+    id_run = run_ab_simulado(anterior, retador, f"challenger v{retador}")
+
+    monitoreo_p1.promover()
+
+    promovida = cliente.get_model_version_by_alias(nombre, "champion")
+    assert int(promovida.version) == retador
+    assert "challenger" not in cliente.get_registered_model(nombre).aliases
+    assert promovida.tags["ab_run_id"] == id_run
+    assert promovida.tags["champion_anterior"] == str(anterior)
+    assert cliente.get_model_version(nombre, str(anterior)).tags["reemplazada_por"] == str(retador)
+    # Deja el champion original para las pruebas que comparten el MLflow del módulo
+    cliente.set_registered_model_alias(nombre, "champion", anterior)
