@@ -142,6 +142,12 @@ monitoreo-p2-tabla:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 tabla
 
 
+## Monitoreo de P2: reportes de drift y estacionalidad con Evidently
+.PHONY: monitoreo-p2-drift
+monitoreo-p2-drift:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 drift
+
+
 ## Pruebas de la base de monitoreo (drift con Evidently y A/B testing)
 .PHONY: pruebas-monitoreo
 pruebas-monitoreo:
