@@ -358,7 +358,7 @@ nbformat==5.11.1
     #   nbconvert
 nest-asyncio2==1.7.4
     # via ipykernel
-nltk==3.10.3
+nltk==3.10.4
     # via evidently
 numpy==1.26.4
     # via
@@ -385,23 +385,23 @@ nvidia-nccl-cu12==2.32.3 ; sys_platform == 'linux'
     # via xgboost
 openpyxl==3.1.5
     # via mlops-proyectomibici-equipo7
-opentelemetry-api==1.45.1
+opentelemetry-api==1.45.2
     # via
     #   fastapi
     #   mlflow-skinny
     #   mlflow-tracing
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-proto==1.45.1
+opentelemetry-proto==1.45.2
     # via
     #   evidently
     #   mlflow-skinny
     #   mlflow-tracing
-opentelemetry-sdk==1.45.1
+opentelemetry-sdk==1.45.2
     # via
     #   mlflow-skinny
     #   mlflow-tracing
-opentelemetry-semantic-conventions==0.66b1
+opentelemetry-semantic-conventions==0.66b2
     # via opentelemetry-sdk
 optuna==5.0.0
     # via mlops-proyectomibici-equipo7
@@ -694,7 +694,7 @@ tomli==2.5.0
     # via pip-audit
 tomli-w==1.2.0
     # via pip-audit
-tornado==6.6
+tornado==6.6.1
     # via
     #   ipykernel
     #   jupyter-client

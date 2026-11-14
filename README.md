@@ -2010,6 +2010,8 @@ make pruebas-monitoreo-p1
 make monitoreo-datos            # mes nuevo (2026-10) con la misma limpieza
 make monitoreo-p2-tabla         # estación-bins del mes nuevo, verificados contra la tabla de entrenamiento
 make monitoreo-p2-drift         # reportes de drift y estacionalidad con Evidently
+make monitoreo-p2-challenger   # reentrena el champion con datos hasta 2026-09; lo registra como v4 con alias challenger
+make monitoreo-p2-ab           # compara champion (v3) y challenger (v4) sobre octubre 2026 (run p2-ab-v3-vs-v4)
 ```
 
 Requiere `make data`, `make features-p2` y el champion en el Registry. Los HTML y JSON de Evidently se guardan en `reports/monitoreo/` y como artefactos de cada run (carpeta `monitoreo/`).
@@ -2064,6 +2066,30 @@ Requiere `make data`, `make features-p2` y el champion en el Registry. Los HTML 
 - **La degradación es gradual y sostenida, no estacional.** La ventaja sobre el baseline se reduce desde 2025-04, dentro de valid, y desaparece en 2026; en los octubres de train nunca bajó de 13 %. El mes nuevo continúa una tendencia que ya existía.
 - **Las estaciones nuevas son un punto ciego para sin anclajes.** El champion no vio su historia y les asigna un riesgo bajo; el baseline, que usa la historia reciente de la propia estación, las detecta mejor.
 - **Limitaciones.** La causa de la caída del riesgo (más estaciones y capacidad, más rebalanceo) no se verificó. Las distancias de Evidently son poco sensibles a la prevalencia de clases raras, así que el drift de la etiqueta solo se ve con las métricas de desempeño.
+
+#### A/B testing del champion y el challenger (P2)
+
+El challenger es el XGBoost del champion v3 (mismos hiperparámetros y semilla: 300 árboles, `max_leaves` 133, `learning_rate` 0.027), copiado con `clone` y entrenado con referencia, valid y actual sin brechas, de 2020-01 a 2026-09: 28796364 estación-bins, 52 % más que los 18902160 de train con los que aprendió el champion (628 s). Las variables, incluida la historia "hasta ayer" con la frecuencia global de train, son las del champion: la única diferencia entre las dos versiones son los datos. Se registra con las mismas funciones que los entrenamientos de P2 (`p2_registrar_run` y `registro_p2`) como versión 4 con alias `challenger`; `champion` sigue en la versión 3.
+
+El protocolo se fijó en el commit anterior a la corrida del A/B con octubre 2026 (TODO: APUNTAR ID DE COMMIT YA QUE SE EJECUTE EL A/B). El run del challenger solo registra métricas del modelo auxiliar de los umbrales (ver la tabla): no son de ninguna de las dos versiones que se comparan y no cambiaron el protocolo.
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Umbrales del challenger | Un modelo auxiliar igual, entrenado con el 25 % de referencia y valid (`P2_CHALLENGER_FRACCION_UMBRALES`), elige los umbrales en actual con el mismo criterio que el champion (máximo F1 por clase): 0.296 sin bicis y 0.269 sin anclajes, contra 0.244 y 0.231 del champion | El challenger aprende con valid y actual, así que ya no queda un periodo fuera de la muestra para elegirlos; elegirlos sobre sus propios datos de entrenamiento los sesgaría. La muestra reduce el tiempo y la memoria | Huyen (2022, cap. 6) |
+| Sin métricas después de entrenar | El run del challenger no registra métricas del modelo final; tampoco `valid_ap_riesgo` en el Registry | Todos sus datos son de entrenamiento y el único mes que no vio es el del A/B: medirlo antes sería ver el resultado antes de fijar el protocolo | Treveil et al. (2020, cap. 7) |
+| Linaje de la versión 4 | Mismas etiquetas que las demás versiones, más `base_version` y `base_source_run_id`; el run lleva `rango_datos`, `filas_fit` y `fraccion_umbrales`. En la v3, `rango_datos` describe la tabla completa (2020-01 a 2026-09), no lo que vio el modelo: la diferencia está en `filas_fit` | Cada versión debe poder reproducirse con sus datos y su código | Treveil et al. (2020, cap. 7); MLflow (s.f.-a) |
+| Conjunto | Los 520558 estación-bins de octubre 2026 (469 estaciones), con la misma tabla y las mismas variables para las dos versiones | Ninguna versión vio ese mes; con las mismas filas la comparación es pareada | Treveil et al. (2020, cap. 7); Huyen (2022, cap. 9) |
+| Métrica principal | Log-loss multiclase por fila, −log p(clase real); su media es el `log_loss` del entrenamiento | Mide las probabilidades que regresa la API y no depende de los umbrales, que se eligieron distinto en cada versión. El AP no se descompone por fila | Huyen (2022, cap. 6) |
+| Unidad | Estación-día, para el bootstrap y el reparto aleatorio | La etiqueta mira 2 h hacia adelante: los bins de una misma estación y día se traslapan y están correlacionados | Treveil et al. (2020, cap. 7) |
+| Prueba principal | Diferencia media de log-loss (B − A) con intervalo bootstrap por estación-día (2000 remuestreos) y Wilcoxon de rangos con signo (`comparar_pareado`) | Cerca del 98 % de las filas son sin riesgo: Wilcoxon solo vería su centro, y un challenger que solo bajara la probabilidad en esas filas ganaría aunque fallara más en las de riesgo. La media pesa también las filas con riesgo | Treveil et al. (2020, cap. 7); SciPy (s.f.) |
+| Guarda | AP de riesgo de cada versión, con intervalo bootstrap de la diferencia por estación-día (2000 remuestreos, recalculando el AP en cada uno) | El champion sobreestima el riesgo en el mes nuevo (ver Interpretación): el challenger podría ganar en log-loss solo por calibración. La guarda exige que no ordene peor | Huyen (2022, cap. 8) |
+| Regla de decisión | El challenger gana solo si el intervalo de la diferencia de log-loss queda por completo bajo cero, Wilcoxon da p < 0.05 en la misma dirección y el intervalo de la diferencia de AP no queda por completo bajo cero. Si no, el champion se queda | Cambiar de versión tiene un costo; pedir varias condiciones evita decidir por un p-value aislado | Treveil et al. (2020, cap. 7) |
+| Contexto (no decide) | AUC, AP por clase, calibración por clase, F1 con los umbrales de cada versión y el baseline histórico; por cohorte: todas, conocidas y nuevas | Muestra de dónde viene la diferencia y pone a prueba la hipótesis de que el champion pierde por la calibración y por las estaciones nuevas | Huyen (2022, cap. 8) |
+| Prueba complementaria | Reparto aleatorio por estación-día (`comparar_aleatorio`): cada unidad recibe solo la predicción de una versión (Mann-Whitney y t de Welch) | Simula el reparto de tráfico de un A/B en producción; al no ser pareada necesita más datos para detectar la misma diferencia | Huyen (2022, cap. 9); Treveil et al. (2020, cap. 7) |
+| Promoción en un paso aparte | `monitoreo-p2-ab` solo deja la decisión en la etiqueta `ganador`. `monitoreo-p2-promover` mueve el alias `champion` al challenger solo si el último A/B entre esas dos versiones lo declaró ganador, igual que en P1 | Promover cambia el modelo que sirve la API: la decisión queda explícita y con su evidencia | Huyen (2022, cap. 9); MLflow (s.f.-a) |
+
+**Limitaciones declaradas antes de la prueba A/B.** Octubre es un solo mes. El challenger tiene dos años más de datos que el champion (que llega a 2024-09), así que el A/B mide el valor de esos datos y no el de un mes. Sus umbrales los eligió un modelo auxiliar con menos datos, cuyas probabilidades pueden repartirse distinto que las del challenger final; por eso el F1 solo es contexto. El bootstrap por estación-día no captura la correlación entre estaciones de un mismo día (clima, eventos); remuestrear días completos daría solo 31 unidades.
+
 
 ### Monitoreo de P3 (segmentación de estaciones)
 
