@@ -2003,6 +2003,68 @@ make pruebas-monitoreo-p1
 - Que el A/B agrupa por estación-día, separa estaciones conocidas y nuevas, y registra el run con los dos modelos.
 - Que la promoción no ocurre sin un A/B que declare ganador al challenger y, cuando ocurre, mueve el alias y deja el linaje.
 
+
+### Monitoreo de P2 (riesgo de estación)
+
+```bash
+make monitoreo-datos            # mes nuevo (2026-10) con la misma limpieza
+make monitoreo-p2-tabla         # estación-bins del mes nuevo, verificados contra la tabla de entrenamiento
+make monitoreo-p2-drift         # reportes de drift y estacionalidad con Evidently
+```
+
+Requiere `make data`, `make features-p2` y el champion en el Registry. Los HTML y JSON de Evidently se guardan en `reports/monitoreo/` y como artefactos de cada run (carpeta `monitoreo/`).
+
+#### Decisiones
+
+| Decisión | Qué se hizo | Por qué | Lectura |
+|---|---|---|---|
+| Tabla del mes nuevo | `monitoreo-p2-tabla` recalcula 2026-09 con la nomenclatura y la fecha límite de entrenamiento y exige que salga idéntica, fila por fila, a la tabla del champion; después calcula 2026-10 con la nomenclatura vigente. La historia "hasta ayer" se calcula sobre la tabla de entrenamiento más el mes nuevo, con la frecuencia global de train | Si el mes nuevo se calculara distinto, el drift sería del pipeline y no de los datos (*train-serving skew*) | Huyen (2022, cap. 8) |
+| Columnas del reporte | Las 17 variables del modelo, las probabilidades de sin bicis y sin anclajes, la clase real y la clase decidida (21 columnas); `es_fin_semana` como categórica. `estacion` no entra | Monitorear la probabilidad es más sensible que monitorear la clase decidida, que depende de un umbral. `estacion` es un identificador: la mezcla de estaciones ya la reflejan `latitude`, `longitude` y `dpcapacity` | Huyen (2022, cap. 8) |
+| Cuatro reportes | Drift: train contra test. Desempeño (`ClassificationPreset` con probabilidades): valid contra test y valid contra 2026-10. Control estacional: los octubres de train (2020 a 2023) contra 2026-10 | El desempeño no se mide en train porque ahí el modelo aprendió. El control estacional compara el mismo mes para que la temporada no se confunda con drift | Huyen (2022, cap. 8); Evidently AI (s.f.) |
+| Métricas que separan causas | Por conjunto y por mes: prevalencia de cada riesgo, calibración (probabilidad media / prevalencia; 1 = bien), AUC, lift de AP (AP / prevalencia), AP, log-loss y F1 con los umbrales del champion. Con menos de 30 casos positivos, AUC y AP quedan vacíos | El AP depende de la prevalencia: compara modelos sobre las mismas filas, pero no periodos entre sí. Separar prevalencia, calibración y ordenamiento (AUC) dice si cambió el mundo, la escala de las probabilidades o la capacidad del modelo | Huyen (2022, cap. 8) |
+| Cohortes de estaciones | Todas, conocidas (con filas en train) y nuevas (abrieron después) | Un cambio en los valores posibles de una variable (*feature change*) degrada el modelo aunque no aparezca como drift de distribución | Huyen (2022, cap. 8) |
+| Baseline de contexto | El baseline histórico (frecuencia de cada riesgo en días previos de la misma estación, tipo de día y hora), con umbrales elegidos en valid | Si el champion pierde su ventaja sobre una regla simple, el modelo se degradó aunque sus métricas absolutas parezcan aceptables | Huyen (2022, cap. 8) |
+| Serie mensual | Champion y baseline mes a mes de 2024-10 a 2026-10, más el octubre de cada año de train | Distingue una caída gradual (*gradual drift*) de un salto en el mes nuevo, y la temporada de una tendencia | Huyen (2022, cap. 8) |
+
+#### Resultados
+
+**Drift de las variables.** Ninguna comparación llega al umbral del conjunto (la mitad de las columnas):
+
+| Comparación | Columnas con drift | Principales (distancia de Wasserstein normalizada) |
+|---|---|---|
+| Train contra test | 2 de 21 | `longitude` 0.124, `dpcapacity` 0.110 |
+| Octubres de train contra 2026-10 | 6 de 21 | `longitude` 0.227, `dpcapacity` 0.185, `salidas_4` 0.150, `salidas_2` 0.141, `entradas_4` 0.138, `entradas_2` 0.130 |
+
+- `longitude` y `dpcapacity` cambian porque la red creció: 469 estaciones en 2026-10, y las nuevas tienen el 23 % de los estación-bins.
+- Contra los mismos meses, el flujo absoluto (salidas y entradas en 2 y 4 h) es mayor en 2026-10. Las variables relativas a la capacidad (`neto_*_relativo`, `cumsum_dia_relativo`) quedan bajo 0.07: la normalización absorbe el crecimiento de la demanda.
+- La clase real y las probabilidades no muestran drift por distancia. En un evento raro, una caída de la prevalencia de 1.37 % a 0.73 % es una distancia pequeña; por eso el drift de la etiqueta se mide con las métricas de desempeño.
+
+**Desempeño del champion (v3) y del baseline, todas las estaciones:**
+
+| Conjunto | Prevalencia sin bicis / sin anclajes | AUC de riesgo champion / baseline | AP de riesgo champion / baseline | Calibración champion sin bicis / sin anclajes |
+|---|---|---|---|---|
+| Valid (2024-10 a 2025-09) | 1.37 % / 1.28 % | 0.944 / 0.933 | 0.432 / 0.384 | 1.06 / 1.04 |
+| Test (2025-10 a 2026-09) | 0.73 % / 1.03 % | 0.942 / 0.931 | 0.334 / 0.333 | 1.82 / 1.24 |
+| 2026-10 | 1.00 % / 1.21 % | 0.934 / 0.918 | 0.353 / 0.355 | 1.39 / 1.06 |
+
+**Ventaja del champion sobre el baseline en AP de riesgo, por mes** (`p2_serie_mensual.png`):
+
+| Octubres de train (2020 a 2023) | 2024-10 a 2025-03 | 2025-04 a 2025-09 | 2025-10 a 2026-02 | 2026-03 a 2026-10 |
+|---|---|---|---|---|
+| +13 % a +22 % | +13 % a +22 % | +5 % a +8 % | +2 % a +6 % | −9 % a +1 % |
+
+**El mismo mes de cada año:** el AP del champion en octubre baja de 0.487 (2023) a 0.458 (2024), 0.407 (2025) y 0.353 (2026), y la prevalencia de sin bicis en octubre, de 1.76 % a 1.66 %, 1.27 % y 1.00 %.
+
+**Estaciones nuevas en 2026-10** (23 % de las filas): el champion ordena bien (AUC 0.964), pero subestima el riesgo de quedarse sin anclajes (calibración 0.45). Sus probabilidades casi nunca cruzan el umbral: F1 sin anclajes de 0.08, contra 0.36 del baseline.
+
+#### Interpretación
+
+- **El drift principal es de la etiqueta (*label shift*), no de las variables.** Cada vez hay menos episodios de riesgo, sobre todo sin bicis, y el champion, entrenado hasta 2024-09, sobreestima el riesgo: 1.82 veces en test y 1.39 en 2026-10. Más falsas alarmas: el F1 de sin bicis pasa de 0.42 en valid a 0.28 en test y 0.34 en 2026-10.
+- **El modelo sigue ordenando bien, pero sus probabilidades ya no están en escala.** El AUC casi no cambia (0.944 a 0.934); lo que se pierde es la calibración y, con ella, los umbrales elegidos en valid. Un reentrenamiento con datos recientes debería recuperar la escala sin cambiar el modelo.
+- **La degradación es gradual y sostenida, no estacional.** La ventaja sobre el baseline se reduce desde 2025-04, dentro de valid, y desaparece en 2026; en los octubres de train nunca bajó de 13 %. El mes nuevo continúa una tendencia que ya existía.
+- **Las estaciones nuevas son un punto ciego para sin anclajes.** El champion no vio su historia y les asigna un riesgo bajo; el baseline, que usa la historia reciente de la propia estación, las detecta mejor.
+- **Limitaciones.** La causa de la caída del riesgo (más estaciones y capacidad, más rebalanceo) no se verificó. Las distancias de Evidently son poco sensibles a la prevalencia de clases raras, así que el drift de la etiqueta solo se ve con las métricas de desempeño.
+
 ### Monitoreo de P3 (segmentación de estaciones)
 
 ```bash
