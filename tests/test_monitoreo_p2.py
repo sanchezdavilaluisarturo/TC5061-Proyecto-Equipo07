@@ -444,3 +444,34 @@ def test_ab_compara_champion_y_challenger_y_registra_el_run(config_prueba):
     assert {m.model_id for m in run.inputs.model_inputs} == {a["modelo_id"], b["modelo_id"]}
     # El A/B no mueve el alias champion
     assert a["version"] == config_prueba["version"]
+
+
+def test_promover_exige_un_ab_que_respalde_al_challenger_y_deja_el_linaje(config_prueba):
+    import mlflow
+
+    monitoreo_p2.challenger(registrar=True)
+    cliente, nombre = mlflow.MlflowClient(), cfg.P2_MODELO_REGISTRADO
+    anterior = config_prueba["version"]
+    retador = int(cliente.get_model_version_by_alias(nombre, "challenger").version)
+    with pytest.raises(ValueError, match="No hay A/B"):
+        monitoreo_p2.promover()
+
+    mlflow.set_experiment("prueba-p2")
+    etiquetas = {"tipo_monitoreo": "ab_testing", "question": "p2"}
+    etiquetas["champion_version"] = str(anterior)
+    for ganador in (f"champion v{anterior}", f"challenger v{retador}"):
+        with mlflow.start_run(tags=etiquetas | {"ganador": ganador}) as run:
+            mlflow.log_param("challenger_version", retador)
+        if ganador.startswith("champion"):
+            with pytest.raises(ValueError, match="no respalda"):
+                monitoreo_p2.promover()
+    monitoreo_p2.promover()
+
+    promovida = cliente.get_model_version_by_alias(nombre, "champion")
+    assert int(promovida.version) == retador
+    assert "challenger" not in cliente.get_registered_model(nombre).aliases
+    assert promovida.tags["ab_run_id"] == run.info.run_id
+    assert promovida.tags["champion_anterior"] == str(anterior)
+    assert cliente.get_model_version(nombre, str(anterior)).tags["reemplazada_por"] == str(retador)
+    # Deja el champion original para las pruebas que comparten el MLflow del módulo
+    cliente.set_registered_model_alias(nombre, "champion", anterior)

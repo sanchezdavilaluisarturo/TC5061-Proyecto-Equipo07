@@ -160,6 +160,12 @@ monitoreo-p2-ab:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 ab
 
 
+## Monitoreo de P2: champion = challenger, solo si el último A/B lo declaró ganador
+.PHONY: monitoreo-p2-promover
+monitoreo-p2-promover:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 promover
+
+
 ## Pruebas de la base de monitoreo (drift con Evidently y A/B testing)
 .PHONY: pruebas-monitoreo
 pruebas-monitoreo:

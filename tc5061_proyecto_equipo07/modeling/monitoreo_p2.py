@@ -804,5 +804,53 @@ def ab():
     )
 
 
+@app.command()
+def promover():
+    """Mueve el alias champion al challenger, solo si el último A/B entre los dos lo declaró ganador.
+    Se ejecuta a mano, como paso aparte del A/B.
+
+    La versión promovida pierde el alias challenger y guarda el run del A/B que la respalda;
+    la reemplazada queda con la versión que la sustituyó. Los umbrales viajan en el run de
+    origen de cada versión, así que la API toma los del challenger al cargarlo.
+    """
+    if cfg.MLFLOW_TRACKING_URI:
+        mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
+    cliente, nombre = mlflow.MlflowClient(), cfg.P2_MODELO_REGISTRADO
+    champion = cliente.get_model_version_by_alias(nombre, "champion")
+    retador = cliente.get_model_version_by_alias(nombre, "challenger")
+    runs = mlflow.search_runs(
+        experiment_names=[cfg.EXPERIMENTO_MLFLOW],
+        filter_string=(
+            "tags.tipo_monitoreo = 'ab_testing' and tags.question = 'p2' "
+            f"and tags.champion_version = '{champion.version}' "
+            f"and params.challenger_version = '{retador.version}'"
+        ),
+        order_by=["attributes.start_time DESC"],
+        max_results=1,
+        output_format="list",
+    )
+    if not runs:
+        raise ValueError(
+            f"No hay A/B de v{champion.version} contra v{retador.version}; "
+            "ejecutar `make monitoreo-p2-ab`"
+        )
+    run, ganador = runs[0], runs[0].data.tags.get("ganador")
+    if ganador != f"challenger v{retador.version}":
+        raise ValueError(
+            f"El A/B {run.info.run_id} no respalda al challenger (ganador: {ganador})"
+        )
+
+    cliente.set_registered_model_alias(nombre, "champion", retador.version)
+    cliente.delete_registered_model_alias(nombre, "challenger")
+    cliente.set_model_version_tag(nombre, retador.version, "ab_run_id", run.info.run_id)
+    cliente.set_model_version_tag(nombre, retador.version, "champion_anterior", champion.version)
+    cliente.set_model_version_tag(nombre, champion.version, "reemplazada_por", retador.version)
+    registro_p2.p2_verificar("champion")
+    logger.success(
+        f"{nombre}: champion = versión {retador.version} (antes {champion.version}), "
+        f"respaldada por el A/B {run.info.run_id}"
+    )
+
+
 if __name__ == "__main__":
     app()
