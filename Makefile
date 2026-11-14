@@ -160,6 +160,12 @@ pruebas-monitoreo-p2:
 	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p2.py
 
 
+## Monitoreo de P2: champion reentrenado con datos hasta el mes previo; versión nueva con alias challenger
+.PHONY: monitoreo-p2-challenger
+monitoreo-p2-challenger:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 challenger --registrar
+
+
 ## Monitoreo de P1: estación-horas del mes nuevo, verificadas contra la tabla de entrenamiento
 .PHONY: monitoreo-p1-tabla
 monitoreo-p1-tabla:

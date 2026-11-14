@@ -347,6 +347,7 @@ P2_MODELOS = {
     "hgb": ("hgb", "candidate", "hist_gradient_boosting"),
     "xgb": ("xgb", "candidate", "xgboost"),
     "xgb_optuna": ("xgb-optuna", "candidate", "xgboost"),
+    "xgb_challenger": ("xgb-challenger", "challenger", "xgboost"),
 }
 P2_DESCRIPCIONES = {  # caja "Description" de cada run
     "baseline": "Frecuencia de cada riesgo en los días previos de la misma estación, tipo de día "
@@ -358,6 +359,10 @@ P2_DESCRIPCIONES = {  # caja "Description" de cada run
     "xgb_optuna": "XGBoost con las features de flujo, hora y estación más la "
     "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h. "
     "Sus hiperparámetros se optimizan usando Optuna.",
+    "xgb_challenger": "XGBoost con los mismos hiperparámetros del champion, reentrenado con datos "
+    "hasta el mes previo al de monitoreo (data iteration): referencia, valid y actual sin brechas. "
+    "Sus umbrales los elige en actual un modelo auxiliar igual, entrenado hasta valid. Versión "
+    "alternativa del A/B testing; su prueba es el mes de evaluación, que no vio.",
 }
 
 
@@ -422,6 +427,9 @@ P1_DESCRIPCION_CHALLENGER = (
 
 # P2: estación-bins del mes de evaluación con su historia "hasta ayer"
 P2_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p2_cambios_evaluacion_{MES_MONITOREO}.parquet"
+# P2: fracción de referencia y valid con la que aprende el modelo auxiliar del challenger antes
+# de elegir los umbrales en actual (una muestra aleatoria conserva la proporción de clases)
+P2_CHALLENGER_FRACCION_UMBRALES = 0.25
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

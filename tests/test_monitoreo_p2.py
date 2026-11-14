@@ -337,3 +337,50 @@ def test_drift_genera_reportes_tablas_y_el_run_del_champion(config_prueba):
     assert completo.data.tags["mlflow.note.content"].startswith("Monitoreo de P2")
     metricas_modelo = {m.key for m in mlflow.get_logged_model(config_prueba["modelo_id"]).metrics}
     assert "champion_auc_riesgo_evaluacion" in metricas_modelo
+
+
+def test_challenger_sin_registrar_no_escribe_en_mlflow(config_prueba):
+    import mlflow
+
+    antes = len(mlflow.search_runs(experiment_names=["prueba-p2"]))
+    modelo, umbrales = monitoreo_p2.challenger(registrar=False)
+
+    assert len(mlflow.search_runs(experiment_names=["prueba-p2"])) == antes
+    assert set(umbrales) == {1, 2} and all(0 < u < 1 for u in umbrales.values())
+    assert modelo.predict_proba(
+        pd.read_parquet(cfg.P2_RUTA_EVALUACION)[cfg.P2_FEATURES_CON_HISTORICO]
+    ).shape[1] == len(cfg.P2_CLASES)
+
+
+def test_challenger_se_registra_sin_mover_el_champion(config_prueba):
+    import mlflow
+
+    champion_antes = monitoreo_p2.p2_cargar_alias("champion")
+    monitoreo_p2.challenger(registrar=True)
+
+    cliente = mlflow.MlflowClient()
+    retador = cliente.get_model_version_by_alias(cfg.P2_MODELO_REGISTRADO, "challenger")
+    champion = cliente.get_model_version_by_alias(cfg.P2_MODELO_REGISTRADO, "champion")
+    assert int(champion.version) == champion_antes["version"]
+    assert int(retador.version) != champion_antes["version"]
+    # Linaje: de qué versión sale; no lleva valid_ap_riesgo porque aprendió con valid
+    assert retador.tags["base_version"] == str(champion_antes["version"])
+    assert retador.tags["base_source_run_id"] == champion_antes["run_id"]
+    assert retador.tags["fase"] == cfg.FASE_MONITOREO
+    assert "valid_ap_riesgo" not in retador.tags
+
+    run = mlflow.get_run(retador.run_id)
+    assert run.data.tags["stage_of_work"] == "challenger"
+    assert run.data.params["modelo"] == "xgb_challenger"
+    assert run.data.params["rango_datos"].endswith("2026-09")
+    # Entrena con referencia, valid y actual sin brechas, nunca con el mes de evaluación
+    tabla = monitoreo_p2.p2_tabla_con_historia(cfg.RUTA_P2_CAMBIOS)
+    esperadas = tabla["periodo"].isin(["referencia", "valid", "actual"]).sum()
+    assert int(run.data.params["filas_fit"]) == esperadas
+
+    # Mismos hiperparámetros que el champion (data iteration) y umbrales que el A/B puede leer
+    challenger = monitoreo_p2.p2_cargar_alias("challenger")
+    assert {k: str(v) for k, v in challenger["modelo"].get_params().items()} == {
+        k: str(v) for k, v in champion_antes["modelo"].get_params().items()
+    }
+    assert set(challenger["umbrales"]) == {1, 2}

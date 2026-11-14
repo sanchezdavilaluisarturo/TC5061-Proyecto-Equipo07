@@ -40,16 +40,19 @@ def p2_descripcion_version(run) -> str:
 
 
 def p2_etiquetas_version(run) -> dict[str, str]:
-    """Linaje de la versión: commit, datos, run de origen y, si hay, la búsqueda que la produjo."""
+    """Linaje de la versión: commit, datos, run de origen y, si hay, la búsqueda o versión base."""
     etiquetas = {
         "question": run.data.tags.get("question", "p2"),
         "fase": run.data.tags.get("fase", cfg.FASE_ENTREGA),
         "commit": run.data.tags.get("commit", "desconocido"),
         "data_version": run.data.params.get("data_version", "desconocido"),
         "source_run_id": run.info.run_id,
-        "valid_ap_riesgo": f"{run.data.metrics['valid_ap_riesgo']:.4f}",
     }
-    etiquetas.update({n: run.data.tags[n] for n in ("busqueda_run_id",) if n in run.data.tags})
+    # El challenger aprende con valid: no registra valid_ap_riesgo (sería de entrenamiento)
+    if "valid_ap_riesgo" in run.data.metrics:
+        etiquetas["valid_ap_riesgo"] = f"{run.data.metrics['valid_ap_riesgo']:.4f}"
+    linaje = ("busqueda_run_id", "base_version", "base_source_run_id")
+    etiquetas.update({n: run.data.tags[n] for n in linaje if n in run.data.tags})
     return etiquetas
 
 

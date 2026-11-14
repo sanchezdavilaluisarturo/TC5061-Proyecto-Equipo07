@@ -6,8 +6,11 @@ servicio, así que el mes nuevo se calcula solo con sus viajes (más un margen p
 antes). La historia "hasta ayer" sí necesita los días previos: se calcula sobre la tabla de
 entrenamiento más el mes nuevo.
 
-Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 tabla | drift
+Uso: python -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 tabla | drift | challenger
 """
+
+from pathlib import Path
+import time
 
 from evidently import DataDefinition, MulticlassClassification
 from loguru import logger
@@ -15,6 +18,7 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.metrics import (
     average_precision_score,
     precision_recall_fscore_support,
@@ -24,11 +28,13 @@ import typer
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import dataset, features, monitoreo, plots
+from tc5061_proyecto_equipo07.modeling import registro_p2
 from tc5061_proyecto_equipo07.modeling.predict import p2_decidir_clase
 from tc5061_proyecto_equipo07.modeling.train import (
     P2BaselineHistorico,
     p2_calcular_metricas,
     p2_elegir_umbral,
+    p2_registrar_run,
 )
 
 app = typer.Typer(add_completion=False)
@@ -122,26 +128,36 @@ def p2_agregar_historia(
     return tabla.loc[nuevo, columnas].reset_index(drop=True)
 
 
-def p2_conjuntos(ruta_entrenamiento=cfg.RUTA_P2_CAMBIOS, ruta_evaluacion=cfg.P2_RUTA_EVALUACION):
-    """Regresa referencia, valid, actual y evaluacion con la historia "hasta ayer"
+def p2_tabla_con_historia(ruta: Path = cfg.RUTA_P2_CAMBIOS) -> pd.DataFrame:
+    """Tabla de entrenamiento con la historia "hasta ayer" y el periodo de monitoreo de cada fila.
 
     La historia se calcula como al entrenar (frecuencia global de train y etiquetas de días
     previos), pero el periodo se asigna con `monitoreo.asignar_periodo`: así el día previo al mes
     nuevo también queda en `brecha`, como en las demás fronteras.
     """
-    for ruta, comando in [
-        (ruta_entrenamiento, "make features-p2"),
-        (ruta_evaluacion, "make monitoreo-p2-tabla"),
-    ]:
-        if not ruta.exists():
-            raise FileNotFoundError(f"Falta {ruta.name}; ejecutar `{comando}`")
-    cambios = pd.read_parquet(ruta_entrenamiento)
+    if not ruta.exists():
+        raise FileNotFoundError(f"Falta {ruta.name}; ejecutar `make features-p2`")
+    cambios = pd.read_parquet(ruta)
     en_train = features.p2_asignar_particion(cambios["dia"]) == "train"
     historia = features.P2HistoriaHastaAyer(cfg.P2_PESO_HISTORICO).fit(cambios[en_train])
     cambios = historia.transform(cambios)[P2_COLUMNAS_CONJUNTO]
-    periodo = monitoreo.asignar_periodo(cambios["dia"])
+    cambios["periodo"] = monitoreo.asignar_periodo(cambios["dia"])
+    return cambios
+
+
+def p2_conjuntos(ruta_entrenamiento=cfg.RUTA_P2_CAMBIOS, ruta_evaluacion=cfg.P2_RUTA_EVALUACION):
+    """Regresa referencia, valid, actual y evaluacion con la historia "hasta ayer"; sin brechas."""
+    if not ruta_entrenamiento.exists():
+        raise FileNotFoundError(f"Falta {ruta_entrenamiento.name}; ejecutar `make features-p2`")
+    if not ruta_evaluacion.exists():
+        raise FileNotFoundError(
+            f"Falta {ruta_evaluacion.name}; ejecutar `make monitoreo-p2-tabla`"
+        )
+    cambios = p2_tabla_con_historia(ruta_entrenamiento)
     conjuntos = {
-        nombre: cambios[periodo == nombre].reset_index(drop=True)
+        nombre: cambios[cambios["periodo"] == nombre]
+        .drop(columns="periodo")
+        .reset_index(drop=True)
         for nombre in ["referencia", "valid", "actual"]
     }
     del cambios
@@ -182,6 +198,7 @@ def p2_cargar_alias(alias: str) -> dict:
         "modelo": modelo,
         "umbrales": umbrales,
         "version": int(version.version),
+        "run_id": version.run_id,
         "etiquetas": dict(version.tags),
         "modelo_id": p2_modelo_id(version),
     }
@@ -584,6 +601,86 @@ def drift(muestra: int = cfg.MONITOREO_MUESTRA):
             "autor": "Fernando Arreola Treviño",
         },
     )
+
+
+@app.command()
+def challenger(
+    registrar: bool = typer.Option(
+        False, "--registrar", help="Registrarlo en MLflow como versión nueva con alias challenger"
+    ),
+):
+    """Entrena la versión alternativa de P2 (data iteration); con --registrar, la registra.
+
+    Clona el champion (mismos hiperparámetros y semilla) y lo entrena con referencia, valid y
+    actual sin brechas, hasta el mes previo al de monitoreo. Sus umbrales se eligen fuera de la
+    muestra: un modelo auxiliar igual, entrenado con una fracción de referencia y valid
+    (P2_CHALLENGER_FRACCION_UMBRALES), los elige en actual. Las variables son las del champion,
+    incluida la historia con la frecuencia global de train: solo cambian los datos. Sin
+    --registrar no escribe nada en MLflow; el alias champion nunca se toca.
+    """
+    tabla = p2_tabla_con_historia(cfg.RUTA_P2_CAMBIOS)
+    tabla = tabla[tabla["periodo"].isin(["referencia", "valid", "actual"])]
+    if tabla["dia"].max() >= pd.Timestamp(cfg.FRONTERA_MONITOREO):
+        raise ValueError("Los datos del challenger no pueden incluir el mes de evaluación")
+    champion = p2_cargar_alias("champion")
+    origen = mlflow.get_run(champion["run_id"]).data.params
+    variables = cfg.P2_FEATURES_CON_HISTORICO
+
+    # 1) Umbrales fuera de la muestra: el auxiliar aprende hasta valid y los elige en actual
+    fraccion = cfg.P2_CHALLENGER_FRACCION_UMBRALES
+    hasta_valid = tabla[tabla["periodo"] != "actual"].sample(
+        frac=fraccion, random_state=cfg.SEMILLA
+    )
+    inicio = time.perf_counter()
+    auxiliar = clone(champion["modelo"]).fit(hasta_valid[variables], hasta_valid["clase"])
+    metricas = {"segundos_auxiliar": time.perf_counter() - inicio}
+    del hasta_valid
+    actual = tabla[tabla["periodo"] == "actual"]
+    y, proba = actual["clase"].to_numpy(), auxiliar.predict_proba(actual[variables])
+    umbrales = {k: p2_elegir_umbral(y == k, proba[:, k]) for k in (1, 2)}
+    metricas |= {f"auxiliar_actual_{k}": v for k, v in p2_calcular_metricas(y, proba).items()}
+    del actual, auxiliar, proba
+    logger.info(f"Umbrales elegidos en actual: {umbrales}")
+
+    # 2) El challenger con todos los datos hasta el mes previo al de monitoreo
+    logger.info(f"Entrenando el challenger con {len(tabla)} filas")
+    inicio = time.perf_counter()
+    modelo = clone(champion["modelo"]).fit(tabla[variables], tabla["clase"])
+    metricas["segundos_entrenamiento"] = time.perf_counter() - inicio
+    logger.info(f"Challenger entrenado en {metricas['segundos_entrenamiento'] / 60:.1f} min")
+    if not registrar:
+        logger.info("Sin --registrar: no se escribe nada en MLflow")
+        return modelo, umbrales
+
+    version = champion["version"]
+    parametros = {k: v for k, v in origen.items() if k.startswith("modelo_")} | {
+        "modelo": "xgb_challenger",
+        "base_version": version,
+        "rango_datos": f"{cfg.MES_INICIO} a {p2_mes_previo(cfg.FRONTERA_MONITOREO)}",
+        "data_version": dataset.version_datos(),
+        "peso_historico": cfg.P2_PESO_HISTORICO,
+        "filas_fit": len(tabla),
+        "fraccion_umbrales": fraccion,
+        **{f"umbral_{cfg.P2_CLASES[k]}": float(v) for k, v in umbrales.items()},
+    }
+    id_run = p2_registrar_run(
+        "xgb_challenger",
+        parametros,
+        metricas,
+        {},
+        modelo,
+        tabla[variables].head(5),
+        tabla,
+        etiquetas_extra={
+            "fase": cfg.FASE_MONITOREO,
+            "base_version": str(version),
+            "base_source_run_id": champion["run_id"],
+        },
+    )
+    nueva = registro_p2.p2_registrar(id_run, "challenger")
+    registro_p2.p2_verificar("challenger")
+    logger.success(f"Challenger = versión {nueva}; champion sigue en la versión {version}")
+    return modelo, umbrales
 
 
 if __name__ == "__main__":
