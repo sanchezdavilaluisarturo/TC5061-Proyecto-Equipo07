@@ -136,10 +136,34 @@ monitoreo-datos:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.monitoreo datos
 
 
+## Monitoreo de P2: estación-bins del mes nuevo, verificados contra la tabla de entrenamiento
+.PHONY: monitoreo-p2-tabla
+monitoreo-p2-tabla:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 tabla
+
+
+## Monitoreo de P2: reportes de drift y estacionalidad con Evidently
+.PHONY: monitoreo-p2-drift
+monitoreo-p2-drift:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 drift
+
+
+## Monitoreo de P2: champion reentrenado con datos hasta el mes previo; versión nueva con alias challenger
+.PHONY: monitoreo-p2-challenger
+monitoreo-p2-challenger:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 challenger --registrar
+
+
 ## Pruebas de la base de monitoreo (drift con Evidently y A/B testing)
 .PHONY: pruebas-monitoreo
 pruebas-monitoreo:
 	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo.py
+
+
+## Pruebas del monitoreo de P2
+.PHONY: pruebas-monitoreo-p2
+pruebas-monitoreo-p2:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p2.py
 
 
 ## Monitoreo de P1: estación-horas del mes nuevo, verificadas contra la tabla de entrenamiento
