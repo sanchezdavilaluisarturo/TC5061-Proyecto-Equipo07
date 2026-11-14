@@ -18,6 +18,7 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
+from scipy import stats
 from sklearn.base import clone
 from sklearn.metrics import (
     average_precision_score,
@@ -422,6 +423,36 @@ def p2_mes_previo(frontera: str) -> str:
     return str(pd.Period(frontera, freq="M") - 1)
 
 
+def p2_perdida(y: np.ndarray, proba: np.ndarray) -> np.ndarray:
+    """Log-loss de cada fila, -log p(clase real); su media es el log_loss del entrenamiento."""
+    real = proba[np.arange(len(y)), y]
+    return -np.log(np.clip(real, np.finfo(proba.dtype).eps, 1))
+
+
+def p2_bootstrap_ap(y, score_a, score_b, grupos: np.ndarray) -> tuple[float, float]:
+    """Intervalo bootstrap de la diferencia de AP (B − A), remuestreando grupos completos.
+
+    El AP no es un promedio por fila: en cada remuestreo se recalcula, con el número de veces que
+    salió el grupo de cada fila como peso.
+    """
+    rng = np.random.default_rng(cfg.SEMILLA)
+    n_grupos = grupos.max() + 1
+    diferencias = np.empty(cfg.MONITOREO_BOOTSTRAP)
+    for i in range(cfg.MONITOREO_BOOTSTRAP):
+        pesos = np.bincount(rng.integers(0, n_grupos, n_grupos), minlength=n_grupos)[grupos]
+        diferencias[i] = average_precision_score(
+            y, score_b, sample_weight=pesos
+        ) - average_precision_score(y, score_a, sample_weight=pesos)
+    return tuple(np.quantile(diferencias, [cfg.MONITOREO_ALFA / 2, 1 - cfg.MONITOREO_ALFA / 2]))
+
+
+def p2_ganador(pareada, p_menor: float, ic_ap: tuple[float, float]) -> str:
+    """B gana si su log-loss baja (intervalo bajo cero y Wilcoxon en esa dirección)
+    y su AP de riesgo no es significativamente peor; si no, se queda A."""
+    mejora = pareada["ic_superior"] < 0 and p_menor < cfg.MONITOREO_ALFA / 2
+    return "B" if mejora and ic_ap[1] >= 0 else "A"
+
+
 @app.callback()
 def p2_ayuda_monitoreo():
     """Monitoreo de P2: tabla del mes nuevo, drift, versión alternativa y A/B testing."""
@@ -681,6 +712,96 @@ def challenger(
     registro_p2.p2_verificar("challenger")
     logger.success(f"Challenger = versión {nueva}; champion sigue en la versión {version}")
     return modelo, umbrales
+
+
+@app.command()
+def ab():
+    """A/B testing de P2: champion (A) contra challenger (B) sobre el mes de evaluación.
+
+    Protocolo fijado antes de correrlo (README): log-loss por fila y unidad estación-día. B gana si
+    el intervalo bootstrap de la diferencia queda bajo cero, Wilcoxon lo confirma en esa dirección
+    y el intervalo de la diferencia de AP de riesgo no queda bajo cero. La prueba aleatoria, las
+    cohortes y el baseline son contexto. El alias champion no se mueve.
+    """
+    conjuntos = p2_conjuntos(cfg.RUTA_P2_CAMBIOS, cfg.P2_RUTA_EVALUACION)
+    estaciones = conjuntos["referencia"]["estacion"].unique()
+    evaluacion, baseline = conjuntos["evaluacion"], p2_baseline(conjuntos["valid"])
+    del conjuntos
+    a, b = p2_cargar_alias("champion"), p2_cargar_alias("challenger")
+    if a["version"] == b["version"]:
+        raise ValueError("champion y challenger son la misma versión: no hay nada que comparar")
+    modelos = {"champion": a, "challenger": b, "baseline": baseline}
+    contexto = p2_desempeno(modelos, {"evaluacion": evaluacion}, estaciones)
+
+    y = evaluacion["clase"].to_numpy()
+    grupos = evaluacion.groupby(["estacion", "dia"]).ngroup().to_numpy()
+    proba_a, proba_b = p2_predecir(a, evaluacion)[0], p2_predecir(b, evaluacion)[0]
+    perdida_a, perdida_b = p2_perdida(y, proba_a), p2_perdida(y, proba_b)
+    nuevas = ~evaluacion["estacion"].isin(estaciones).to_numpy()
+    cohortes, filas = {"todas": np.ones(len(y), bool), "conocidas": ~nuevas, "nuevas": nuevas}, []
+    for cohorte, filtro in cohortes.items():
+        for prueba in (monitoreo.comparar_pareado, monitoreo.comparar_aleatorio):
+            resultado = prueba(perdida_a[filtro], perdida_b[filtro], grupos[filtro])
+            filas.append({"cohorte": cohorte, **resultado})
+    # `ganador` de la base solo mira el p-value; la decisión del protocolo es p2_ganador
+    tabla = pd.DataFrame(filas).rename(columns={"ganador": "ganador_prueba"})
+
+    pareada = tabla.query("cohorte == 'todas' and prueba == 'pareada'").iloc[0]
+    p_menor = stats.wilcoxon(perdida_b, perdida_a, zero_method="zsplit", alternative="less").pvalue
+    ic_ap = p2_bootstrap_ap(y > 0, 1 - proba_a[:, 0], 1 - proba_b[:, 0], grupos)
+    ganador = p2_ganador(pareada, p_menor, ic_ap)
+    texto = {"A": f"champion v{a['version']}", "B": f"challenger v{b['version']}"}[ganador]
+    ap = contexto.query("cohorte == 'todas'").set_index("modelo")["ap_riesgo"]
+    metricas = {f"{k}_log_loss": pareada[k] for k in ("diferencia", "cambio_relativo", "p_valor")}
+    metricas |= {"ic_inferior": pareada["ic_inferior"], "ic_superior": pareada["ic_superior"]}
+    metricas |= {"p_valor_wilcoxon_menor": p_menor, "ap_ic_inferior": ic_ap[0]}
+    metricas |= {
+        "diferencia_ap_riesgo": ap["challenger"] - ap["champion"],
+        "ap_ic_superior": ic_ap[1],
+    }
+    carpeta = cfg.MONITOREO_DIR
+    carpeta.mkdir(parents=True, exist_ok=True)
+    rutas = [carpeta / "p2_ab.csv", carpeta / "p2_ab_contexto.csv"]
+    tabla.to_csv(rutas[0], index=False)
+    contexto.to_csv(rutas[1], index=False)
+    logger.info(f"A/B v{a['version']} (A) contra v{b['version']} (B):\n{tabla.to_string()}")
+
+    fuente = cfg.P2_RUTA_EVALUACION
+    monitoreo.registrar_en_mlflow(
+        f"p2-ab-v{a['version']}-vs-v{b['version']}",
+        "p2",
+        rutas,
+        metricas=metricas,
+        parametros={
+            "champion_version": a["version"],
+            "challenger_version": b["version"],
+            "alfa": cfg.MONITOREO_ALFA,
+            "bootstrap": cfg.MONITOREO_BOOTSTRAP,
+            "unidad": "estacion_dia",
+        },
+        etiquetas={
+            "tipo_monitoreo": "ab_testing",
+            "ganador": texto,
+            "champion_version": str(a["version"]),
+            "autor": "Fernando Arreola Treviño",
+        },
+        descripcion=(
+            f"A/B testing de P2 sobre {cfg.MES_MONITOREO}: champion v{a['version']} (A) contra "
+            f"challenger v{b['version']} (B), mismo modelo reentrenado con datos más recientes. "
+            "Log-loss por fila (pareada y aleatoria por estación-día), guarda de AP de riesgo, "
+            "cohortes de estaciones y baseline histórico; regla del protocolo en el README."
+        ),
+        datasets={
+            "evaluacion": monitoreo.dataset_mlflow(evaluacion, "p2_evaluacion", fuente, "clase")
+        },
+        metricas_por_modelo={
+            a["modelo_id"]: {"evaluacion": {"champion_log_loss_evaluacion": pareada["media_a"]}},
+            b["modelo_id"]: {"evaluacion": {"challenger_log_loss_evaluacion": pareada["media_b"]}},
+        },
+    )
+    logger.success(
+        f"Ganador: {texto}; log-loss {pareada['media_a']:.4f} -> {pareada['media_b']:.4f}"
+    )
 
 
 if __name__ == "__main__":

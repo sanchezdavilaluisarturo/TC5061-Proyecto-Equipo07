@@ -154,6 +154,12 @@ monitoreo-p2-challenger:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 challenger --registrar
 
 
+## Monitoreo de P2: A/B testing de champion contra challenger sobre el mes nuevo (run p2-ab-...)
+.PHONY: monitoreo-p2-ab
+monitoreo-p2-ab:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 ab
+
+
 ## Pruebas de la base de monitoreo (drift con Evidently y A/B testing)
 .PHONY: pruebas-monitoreo
 pruebas-monitoreo:

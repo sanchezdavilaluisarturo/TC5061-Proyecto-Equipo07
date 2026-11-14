@@ -5,6 +5,7 @@ Sin red ni servidor de MLflow.
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.metrics import log_loss
 
 from tc5061_proyecto_equipo07 import config as cfg
 from tc5061_proyecto_equipo07 import features
@@ -384,3 +385,62 @@ def test_challenger_se_registra_sin_mover_el_champion(config_prueba):
         k: str(v) for k, v in champion_antes["modelo"].get_params().items()
     }
     assert set(challenger["umbrales"]) == {1, 2}
+
+
+def test_perdida_por_fila_promedia_el_log_loss_del_entrenamiento():
+    rng = np.random.default_rng(cfg.SEMILLA)
+    proba, y = rng.dirichlet([8, 1, 1], 500).astype("float32"), rng.integers(0, 3, 500)
+    perdida = monitoreo_p2.p2_perdida(y, proba)
+    assert perdida.mean() == pytest.approx(log_loss(y, proba, labels=[0, 1, 2]), rel=1e-4)
+
+
+def test_bootstrap_de_ap_detecta_la_version_que_ordena_mejor():
+    rng = np.random.default_rng(cfg.SEMILLA)
+    y, grupos = rng.random(2000) < 0.1, np.repeat(np.arange(200), 10)
+    azar, buena = rng.random(2000), y + rng.normal(0, 0.5, 2000)
+    inferior, superior = monitoreo_p2.p2_bootstrap_ap(y, azar, buena, grupos)
+    assert 0 < inferior < superior
+    assert monitoreo_p2.p2_bootstrap_ap(y, buena, buena, grupos) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("ic_superior", "p_menor", "ic_ap", "esperado"),
+    [
+        (-0.01, 0.001, (-0.02, 0.01), "B"),  # baja el log-loss y el AP no empeora
+        (-0.01, 0.001, (-0.02, -0.005), "A"),  # baja el log-loss, pero ordena peor
+        (0.002, 0.001, (0.0, 0.01), "A"),  # el intervalo del log-loss cruza el cero
+        (-0.01, 0.04, (0.0, 0.01), "A"),  # Wilcoxon no llega a alfa / 2 en esa dirección
+    ],
+)
+def test_regla_de_decision_del_protocolo(ic_superior, p_menor, ic_ap, esperado):
+    assert monitoreo_p2.p2_ganador({"ic_superior": ic_superior}, p_menor, ic_ap) == esperado
+
+
+def test_ab_compara_champion_y_challenger_y_registra_el_run(config_prueba):
+    import mlflow
+
+    monitoreo_p2.challenger(registrar=True)
+    monitoreo_p2.ab()
+
+    tabla = pd.read_csv(cfg.MONITOREO_DIR / "p2_ab.csv")
+    assert set(tabla["cohorte"]) == {"todas", "conocidas", "nuevas"}
+    assert set(tabla["prueba"]) == {"pareada", "aleatoria"}
+    pareada = tabla.query("cohorte == 'todas' and prueba == 'pareada'").iloc[0]
+    assert pareada["n_a"] == len(pd.read_parquet(cfg.P2_RUTA_EVALUACION))
+    contexto = pd.read_csv(cfg.MONITOREO_DIR / "p2_ab_contexto.csv")
+    assert set(contexto["modelo"]) == {"champion", "challenger", "baseline"}
+    # La media de la pérdida por fila es el log-loss del champion
+    todas = contexto.query("cohorte == 'todas'").set_index("modelo")
+    assert pareada["media_a"] == pytest.approx(todas.loc["champion", "log_loss"], rel=1e-4)
+
+    a, b = monitoreo_p2.p2_cargar_alias("champion"), monitoreo_p2.p2_cargar_alias("challenger")
+    runs = mlflow.search_runs(
+        experiment_names=["prueba-p2"], filter_string="tags.tipo_monitoreo = 'ab_testing'"
+    )
+    run = mlflow.get_run(runs.iloc[0]["run_id"])
+    assert run.info.run_name == f"p2-ab-v{a['version']}-vs-v{b['version']}"
+    assert run.data.tags["ganador"] in {f"champion v{a['version']}", f"challenger v{b['version']}"}
+    assert {"ic_superior", "ap_ic_inferior", "p_valor_wilcoxon_menor"} <= set(run.data.metrics)
+    assert {m.model_id for m in run.inputs.model_inputs} == {a["modelo_id"], b["modelo_id"]}
+    # El A/B no mueve el alias champion
+    assert a["version"] == config_prueba["version"]
