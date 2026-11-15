@@ -2041,7 +2041,7 @@ Requiere `make data`, `make features-p2` y el champion en el Registry. Los HTML 
 | Octubres de train contra 2026-10 | 6 de 21 | `longitude` 0.227, `dpcapacity` 0.185, `salidas_4` 0.150, `salidas_2` 0.141, `entradas_4` 0.138, `entradas_2` 0.130 |
 
 - `longitude` y `dpcapacity` cambian porque la red creció: 469 estaciones en 2026-10, y las nuevas tienen el 23 % de los estación-bins.
-- Contra los mismos meses, el flujo absoluto (salidas y entradas en 2 y 4 h) es mayor en 2026-10. Las variables relativas a la capacidad (`neto_*_relativo`, `cumsum_dia_relativo`) quedan bajo 0.07: la normalización absorbe el crecimiento de la demanda.
+- Contra los mismos meses, el flujo absoluto (salidas y entradas en 2 y 4 bloques) es mayor en 2026-10. Las variables relativas a la capacidad (`neto_*_relativo`, `cumsum_dia_relativo`) quedan bajo 0.07: la normalización absorbe el crecimiento de la demanda.
 - La clase real y las probabilidades no muestran drift por distancia. En un evento raro, una caída de la prevalencia de 1.37 % (en valid) a 0.73 % (en test) es una distancia pequeña; por eso el drift de la etiqueta se mide con las métricas de desempeño.
 
 **Desempeño del champion (v3) y del baseline, todas las estaciones:**
