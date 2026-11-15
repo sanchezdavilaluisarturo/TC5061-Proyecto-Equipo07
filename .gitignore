@@ -206,3 +206,7 @@ models/*
 
 # Metadatos de Windows al copiar archivos a WSL
 *:Zone.Identifier
+
+# Reportes de Evidently de P1: viven como artefactos del run p1-drift en MLflow
+reports/monitoreo/p1_*.html
+reports/monitoreo/p1_*.json

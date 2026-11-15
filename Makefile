@@ -130,6 +130,96 @@ train-p3:
 	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.train p3-alternativo
 
 
+## Monitoreo: descarga el mes nuevo (MES_MONITOREO), lo limpia y lo une con el rango del proyecto
+.PHONY: monitoreo-datos
+monitoreo-datos:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.monitoreo datos
+
+
+## Monitoreo de P2: estación-bins del mes nuevo, verificados contra la tabla de entrenamiento
+.PHONY: monitoreo-p2-tabla
+monitoreo-p2-tabla:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 tabla
+
+
+## Monitoreo de P2: reportes de drift y estacionalidad con Evidently
+.PHONY: monitoreo-p2-drift
+monitoreo-p2-drift:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 drift
+
+
+## Monitoreo de P2: champion reentrenado con datos hasta el mes previo; versión nueva con alias challenger
+.PHONY: monitoreo-p2-challenger
+monitoreo-p2-challenger:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 challenger --registrar
+
+
+## Monitoreo de P2: A/B testing de champion contra challenger sobre el mes nuevo (run p2-ab-...)
+.PHONY: monitoreo-p2-ab
+monitoreo-p2-ab:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 ab
+
+
+## Monitoreo de P2: champion = challenger, solo si el último A/B lo declaró ganador
+.PHONY: monitoreo-p2-promover
+monitoreo-p2-promover:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p2 promover
+
+
+## Pruebas de la base de monitoreo (drift con Evidently y A/B testing)
+.PHONY: pruebas-monitoreo
+pruebas-monitoreo:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo.py
+
+
+## Pruebas del monitoreo de P2
+.PHONY: pruebas-monitoreo-p2
+pruebas-monitoreo-p2:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p2.py
+
+
+## Monitoreo de P1: estación-horas del mes nuevo, verificadas contra la tabla de entrenamiento
+.PHONY: monitoreo-p1-tabla
+monitoreo-p1-tabla:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 tabla
+
+
+## Monitoreo de P1: reportes de drift, desempeño y estacionalidad del champion (run p1-drift en MLflow)
+.PHONY: monitoreo-p1-drift
+monitoreo-p1-drift:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 drift
+
+
+## Monitoreo de P1: el mismo mes de cada año previo contra el mes nuevo (run p1-drift-mismo-mes)
+.PHONY: monitoreo-p1-drift-anual
+monitoreo-p1-drift-anual:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 drift-anual
+
+
+## Monitoreo de P1: versión alternativa (champion reentrenado con datos recientes, alias challenger)
+.PHONY: monitoreo-p1-challenger
+monitoreo-p1-challenger:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 challenger
+
+
+## Monitoreo de P1: A/B testing de champion contra challenger sobre el mes nuevo (run p1-ab-...)
+.PHONY: monitoreo-p1-ab
+monitoreo-p1-ab:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 ab
+
+
+## Monitoreo de P1: promueve el challenger a champion si el último A/B lo declaró ganador
+.PHONY: monitoreo-p1-promover
+monitoreo-p1-promover:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p1 promover
+
+
+## Pruebas del monitoreo de P1
+.PHONY: pruebas-monitoreo-p1
+pruebas-monitoreo-p1:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p1.py
+
+
 ## MLflow local de respaldo si el servidor del equipo no responde (usar MLFLOW_TRACKING_URI=http://127.0.0.1:5000)
 .PHONY: mlflow-local
 mlflow-local:
@@ -244,3 +334,47 @@ export PRINT_HELP_PYSCRIPT
 
 help:
 	@$(PYTHON_INTERPRETER) -c "${PRINT_HELP_PYSCRIPT}" < $(MAKEFILE_LIST)
+
+
+## Monitoreo de P3: perfiles por periodo (referencia, valid, actual, evaluacion) y reporte de drift
+.PHONY: monitoreo-p3-perfiles monitoreo-p3-drift monitoreo-p3-drift-anual monitoreo-p3-challenger monitoreo-p3-ab monitoreo-p3-backtest-ventanas monitoreo-p3-ab-ventana monitoreo-p3-backtest-variables monitoreo-p3-ab-variable monitoreo-p3-silueta monitoreo-p3-registrar-drift monitoreo-p3-registrar-ab pruebas-monitoreo-p3
+monitoreo-p3-perfiles:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 perfiles
+
+monitoreo-p3-drift:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 drift
+
+monitoreo-p3-drift-anual:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 drift-anual
+
+pruebas-monitoreo-p3:
+	$(PYTHON_INTERPRETER) -m pytest tests/test_monitoreo_p3.py
+
+monitoreo-p3-challenger:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 challenger
+
+monitoreo-p3-ab:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 ab
+
+monitoreo-p3-backtest-ventanas:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 backtest-ventanas
+
+# A/B final de una ventana contra octubre 2026: make monitoreo-p3-ab-ventana VENTANA=sin_pandemia
+monitoreo-p3-ab-ventana:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 ab --ventana $(VENTANA)
+
+monitoreo-p3-backtest-variables:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 backtest-variables
+
+# Confirmación única de la variante elegida: make monitoreo-p3-ab-variable VARIANTE=hellinger
+monitoreo-p3-ab-variable:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 ab-variable --variante $(VARIANTE)
+
+monitoreo-p3-silueta:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 silueta
+
+monitoreo-p3-registrar-drift:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 registrar-drift
+
+monitoreo-p3-registrar-ab:
+	$(PYTHON_INTERPRETER) -m tc5061_proyecto_equipo07.modeling.monitoreo_p3 registrar-ab

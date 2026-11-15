@@ -1,5 +1,5 @@
 # Despliegue de la API en el EC2 del equipo (https://api.equipo7mlops.com).
-# Con cada push a api_rest (por ejemplo, al hacer merge de un PR) entra por SSH al servidor,
+# Con cada push a api_rest o monitoreo_drift (por ejemplo, al hacer merge de un PR) entra por SSH al servidor,
 # trae ese commit, reconstruye la imagen y reemplaza el contenedor. Termina en rojo si /salud no
 # queda en "ok", y en los logs se ve por qué. A mano: Actions > Run workflow.
 #
@@ -12,14 +12,14 @@
 #   EC2_SSH_KEY          llave privada SSH completa, con sus líneas BEGIN y END
 #   MLFLOW_TRACKING_URI  URL del servidor MLflow del que la API descarga los modelos
 #
-# En el EC2: el repositorio clonado en ~/apps/mibici-api (rama api_rest) y Docker instalado.
+# En el EC2: el repositorio clonado en ~/apps/mibici-api (la rama que se despliega, api_rest o monitoreo_drift) y Docker instalado.
 # Rollback: docker tag tc5061-equipo07-api:anterior tc5061-equipo07-api:latest y repetir el
 # docker run de este archivo.
 name: API - desplegar en el EC2
 
 on:
   push:
-    branches: [api_rest]
+    branches: [api_rest, monitoreo_drift]
     paths:
       - "tc5061_proyecto_equipo07/**"
       - "Dockerfile"
@@ -58,15 +58,16 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           COMMIT: ${{ github.sha }}
-        # El script se manda por stdin; el commit y la URI van como argumentos ($1 y $2), no
+          RAMA: ${{ github.ref_name }}
+        # El script se manda por stdin; el commit, la URI y la rama van como argumentos ($1, $2 y $3), no
         # escritos en el comando
         run: |
-          ssh -i ~/.ssh/deploy_key "$EC2_USER@$EC2_HOST" bash -s "$COMMIT" "$MLFLOW_TRACKING_URI" <<'EOF'
+          ssh -i ~/.ssh/deploy_key "$EC2_USER@$EC2_HOST" bash -s "$COMMIT" "$MLFLOW_TRACKING_URI" "$RAMA" <<'EOF'
           set -euo pipefail
           cd ~/apps/mibici-api
-          git fetch origin api_rest
-          # Despliega exactamente el commit que disparó la acción
-          git merge --ff-only "$1"
+          git fetch origin "$3"
+          # Despliega exactamente el commit que disparó la acción, en la rama que lo disparó
+          git checkout -B "$3" "$1"
           docker tag tc5061-equipo07-api:latest tc5061-equipo07-api:anterior 2>/dev/null || true
           docker build -t tc5061-equipo07-api:latest .
           docker rm -f tc5061-equipo07-api 2>/dev/null || true

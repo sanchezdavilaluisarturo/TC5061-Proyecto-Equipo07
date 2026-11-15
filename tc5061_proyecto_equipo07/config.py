@@ -347,6 +347,7 @@ P2_MODELOS = {
     "hgb": ("hgb", "candidate", "hist_gradient_boosting"),
     "xgb": ("xgb", "candidate", "xgboost"),
     "xgb_optuna": ("xgb-optuna", "candidate", "xgboost"),
+    "xgb_challenger": ("xgb-challenger", "challenger", "xgboost"),
 }
 P2_DESCRIPCIONES = {  # caja "Description" de cada run
     "baseline": "Frecuencia de cada riesgo en los días previos de la misma estación, tipo de día "
@@ -358,6 +359,10 @@ P2_DESCRIPCIONES = {  # caja "Description" de cada run
     "xgb_optuna": "XGBoost con las features de flujo, hora y estación más la "
     "historia hasta ayer; predice sin riesgo, sin bicis o sin anclajes en las próximas 2 h. "
     "Sus hiperparámetros se optimizan usando Optuna.",
+    "xgb_challenger": "XGBoost con los mismos hiperparámetros del champion, reentrenado con datos "
+    "hasta el mes previo al de monitoreo (data iteration): referencia, valid y actual sin brechas. "
+    "Sus umbrales los elige en actual un modelo auxiliar igual, entrenado hasta valid. Versión "
+    "alternativa del A/B testing; su prueba es el mes de evaluación, que no vio.",
 }
 
 
@@ -379,6 +384,71 @@ P2_MODELO_REGISTRADO = "mibici-equipo07-p2-riesgo"
 
 # Validación con DeepChecks (`make validar-p2`): filas por conjunto
 P2_MUESTRA_VALIDACION = 500_000
+
+
+# Monitoreo (Entregable 8): drift con Evidently y A/B testing entre versiones del Registry.
+# Periodos: referencia = train (hasta 2024-09), actual = año de test (2025-10 a 2026-09) y
+# evaluación del A/B = el mes nuevo del portal, que ningún modelo ha visto.
+# MES_FIN no cambia: el mes nuevo se descarga aparte para que las entregas anteriores se
+# reproduzcan igual (mismo manifiesto, mismas rutas y misma nomenclatura).
+MES_MONITOREO = "2026-10"
+FRONTERA_MONITOREO = f"{MES_MONITOREO}-01"
+RUTA_MONITOREO_CRUDOS = RAW_DATA_DIR / "monitoreo"
+RUTA_MANIFIESTO_MONITOREO = REFERENCES_DIR / "fuentes-datos-monitoreo.csv"
+RUTA_VIAJES_LIMPIOS_MONITOREO = (
+    PROCESSED_DATA_DIR / f"viajes_limpios_{MES_MONITOREO}_{MES_MONITOREO}.parquet"
+)
+# Rango completo + mes nuevo: las features con rezagos del mes nuevo necesitan la historia previa
+RUTA_VIAJES_LIMPIOS_EXTENDIDOS = (
+    PROCESSED_DATA_DIR / f"viajes_limpios_{MES_INICIO}_{MES_MONITOREO}.parquet"
+)
+MONITOREO_DIR = REPORTS_DIR / "monitoreo"
+# Filas por conjunto en los reportes de Evidently. Con más de 1000 filas Evidently usa distancias
+# (Wasserstein y Jensen-Shannon) en vez de p-values, así que la muestra no cambia el criterio
+MONITOREO_MUESTRA = 100_000
+# A/B testing: significancia y remuestreos del intervalo bootstrap
+MONITOREO_ALFA = 0.05
+MONITOREO_BOOTSTRAP = 2000
+# Etiqueta `fase` de los runs de monitoreo en MLflow
+FASE_MONITOREO = "monitoreo"
+# P3 en monitoreo: el mes nuevo usa el ritmo mensual de valid (300 salidas en 12 meses = 25 al mes)
+P3_MIN_SALIDAS_EVALUACION = p3_leer_entero("P3_MIN_SALIDAS_EVALUACION", 25)
+P3_RUTA_PERFILES_MONITOREO = PROCESSED_DATA_DIR / "p3_perfiles_monitoreo.parquet"
+# Challenger de P3 por ventana de entrenamiento: mismos hiperparámetros del champion, solo cambia
+# desde cuándo se usan datos. `inicio` fija el primer mes; `meses` toma esa cantidad de meses hacia
+# atrás desde el fin del entrenamiento; sin ninguno de los dos usa toda la historia.
+P3_VENTANAS_CHALLENGER = {
+    "completa": {},
+    "sin_pandemia": {"inicio": "2022-01"},
+    "ultimos_3_anios": {"meses": 36},
+}
+# Backtest fuera de tiempo: cada ventana se entrena con datos anteriores a FRONTERA_TEST y se
+# evalúa contra el mismo mes un año antes que el mes nuevo, que no se toca en la selección
+P3_MES_BACKTEST = "2025-10"
+# Challenger de P3 por variables: mismo PCA(11) y K-Means del champion, entrenados con los mismos
+# datos (referencia), solo cambia cómo se preparan las 44 variables. Fijado antes de correrlo.
+P3_VARIANTES_VARIABLES = ["hellinger", "sin_horas_vacias", "robusto", "combinada"]
+# Horas "vacías": las que en la referencia tienen una proporción media menor a este umbral
+P3_UMBRAL_HORA_VACIA = 0.01
+# Resultado de aplicar ese umbral a la referencia (362 estaciones); el backtest comprueba que
+# la regla sigue dando esta lista y se detiene si no
+P3_COLUMNAS_HORAS_VACIAS = ["lab_h00", "lab_h05", "fin_h00", "fin_h05"]
+# P1: estación-horas del mes de evaluación, calculadas con el mismo pipeline de features
+P1_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p1_demanda_evaluacion_{MES_MONITOREO}.parquet"
+# Versión alternativa de P1 (data iteration): run, etapa y familia, como en P1_MODELOS. No va en
+# P1_MODELOS porque no se entrena desde cero con `p1-entrenar`: se clona el champion
+P1_CHALLENGER = ("p1-xgb-challenger", "challenger", "xgboost")
+P1_DESCRIPCION_CHALLENGER = (
+    "XGBoost con los mismos hiperparámetros del champion, reentrenado con datos hasta el mes "
+    "previo al de monitoreo (data iteration): referencia, valid y actual sin brechas. Versión "
+    "alternativa del A/B testing; su prueba es el mes de evaluación, que no vio."
+)
+
+# P2: estación-bins del mes de evaluación con su historia "hasta ayer"
+P2_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p2_cambios_evaluacion_{MES_MONITOREO}.parquet"
+# P2: fracción de referencia y valid con la que aprende el modelo auxiliar del challenger antes
+# de elegir los umbrales en actual (una muestra aleatoria conserva la proporción de clases)
+P2_CHALLENGER_FRACCION_UMBRALES = 0.25
 
 # If tqdm is installed, configure loguru with tqdm.write
 # https://github.com/Delgan/loguru/issues/135

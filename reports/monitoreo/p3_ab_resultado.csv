@@ -1,0 +1,25 @@
+metrica,valor
+champion_version,4
+challenger_version,5
+estaciones,469
+silueta_champion,0.07279979485732639
+silueta_challenger,0.0710096582024086
+diferencia,-0.0017901366549177983
+cambio_relativo,-0.02458985850751533
+ic_inferior,-0.005414727101766954
+ic_superior,0.0012078763305305967
+p_wilcoxon,0.8297393837380376
+p_t_pareada,0.24004175549926102
+estaciones_challenger_mejor,228
+estaciones_champion_mejor,241
+aleatorio_n_champion,238
+aleatorio_n_challenger,231
+aleatorio_silueta_champion,0.071131194145785
+aleatorio_silueta_challenger,0.07320710431889986
+aleatorio_p_mann_whitney,0.8038279572484557
+aleatorio_p_welch,0.7853597365877666
+ari_champion_challenger,0.844185077795747
+estaciones_que_cambian_de_grupo,19
+alfa,0.05
+version_vigente,champion
+motivo,sin diferencia significativa: el champion se queda

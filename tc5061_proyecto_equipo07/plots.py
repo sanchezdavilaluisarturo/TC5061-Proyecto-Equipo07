@@ -13,7 +13,7 @@ import pandas as pd
 import seaborn as sns
 from sklearn.metrics import average_precision_score, precision_recall_curve
 
-from tc5061_proyecto_equipo07.config import AZUL, GRIS, NARANJA, VERDE
+from tc5061_proyecto_equipo07.config import AZUL, BERMELLON, GRIS, NARANJA, VERDE
 
 # Colores por grupo (Okabe-Ito); sirven hasta 10 grupos
 P3_COLORES = [
@@ -424,5 +424,61 @@ def p2_grafica_curva_pr(y: np.ndarray, p: np.ndarray, clases: list[str], titulo:
     ax.set_ylim(0, 1)
     ax.set_title(titulo)
     ax.legend()
+    figura.tight_layout()
+    return figura
+
+
+def p2_grafica_serie_mensual(mensual: pd.DataFrame):
+    """Monitoreo de P2 por mes, solo en meses que el champion no vio (valid en adelante).
+
+    Separa lo que cambió en la etiqueta (prevalencia), en el modelo (calibración y AUC) y en la
+    red (estaciones nuevas). Las bandas grises marcan valid y el mes de evaluación.
+    """
+    todas = mensual[(mensual["cohorte"] == "todas") & (mensual["conjunto"] != "referencia")]
+    champion = todas[todas["modelo"] == "champion"].reset_index(drop=True)
+    baseline = todas[todas["modelo"] == "baseline"].reset_index(drop=True)
+    x = np.arange(len(champion))
+    figura, ejes = plt.subplots(3, 1, figsize=(9, 9), sharex=True, height_ratios=[3, 2, 1.4])
+    for riesgo, color in [("sin_bicis", NARANJA), ("sin_anclajes", AZUL)]:
+        ejes[0].plot(
+            x, champion[f"prevalencia_{riesgo}"] * 100, color=color, lw=2, label=f"{riesgo}: real"
+        )
+        ejes[0].plot(
+            x,
+            champion[f"prediccion_{riesgo}"] * 100,
+            color=color,
+            lw=2,
+            ls="--",
+            label=f"{riesgo}: predicción media del champion",
+        )
+    ejes[1].plot(x, champion["auc_riesgo"], color=VERDE, lw=2, label="champion")
+    ejes[1].plot(x, baseline["auc_riesgo"], color=GRIS, lw=2, ls="--", label="baseline histórico")
+    ejes[2].bar(x, champion["proporcion_estaciones_nuevas"] * 100, color=BERMELLON, width=0.7)
+    textos = [
+        ("% de estación-bins", "Riesgo real contra el que predice el champion (calibración)"),
+        ("ROC-AUC de riesgo", "Capacidad de ordenar por riesgo (no depende de la prevalencia)"),
+        ("% de filas", "Filas de estaciones que no existían en train"),
+    ]
+    for ax, (etiqueta, titulo) in zip(ejes, textos):
+        ax.set_ylabel(etiqueta)
+        ax.set_title(titulo, loc="left")
+        for conjunto in ("valid", "evaluacion"):
+            posiciones = x[champion["conjunto"] == conjunto]
+            ax.axvspan(posiciones.min() - 0.5, posiciones.max() + 0.5, color="k", alpha=0.04, lw=0)
+        ax.grid(axis="y", color="#e6e6e6", lw=0.8)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+    ejes[0].set_ylim(bottom=0)
+    ejes[2].set_ylim(bottom=0)
+    for ax in ejes[:2]:
+        ax.legend(frameon=False, fontsize=8, loc="lower left", ncol=2)
+    for texto, posicion in [
+        ("valid", x[champion["conjunto"] == "valid"].mean()),
+        ("evaluación", x[-1]),
+    ]:
+        ejes[0].text(
+            posicion, ejes[0].get_ylim()[1] * 0.97, texto, ha="center", va="top", fontsize=8
+        )
+    ejes[-1].set_xticks(x[::3], champion["mes"].iloc[::3], fontsize=8)
     figura.tight_layout()
     return figura
