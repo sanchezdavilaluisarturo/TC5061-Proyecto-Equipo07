@@ -414,6 +414,25 @@ FASE_MONITOREO = "monitoreo"
 # P3 en monitoreo: el mes nuevo usa el ritmo mensual de valid (300 salidas en 12 meses = 25 al mes)
 P3_MIN_SALIDAS_EVALUACION = p3_leer_entero("P3_MIN_SALIDAS_EVALUACION", 25)
 P3_RUTA_PERFILES_MONITOREO = PROCESSED_DATA_DIR / "p3_perfiles_monitoreo.parquet"
+# Challenger de P3 por ventana de entrenamiento: mismos hiperparámetros del champion, solo cambia
+# desde cuándo se usan datos. `inicio` fija el primer mes; `meses` toma esa cantidad de meses hacia
+# atrás desde el fin del entrenamiento; sin ninguno de los dos usa toda la historia.
+P3_VENTANAS_CHALLENGER = {
+    "completa": {},
+    "sin_pandemia": {"inicio": "2022-01"},
+    "ultimos_3_anios": {"meses": 36},
+}
+# Backtest fuera de tiempo: cada ventana se entrena con datos anteriores a FRONTERA_TEST y se
+# evalúa contra el mismo mes un año antes que el mes nuevo, que no se toca en la selección
+P3_MES_BACKTEST = "2025-10"
+# Challenger de P3 por variables: mismo PCA(11) y K-Means del champion, entrenados con los mismos
+# datos (referencia), solo cambia cómo se preparan las 44 variables. Fijado antes de correrlo.
+P3_VARIANTES_VARIABLES = ["hellinger", "sin_horas_vacias", "robusto", "combinada"]
+# Horas "vacías": las que en la referencia tienen una proporción media menor a este umbral
+P3_UMBRAL_HORA_VACIA = 0.01
+# Resultado de aplicar ese umbral a la referencia (362 estaciones); el backtest comprueba que
+# la regla sigue dando esta lista y se detiene si no
+P3_COLUMNAS_HORAS_VACIAS = ["lab_h00", "lab_h05", "fin_h00", "fin_h05"]
 # P1: estación-horas del mes de evaluación, calculadas con el mismo pipeline de features
 P1_RUTA_EVALUACION = PROCESSED_DATA_DIR / f"p1_demanda_evaluacion_{MES_MONITOREO}.parquet"
 # Versión alternativa de P1 (data iteration): run, etapa y familia, como en P1_MODELOS. No va en
