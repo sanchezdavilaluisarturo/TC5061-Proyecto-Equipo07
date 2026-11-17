@@ -1879,6 +1879,22 @@ Los percentiles de Locust en `stats_history` son acumulados desde el inicio de l
 - **Optimización:** (1) `--workers 2` en `uvicorn` para usar el segundo núcleo; (2) una instancia con más CPU, no más memoria; (3) agrupar estaciones en una sola llamada, porque la red completa en una petición (500 ms) cuesta mucho menos que cientos de llamadas de una estación.
 - **Limitación:** la prueba corrió contra la instancia de producción, que comparte host con MLflow, y una corrida escalonada accidental previa dejó un pico de CPU anterior en el panel. Las cifras son de una sola corrida.
 
+### FinOps: costo por inferencia
+
+Instancia: EC2 `t3.medium` (2 vCPU, 4 GB), referencia de **USD 0.0416 por hora** (Linux on-demand, us-east-2; confirmar en la calculadora de AWS), unos USD 30.4 al mes sin contar disco ni transferencia. El costo por hora es fijo, así que el costo por petición depende solo de cuántas atiende la instancia:
+
+| Escenario | RPS | Peticiones/hora | USD por millón de peticiones |
+|---|---|---|---|
+| 5 usuarios | 2.5 | 9,000 | 4.62 |
+| 10 usuarios | 7.4 | 26,640 | 1.56 |
+| 20 usuarios | 13.9 | 50,040 | 0.83 |
+| 40 usuarios | 27.5 | 99,000 | 0.42 |
+| 80 usuarios (saturado) | 28.2 | 101,520 | 0.41 |
+
+- **Por estación:** el promedio de la prueba fue de unas 60 estaciones por petición, así que a saturación son unos USD 0.007 por millón de estaciones segmentadas.
+- **Advertencia sobre `t3`:** es una instancia de CPU en ráfaga, con un piso de 20 % por vCPU (40 % de los dos). El contenedor llegó a 149 % de 200 % (75 %), por encima del piso, y consume créditos. En modo *unlimited* (el predeterminado) el exceso cuesta USD 0.05 por vCPU-hora: a saturación son unos USD 0.096 por hora, es decir unos **USD 0.95 por millón**, más del doble.
+- **Optimizaciones:** (1) agrupar estaciones por llamada (ver la sección siguiente); (2) `--workers 2` en `uvicorn` para usar el segundo núcleo; (3) una instancia sin ráfaga (familia `c`) si la carga es sostenida, para evitar el recargo por créditos (requiere repetir la prueba).
+
 ## Monitoreo y drift
 
 Entregable 8: el proyecto detecta cuándo los datos de producción se alejan de los de entrenamiento (drift, con Evidently) y decide con evidencia si una versión nueva del modelo es mejor que la vigente (A/B testing entre versiones del Model Registry). La base es común a las tres preguntas (`monitoreo.py`); cada pregunta tiene su propio módulo (`modeling/monitoreo_p1.py`, `monitoreo_p2.py` y `monitoreo_p3.py`) y su propia sección más abajo.
