@@ -1,0 +1,14 @@
+# Smoke test de docker compose (17-nov-2026, macOS arm64, Docker 29.1.3, Compose 2.40.3)
+
+$ docker compose up -d --build
+$ docker compose ps
+NAME                  STATUS                        PORTS
+tc5061-equipo07-api   Up About a minute (healthy)   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp
+
+$ curl -s http://127.0.0.1:8000/salud   ->  estado ok; modelos p1 v3, p2 v4, p3 v4 listos
+$ curl -X POST http://127.0.0.1:8000/p3/segmentar -d @references/api_p3_peticion.json   ->  mibici-equipo07-p3-segmentos v4, 3 predicciones, grupos {0: 2, 1: 1}
+
+$ docker compose run --rm locust -f /mnt/locust/locustfile_p3.py --headless --host http://api:8000 -u 2 -r 1 -t 15s
+22 peticiones, 0 errores, p50 16 ms, p95 28 ms, max 32 ms (red interna de Compose)
+
+$ docker compose --profile monitoreo up -d dozzle   ->  http://127.0.0.1:8080 responde HTTP 200

@@ -1835,6 +1835,10 @@ Decisiones de diseño:
 - **Perfiles**: `docker compose up` levanta solo lo indispensable (la API); el monitoreo, la carga y el MLflow de respaldo se activan cuando se necesitan.
 - **Variables de entorno y volúmenes**: la URI de MLflow viene del `.env`; el MLflow local guarda su base y sus artefactos en el volumen `mlflow-datos`; Locust monta `locust/` y `references/` en solo lectura.
 
+### Verificación
+
+Probado el 17-nov-2026 en macOS (Apple Silicon, Docker 29.1.3, Compose 2.40.3), con el MLflow del equipo: `docker compose up -d --build` deja la API en `healthy` y `/salud` regresa `ok` con P1 v3, P2 v4 y P3 v4 cargados; `POST /p3/segmentar` responde con el champion de P3; el servicio `locust` alcanza a la API por la red interna (`http://api:8000`) y `dozzle` responde en el puerto 8080. La evidencia está en `reports/evidencias/compose_smoke.txt`. No se probó el perfil `mlflow-local` ni la prueba de carga completa de 5 minutos dentro de Compose.
+
 ### Estado actual y fases siguientes
 
 En el EC2 del equipo la API corre como un contenedor lanzado con `docker run` y desplegado por `deploy-api.yml`; el `docker-compose.yml` reproduce esa misma configuración (imagen, puerto, reinicio, variable de MLflow) y agrega la orquestación.
