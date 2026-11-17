@@ -1806,6 +1806,41 @@ Swagger de la API desplegada (https://api.equipo7mlops.com/docs): `POST /p3/segm
 - **`estaciones_por_grupo` cuenta solo la petición**, no toda la red: con un subconjunto de estaciones no es el tamaño real de cada grupo.
 - **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
 
+## Orquestación con Docker Compose
+
+El `docker-compose.yml` de la raíz levanta el sistema con un solo comando. Funciona igual con `podman-compose`.
+
+```bash
+cp .env.example .env                      # solo la primera vez; apunta al MLflow del equipo
+docker compose up -d --build              # API en http://127.0.0.1:8000 (documentación en /docs)
+docker compose ps                         # estado y salud de los servicios
+docker compose down                       # apagar
+```
+
+| Servicio | Perfil | Qué hace |
+|---|---|---|
+| `api` | (siempre) | Construye la imagen del `Dockerfile` y sirve P1, P2 y P3 en el puerto 8000. Descarga los modelos del Model Registry al arrancar; `MLFLOW_TRACKING_URI` sale del `.env` (por defecto, el servidor del equipo). Se reinicia sola (`unless-stopped`) y usa el `HEALTHCHECK` de la imagen sobre `/salud` |
+| `mlflow` | `mlflow-local` | MLflow local de respaldo (equivale a `make mlflow-local`), con volumen propio. Arranca vacío: sin modelos registrados la API queda en `degradado`. Para usarlo: `MLFLOW_TRACKING_URI=http://mlflow:5000` en el `.env` |
+| `dozzle` | `monitoreo` | Panel de CPU, memoria y logs de los contenedores (el que el equipo tiene en el EC2). Solo escucha en `127.0.0.1:8080` |
+| `locust` | `carga` | Prueba de carga escalonada de P3 contra la API del propio Compose; resultados en `reports/carga/compose/` |
+
+```bash
+docker compose --profile monitoreo up -d                    # panel de recursos en http://127.0.0.1:8080
+docker compose --profile carga up --abort-on-container-exit # prueba de carga de P3 (5 min)
+docker compose --profile mlflow-local up -d --build         # API más MLflow local
+```
+
+Decisiones de diseño:
+- **Una red propia (`mibici`)**: los servicios se hablan por nombre (`http://api:8000`, `http://mlflow:5000`) y no exponen puertos de más.
+- **Perfiles**: `docker compose up` levanta solo lo indispensable (la API); el monitoreo, la carga y el MLflow de respaldo se activan cuando se necesitan.
+- **Variables de entorno y volúmenes**: la URI de MLflow viene del `.env`; el MLflow local guarda su base y sus artefactos en el volumen `mlflow-datos`; Locust monta `locust/` y `references/` en solo lectura.
+
+### Estado actual y fases siguientes
+
+En el EC2 del equipo la API corre como un contenedor lanzado con `docker run` y desplegado por `deploy-api.yml`; el `docker-compose.yml` reproduce esa misma configuración (imagen, puerto, reinicio, variable de MLflow) y agrega la orquestación.
+
+**MLflow, en una fase posterior, se podría agregar al Compose.** Hoy el MLflow del equipo corre en ese mismo EC2 como un proceso de Python (gunicorn, puerto 5000) fuera de Docker, y la API lo consulta por URL; por eso el servicio `mlflow` del Compose es solo un respaldo local y no el del servidor. Para integrarlo habría que: (1) empaquetarlo en un servicio con su base de datos (hoy SQLite en disco) y un volumen para los artefactos; (2) migrar el historial de runs y el Model Registry para no perder los modelos champion; (3) apuntar el despliegue (`deploy-api.yml`) a `docker compose up -d` y a la URI interna `http://mlflow:5000`. También pueden sumarse más adelante Redis y un worker de RQ para predicciones asíncronas (opcional en la actividad).
+
 ## Pruebas de carga con Locust (P3)
 
 Se midió cómo se comporta `POST /p3/segmentar` bajo carga concurrente: latencia, peticiones por segundo (RPS) y tasa de error, junto con el consumo de CPU y memoria del contenedor.
