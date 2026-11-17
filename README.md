@@ -1914,8 +1914,29 @@ Sin errores en ningún modo. El costo usa USD 0.0416 por hora del `t3.medium` y 
 - **Resultado:** una sola llamada con toda la red segmenta unas **93 veces más estaciones por segundo** que una llamada por estación, usando menos de la mitad de CPU. Con lotes de 50 son unas 39 veces más.
 - **Por qué:** cada llamada paga un costo fijo (validación Pydantic, armado del DataFrame, HTTP y proxy) que no depende del tamaño. En una estación casi todo el tiempo es ese costo; en 470 se reparte entre todas.
 - **Latencia para quien consume:** el ciclo pasa de 87 s a 0.14 s. Una sola llamada de 470 estaciones (140 ms) tarda lo mismo que una de una sola estación (180 ms).
-- **Límites:** la red completa no saturó el servidor (5 usuarios con pausa dan solo 5 peticiones por segundo), así que su cifra es un piso, no el máximo. El modo individual completó solo 5 ciclos en 150 s; sus estaciones por segundo salen de las llamadas totales. Es una corrida por modo.
+- **Límites:** la red completa no saturó el servidor (5 usuarios con pausa dan solo 5 peticiones por segundo), así que su cifra es un piso; el tope se midió en la sección siguiente. El modo individual completó solo 5 ciclos en 150 s; sus estaciones por segundo salen de las llamadas totales. Es una corrida por modo.
 - **Recomendación:** que el consumidor de P3 envíe la red completa en una sola petición (el API acepta hasta 1,000 estaciones) y no una llamada por estación. Con eso, el costo por inferencia baja de unos USD 0.45 a menos de USD 0.005 por millón de estaciones.
+
+### Tope de la instancia con la red completa en una llamada
+
+Para saber hasta dónde llega el servidor con la petición agrupada se repitió la prueba escalonada (5, 10, 20, 40 y 80 usuarios, 60 s por escalón) con solo el modo "1 llamada de 470 estaciones" (`UsuarioRedCompleta` más `escalones_p3.py`; resultados en `reports/carga/tope/`).
+
+| Usuarios | Llamadas por segundo | Estaciones por segundo | CPU media / máxima | Fallos |
+|---|---|---|---|---|
+| 5 | 5.5 | 2,600 | 21 % / 60 % | 0 |
+| 10 | 10.6 | 5,000 | 45 % / 87 % | 0 |
+| 20 | 15.7 | 7,400 | 71 % / 139 % | 0 |
+| 40 | 19.9 | 9,300 | 94 % / 117 % | 0 |
+| 80 | 21.9 | 10,300 | 107 % / 152 % | 4 en total (HTTP 502) |
+
+Las llamadas por segundo son las de `POST /p3/segmentar`; Locust las suma dos veces porque la prueba también registra el ciclo como una fila aparte, y aquí ya está descontado.
+
+- **Tope:** unas **22 llamadas por segundo, es decir unas 10,000 estaciones por segundo**. De 40 a 80 usuarios el aumento es de solo 10 %, y la latencia sube (p50 acumulado de 980 ms y p95 de 3.4 s en toda la prueba, contra 140 ms con 5 usuarios).
+- **Qué se agota:** la CPU de un solo proceso. La media llega a 107 % y los picos a 152 %, lejos del 200 % de la instancia, que es el límite que impone un solo proceso `uvicorn` con Python. Memoria sin cambios (15 %).
+- **Errores:** solo 4 respuestas 502 de 8,666 registros (el proxy se rindió con la cola llena), y `/salud` siguió en `ok`.
+- **Comparación con el modo sin agrupar:** una llamada por estación saturaba en unas 28 llamadas por segundo, es decir unas 28 estaciones por segundo; agrupadas son unas 10,000. El tope de la instancia sube unas 360 veces en estaciones.
+- **Costo en el tope:** unos USD 0.0011 por millón de estaciones (USD 0.0416 por hora entre 37 millones de estaciones por hora), o unos USD 0.0020 si se cobra el exceso de créditos de CPU del `t3`.
+- **Siguiente paso:** `--workers 2` en `uvicorn` debería acercar el tope a la CPU completa de la instancia; hay que repetir esta prueba para medirlo.
 
 ## Monitoreo y drift
 
