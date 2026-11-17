@@ -1895,6 +1895,28 @@ Instancia: EC2 `t3.medium` (2 vCPU, 4 GB), referencia de **USD 0.0416 por hora**
 - **Advertencia sobre `t3`:** es una instancia de CPU en ráfaga, con un piso de 20 % por vCPU (40 % de los dos). El contenedor llegó a 149 % de 200 % (75 %), por encima del piso, y consume créditos. En modo *unlimited* (el predeterminado) el exceso cuesta USD 0.05 por vCPU-hora: a saturación son unos USD 0.096 por hora, es decir unos **USD 0.95 por millón**, más del doble.
 - **Optimizaciones:** (1) agrupar estaciones por llamada (ver la sección siguiente); (2) `--workers 2` en `uvicorn` para usar el segundo núcleo; (3) una instancia sin ráfaga (familia `c`) si la carga es sostenida, para evitar el recargo por créditos (requiere repetir la prueba).
 
+### Optimización: agrupar estaciones por llamada
+
+La tarea es la misma (dejar segmentadas las 470 estaciones de la red) resuelta de tres formas, con 5 usuarios y 150 s por modo contra `api.equipo7mlops.com` (`locust/locustfile_p3_agrupado.py`, `locust/comparar_agrupado.sh`):
+
+```bash
+locust/comparar_agrupado.sh https://api.equipo7mlops.com 5 150
+```
+
+| Modo | Llamadas por ciclo | Tiempo del ciclo (p50) | Estaciones por segundo | CPU media / máxima | USD por millón de estaciones |
+|---|---|---|---|---|---|
+| 470 llamadas de 1 estación | 470 | 87 s | 25.8 | 47.5 % / 105 % | 0.448 |
+| 10 llamadas de 50 | 10 | 1.5 s | 999.5 | 42.0 % / 86 % | 0.0116 |
+| 1 llamada de 470 | 1 | 0.14 s | 2,403 | 20.5 % / 67 % | 0.0048 |
+
+Sin errores en ningún modo. El costo usa USD 0.0416 por hora del `t3.medium` y las estaciones por segundo medidas.
+
+- **Resultado:** una sola llamada con toda la red segmenta unas **93 veces más estaciones por segundo** que una llamada por estación, usando menos de la mitad de CPU. Con lotes de 50 son unas 39 veces más.
+- **Por qué:** cada llamada paga un costo fijo (validación Pydantic, armado del DataFrame, HTTP y proxy) que no depende del tamaño. En una estación casi todo el tiempo es ese costo; en 470 se reparte entre todas.
+- **Latencia para quien consume:** el ciclo pasa de 87 s a 0.14 s. Una sola llamada de 470 estaciones (140 ms) tarda lo mismo que una de una sola estación (180 ms).
+- **Límites:** la red completa no saturó el servidor (5 usuarios con pausa dan solo 5 peticiones por segundo), así que su cifra es un piso, no el máximo. El modo individual completó solo 5 ciclos en 150 s; sus estaciones por segundo salen de las llamadas totales. Es una corrida por modo.
+- **Recomendación:** que el consumidor de P3 envíe la red completa en una sola petición (el API acepta hasta 1,000 estaciones) y no una llamada por estación. Con eso, el costo por inferencia baja de unos USD 0.45 a menos de USD 0.005 por millón de estaciones.
+
 ## Monitoreo y drift
 
 Entregable 8: el proyecto detecta cuándo los datos de producción se alejan de los de entrenamiento (drift, con Evidently) y decide con evidencia si una versión nueva del modelo es mejor que la vigente (A/B testing entre versiones del Model Registry). La base es común a las tres preguntas (`monitoreo.py`); cada pregunta tiene su propio módulo (`modeling/monitoreo_p1.py`, `monitoreo_p2.py` y `monitoreo_p3.py`) y su propia sección más abajo.
