@@ -10,8 +10,10 @@ realista del batch nocturno). El payload sale de references/api_p3_peticion.json
 con Pydantic estricto (extra="forbid", perfiles que suman 1, origen_id sin repetir), así que se
 clona ese ejemplo con ids nuevos en vez de inventar datos.
 
-Uso (con la API levantada, ver README):
-    locust -f locust/locustfile_p3.py --headless --host http://127.0.0.1:8000 \
+Humo (3 usuarios, 25 s):
+    locust -f locust/locustfile_p3.py --headless --host URL -u 3 -r 1 -t 25s
+Prueba completa por escalones (5 -> 80 usuarios, 5 min):
+    locust -f locust/locustfile_p3.py,locust/escalones_p3.py --headless --host URL \
         --csv reports/carga/p3 --html reports/carga/p3_reporte.html
 """
 
@@ -19,7 +21,7 @@ import copy
 import json
 from pathlib import Path
 
-from locust import HttpUser, LoadTestShape, between, task
+from locust import HttpUser, between, task
 
 EJEMPLO = Path(__file__).resolve().parents[1] / "references" / "api_p3_peticion.json"
 RED_COMPLETA = 470  # ~472 estaciones en la red (ver P3_MAX_ESTACIONES en api/p3.py)
@@ -76,19 +78,3 @@ class UsuarioP3(HttpUser):
     @task(PESOS[f"{RED_COMPLETA} estaciones (red completa)"])
     def red_completa(self) -> None:
         self._segmentar(f"{RED_COMPLETA} estaciones (red completa)")
-
-
-class EscalonesP3(LoadTestShape):
-    """Escalones de usuarios: se ve en qué escalón empieza a degradarse la latencia.
-
-    (segundo en que termina el escalón, usuarios, usuarios que entran por segundo)
-    """
-
-    escalones = [(60, 5, 5), (120, 10, 5), (180, 20, 5), (240, 40, 10), (300, 80, 20)]
-
-    def tick(self):
-        t = self.get_run_time()
-        for fin, usuarios, tasa in self.escalones:
-            if t < fin:
-                return usuarios, tasa
-        return None  # termina la prueba
