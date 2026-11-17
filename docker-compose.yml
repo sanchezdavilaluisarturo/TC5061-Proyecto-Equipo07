@@ -1,0 +1,81 @@
+# Orquestación de MiBici Equipo 7 (Docker Compose o `podman-compose`).
+#
+#   docker compose up -d --build         API en http://127.0.0.1:8000 (docs en /docs)
+#   docker compose --profile carga up    API + prueba de carga de P3 con Locust
+#   docker compose --profile mlflow-local up -d --build   API + MLflow local de respaldo
+#   docker compose --profile monitoreo up -d              Panel Dozzle en http://127.0.0.1:8080
+#
+# El MLFLOW_TRACKING_URI sale del .env (copiar de .env.example) y, si no existe, usa el servidor
+# del equipo. Los modelos no van en la imagen: la API los descarga del Model Registry al arrancar.
+
+name: mibici
+
+services:
+  api:
+    build: .
+    image: tc5061-equipo07-api:latest
+    container_name: tc5061-equipo07-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-https://mlflow.equipo7mlops.com}
+    networks: [mibici]
+    # El HEALTHCHECK de la imagen (Dockerfile) consulta /salud; Compose lo usa en depends_on
+
+  # MLflow local de respaldo (equivale a `make mlflow-local`). Arranca vacío: sin modelos
+  # registrados la API queda "degradado" hasta que se entrene o se copien los modelos.
+  # Para que la API lo use: MLFLOW_TRACKING_URI=http://mlflow:5000 en el .env
+  mlflow:
+    profiles: [mlflow-local]
+    image: tc5061-equipo07-api:latest # misma imagen: ya trae mlflow en la versión del proyecto
+    depends_on: [api] # reutiliza la imagen que construye el servicio api
+    container_name: tc5061-equipo07-mlflow
+    restart: unless-stopped
+    user: "0:0" # el volumen nombrado nace propiedad de root
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-datos:/mlflow
+    networks: [mibici]
+
+  # Panel de CPU, memoria y logs de los contenedores (el que corre en el EC2, equivale a
+  # `docker stats` con interfaz). Solo escucha en localhost: no tiene autenticación y lee el
+  # socket de Docker, así que no se debe exponer a internet sin un proxy con usuario y clave
+  dozzle:
+    profiles: [monitoreo]
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [mibici]
+
+  # Prueba de carga de P3(escalones de 5 a 80 usuarios, 5 min). Resultados en reports/carga/compose/
+  locust:
+    profiles: [carga]
+    image: locustio/locust:2.47.0
+    depends_on:
+      api:
+        condition: service_healthy
+    command: >
+      -f /mnt/locust/locustfile_p3.py,/mnt/locust/escalones_p3.py
+      --headless --host http://api:8000
+      --csv /mnt/reports/carga/compose/p3 --html /mnt/reports/carga/compose/p3_reporte.html
+    volumes:
+      - ./locust:/mnt/locust:ro
+      - ./references:/mnt/references:ro
+      - ./reports/carga/compose:/mnt/reports/carga/compose
+    networks: [mibici]
+
+networks:
+  mibici:
+
+volumes:
+  mlflow-datos:
