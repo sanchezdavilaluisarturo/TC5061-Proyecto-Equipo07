@@ -1806,6 +1806,79 @@ Swagger de la API desplegada (https://api.equipo7mlops.com/docs): `POST /p3/segm
 - **`estaciones_por_grupo` cuenta solo la petición**, no toda la red: con un subconjunto de estaciones no es el tamaño real de cada grupo.
 - **El champion se lee al arrancar.** Si se mueve el alias en el Registry, el contenedor sigue con la versión anterior hasta reiniciarse (ver [Cómo carga los modelos](#cómo-carga-los-modelos)).
 
+## Pruebas de carga con Locust (P3)
+
+Se midió cómo se comporta `POST /p3/segmentar` bajo carga concurrente: latencia, peticiones por segundo (RPS) y tasa de error, junto con el consumo de CPU y memoria del contenedor.
+
+### Escenario
+
+| Elemento | Decisión | Por qué |
+|---|---|---|
+| Endpoint | `POST /p3/segmentar` | Es el que recibe el lote más grande (hasta 1,000 estaciones) |
+| Payload | Se clona `references/api_p3_peticion.json` con `origen_id` consecutivos | La API valida con Pydantic estricto (perfiles que suman 1, sin ids repetidos); inventar datos daría 422 |
+| Tamaños | 1, 50 y 470 estaciones (pesos 6, 3 y 1) | El costo crece con el número de estaciones; 470 es la red completa en una sola llamada |
+| Pausa | Entre 0.5 y 2 s por usuario | Simula consumidores reales, no un bucle sin pausa |
+| Validación | Un 200 con menos predicciones de las enviadas cuenta como fallo | Evita falsos éxitos |
+| Carga | Escalones de 60 s: 5, 10, 20, 40 y 80 usuarios | Muestra en qué escalón se degrada la latencia |
+
+### Cómo ejecutarlo
+
+```bash
+pip install -r requirements-carga.txt
+
+# Humo (3 usuarios, 25 s): -u, -r y -t mandan
+locust -f locust/locustfile_p3.py --headless --host http://127.0.0.1:8000 -u 3 -r 1 -t 25s
+
+# Prueba completa por escalones (5 min). Al cargar escalones_p3.py, Locust ignora -u y -t
+locust -f locust/locustfile_p3.py,locust/escalones_p3.py --headless \
+  --host http://127.0.0.1:8000 --csv reports/carga/p3 --html reports/carga/p3_reporte.html
+
+# Gráficas del reporte a partir de los CSV
+python locust/graficas_p3.py reports/carga/p3
+```
+
+`--host` es la API a probar: la local (`make api-run`) o la del equipo. El monitoreo de CPU y memoria se hizo con el panel de Dozzle del equipo (`stats.equipo7mlops.com`).
+
+### Resultados (17-nov-2026, contra `api.equipo7mlops.com`)
+
+Una instancia de 2 vCPU y 4 GB con un solo proceso `uvicorn`.
+
+| Métrica | Valor |
+|---|---|
+| Peticiones | 5,378 |
+| Errores | 2 (0.04 %), ambos `502 Bad Gateway` en la petición de 50 estaciones |
+| Latencia global | p50 240 ms, p95 1.3 s, p99 3.3 s |
+| RPS máximo | 28.2 |
+| CPU del contenedor | pico de 149 % (de 200 %), p95 de 110 % |
+| Memoria del contenedor | máximo 15.5 % (unos 620 MB) |
+
+| Petición | p50 | p95 |
+|---|---|---|
+| 1 estación | 210 ms | 1.2 s |
+| 50 estaciones | 240 ms | 1.2 s |
+| 470 estaciones (red completa) | 500 ms | 1.5 s |
+
+| Escalón | RPS | p50 | p95 (acumulado) |
+|---|---|---|---|
+| 5 usuarios | 2.5 | 130 ms | 830 ms |
+| 10 usuarios | 7.4 | 130 ms | 450 ms |
+| 20 usuarios | 13.9 | 130 ms | 350 ms |
+| 40 usuarios | 27.5 | 150 ms | 540 ms |
+| 80 usuarios | 28.2 | 240 ms | 1.3 s |
+
+Los percentiles de Locust en `stats_history` son acumulados desde el inicio de la prueba, no por ventana de 60 s; por eso el p95 de 5 usuarios incluye el calentamiento.
+
+![Latencia vs usuarios](reports/carga/p3_latencia.png)
+![Throughput y errores](reports/carga/p3_rps_errores.png)
+![p95 por tamaño de petición](reports/carga/p3_tamano.png)
+
+### Lectura
+
+- **Capacidad:** hasta 40 usuarios el RPS crece casi lineal (27.5) y el p50 se mantiene en 150 ms. Con 80 el RPS no sube (28.2) y la latencia se degrada: el sistema ya está saturado.
+- **Cuello de botella:** la CPU. La memoria sobra (15 %) y el contenedor llegó a 149 % de 200 %, porque un proceso con endpoints síncronos aprovecha 1 a 1.5 núcleos.
+- **Optimización:** (1) `--workers 2` en `uvicorn` para usar el segundo núcleo; (2) una instancia con más CPU, no más memoria; (3) agrupar estaciones en una sola llamada, porque la red completa en una petición (500 ms) cuesta mucho menos que cientos de llamadas de una estación.
+- **Limitación:** la prueba corrió contra la instancia de producción, que comparte host con MLflow, y una corrida escalonada accidental previa dejó un pico de CPU anterior en el panel. Las cifras son de una sola corrida.
+
 ## Monitoreo y drift
 
 Entregable 8: el proyecto detecta cuándo los datos de producción se alejan de los de entrenamiento (drift, con Evidently) y decide con evidencia si una versión nueva del modelo es mejor que la vigente (A/B testing entre versiones del Model Registry). La base es común a las tres preguntas (`monitoreo.py`); cada pregunta tiene su propio módulo (`modeling/monitoreo_p1.py`, `monitoreo_p2.py` y `monitoreo_p3.py`) y su propia sección más abajo.
