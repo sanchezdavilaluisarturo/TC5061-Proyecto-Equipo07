@@ -1820,15 +1820,20 @@ docker compose down                       # apagar
 | Servicio | Perfil | Qué hace |
 |---|---|---|
 | `api` | (siempre) | Construye la imagen del `Dockerfile` y sirve P1, P2 y P3 en el puerto 8000. Descarga los modelos del Model Registry al arrancar; `MLFLOW_TRACKING_URI` sale del `.env` (por defecto, el servidor del equipo). Se reinicia sola (`unless-stopped`) y usa el `HEALTHCHECK` de la imagen sobre `/salud` |
-| `mlflow` | `mlflow-local` | MLflow local de respaldo (equivale a `make mlflow-local`), con volumen propio. Arranca vacío: sin modelos registrados la API queda en `degradado`. Para usarlo: `MLFLOW_TRACKING_URI=http://mlflow:5000` en el `.env` |
+| `mlflow` | `mlflow-local`, `local` | MLflow local (equivale a `make mlflow-local`), con volumen propio y `healthcheck`. Con `mlflow-local` arranca vacío (la API queda en `degradado` hasta que haya modelos); con `local` lo llena el sembrador. Publica en `127.0.0.1:${MLFLOW_PUERTO:-5000}` (en macOS el 5000 suele estar ocupado por AirPlay: `MLFLOW_PUERTO=5001`) |
+| `sembrador` | `local` | Corre una vez y termina: copia del servidor del equipo las versiones `champion` de P1, P2 y P3 al MLflow local (mismo nombre y alias; conserva las etiquetas y agrega `origen_version` y `origen_uri`) y recrea un run local con los parámetros de origen, de donde la API lee los umbrales de P2. Es idempotente |
+| `api-local` | `local` | La API apuntando a `http://mlflow:5000`. Arranca solo cuando el sembrador terminó bien (`service_completed_successfully`) |
 | `dozzle` | `monitoreo` | Panel de CPU, memoria y logs de los contenedores (el que el equipo tiene en el EC2). Solo escucha en `127.0.0.1:8080` |
 | `locust` | `carga` | Prueba de carga escalonada de P3 contra la API del propio Compose; resultados en `reports/carga/compose/` |
 
 ```bash
 docker compose --profile monitoreo up -d                    # panel de recursos en http://127.0.0.1:8080
 docker compose --profile carga up --abort-on-container-exit # prueba de carga de P3 (5 min)
-docker compose --profile mlflow-local up -d --build         # API más MLflow local
+docker compose --profile mlflow-local up -d --build         # API más MLflow local vacío
+docker compose up api-local --build                         # autocontenido: MLflow local + sembrador + API
 ```
+
+**Modo autocontenido (`api-local`).** Nombrar `api-local` levanta solo sus dependencias (`mlflow` sano, `sembrador` terminado), no la `api` normal, que usa el mismo puerto 8000. El servidor del equipo solo se necesita durante la siembra; después la API corre contra el MLflow local. Si la siembra falla, el sembrador sale con código distinto de cero y la API no arranca (falla visible, no una API "degradada" en silencio). Para sembrar otro alias: `MODELO_ALIAS=challenger`; para otro origen: `MLFLOW_ORIGEN_URI`. Un detalle de MLflow 3: el servidor rechaza con 403 (`Invalid Host header`) los hosts que no conoce, por lo que el servicio `mlflow` declara `--allowed-hosts "mlflow:5000,localhost:*,127.0.0.1:*"`; sin eso ni el sembrador ni la API pueden usar `http://mlflow:5000`.
 
 Decisiones de diseño:
 - **Una red propia (`mibici`)**: los servicios se hablan por nombre (`http://api:8000`, `http://mlflow:5000`) y no exponen puertos de más.
@@ -1837,7 +1842,7 @@ Decisiones de diseño:
 
 ### Verificación
 
-Probado el 17-nov-2026 en macOS (Apple Silicon, Docker 29.1.3, Compose 2.40.3), con el MLflow del equipo: `docker compose up -d --build` deja la API en `healthy` y `/salud` regresa `ok` con P1 v3, P2 v4 y P3 v4 cargados; `POST /p3/segmentar` responde con el champion de P3; el servicio `locust` alcanza a la API por la red interna (`http://api:8000`) y `dozzle` responde en el puerto 8080. La evidencia está en `reports/evidencias/compose_smoke.txt`. No se probó el perfil `mlflow-local` ni la prueba de carga completa de 5 minutos dentro de Compose.
+Probado el 17-nov-2026 en macOS (Apple Silicon, Docker 29.1.3, Compose 2.40.3), con el MLflow del equipo: `docker compose up -d --build` deja la API en `healthy` y `/salud` regresa `ok` con P1 v3, P2 v4 y P3 v4 cargados; `POST /p3/segmentar` responde con el champion de P3; el servicio `locust` alcanza a la API por la red interna (`http://api:8000`) y `dozzle` responde en el puerto 8080. La evidencia está en `reports/evidencias/compose_smoke.txt`. Después se probó `docker compose up api-local --build` (18-nov-2026): el sembrador copió P1 v3, P2 v4 y P3 v4 como v1 locales, `/salud` regresó `ok` con los tres cargados, los umbrales de P2 se leen del run local y una segunda corrida del sembrador omitió las tres versiones. No se probó el perfil `mlflow-local` vacío ni la prueba de carga completa de 5 minutos dentro de Compose.
 
 ### Estado actual y fases siguientes
 
