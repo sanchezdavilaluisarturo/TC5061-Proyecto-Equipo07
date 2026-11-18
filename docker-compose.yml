@@ -2,7 +2,8 @@
 #
 #   docker compose up -d --build         API en http://127.0.0.1:8000 (docs en /docs)
 #   docker compose --profile carga up    API + prueba de carga de P3 con Locust
-#   docker compose --profile mlflow-local up -d --build   API + MLflow local de respaldo
+#   docker compose up api-local --build                   Autocontenido: MLflow local + sembrador + API
+#   docker compose --profile mlflow-local up -d --build   API + MLflow local vacío de respaldo
 #   docker compose --profile monitoreo up -d              Panel Dozzle en http://127.0.0.1:8080
 #
 # El MLFLOW_TRACKING_URI sale del .env (copiar de .env.example) y, si no existe, usa el servidor
@@ -27,9 +28,9 @@ services:
   # registrados la API queda "degradado" hasta que se entrene o se copien los modelos.
   # Para que la API lo use: MLFLOW_TRACKING_URI=http://mlflow:5000 en el .env
   mlflow:
-    profiles: [mlflow-local]
+    profiles: [mlflow-local, local]
+    build: .
     image: tc5061-equipo07-api:latest # misma imagen: ya trae mlflow en la versión del proyecto
-    depends_on: [api] # reutiliza la imagen que construye el servicio api
     container_name: tc5061-equipo07-mlflow
     restart: unless-stopped
     user: "0:0" # el volumen nombrado nace propiedad de root
@@ -37,10 +38,55 @@ services:
       mlflow server --host 0.0.0.0 --port 5000
       --backend-store-uri sqlite:////mlflow/mlflow.db
       --artifacts-destination /mlflow/artifacts
+      --allowed-hosts "mlflow:5000,localhost:*,127.0.0.1:*"
     ports:
-      - "5000:5000"
+      # En macOS el 5000 suele estar ocupado por AirPlay: MLFLOW_PUERTO=5001 en el .env
+      - "127.0.0.1:${MLFLOW_PUERTO:-5000}:5000"
     volumes:
       - mlflow-datos:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [mibici]
+
+  # Perfil `local`: copia del servidor del equipo las versiones champion de P1, P2 y P3 al MLflow
+  # local (mismo nombre y alias; deja en las etiquetas origen_version y origen_uri) y termina.
+  # Es idempotente: si el volumen ya tiene esa versión no la vuelve a copiar.
+  # Necesita red hacia MLFLOW_ORIGEN_URI solo en esta corrida; la API ya no depende de él.
+  sembrador:
+    profiles: [local]
+    build: .
+    image: tc5061-equipo07-api:latest
+    container_name: tc5061-equipo07-sembrador
+    restart: "no"
+    command: ["python", "-m", "tc5061_proyecto_equipo07.sembrador"]
+    environment:
+      MLFLOW_ORIGEN_URI: ${MLFLOW_ORIGEN_URI:-https://mlflow.equipo7mlops.com}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODELO_ALIAS: ${MODELO_ALIAS:-champion}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks: [mibici]
+
+  # API que apunta al MLflow local ya sembrado. Arranca solo si el sembrador terminó bien.
+  # Usa el mismo puerto que `api`: no levantar los dos a la vez (con `up api-local` Compose solo levanta sus dependencias, no `api`).
+  api-local:
+    profiles: [local]
+    build: .
+    image: tc5061-equipo07-api:latest
+    container_name: tc5061-equipo07-api-local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODELO_ALIAS: ${MODELO_ALIAS:-champion}
+    depends_on:
+      sembrador:
+        condition: service_completed_successfully
     networks: [mibici]
 
   # Panel de CPU, memoria y logs de los contenedores (el que corre en el EC2, equivale a
