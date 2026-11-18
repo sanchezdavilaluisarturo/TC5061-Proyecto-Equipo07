@@ -8,7 +8,8 @@ servidor de origen al MLflow local: baja los artefactos, crea un run local con l
 parámetros (la API lee de ahí los umbrales de P2), registra el modelo con el mismo nombre y deja
 el mismo alias. Las etiquetas originales se conservan y se agrega `origen_version` y `origen_uri`
 para no perder la trazabilidad. Es idempotente: si el alias local ya apunta a una copia de esa
-versión de origen, no la vuelve a copiar.
+versión de origen, no la vuelve a copiar. Si el origen no responde pero el MLflow local ya tiene
+el modelo, conserva esa copia y no falla: la siembra solo necesita red la primera vez.
 
 Variables de entorno:
     MLFLOW_ORIGEN_URI   servidor del equipo (por defecto https://mlflow.equipo7mlops.com)
@@ -41,12 +42,32 @@ def _version_con_alias(cliente: MlflowClient, nombre: str, alias: str):
 
 
 def sembrar_modelo(origen_uri: str, destino_uri: str, nombre: str, alias: str) -> str:
-    """Copia `nombre@alias` de origen a destino. Regresa 'copiado' u 'omitido'."""
+    """Copia `nombre@alias` de origen a destino. Regresa 'copiado', 'omitido' o 'conservado'.
+
+    Si la copia falla (por ejemplo, el servidor del equipo no responde) pero el MLflow local ya
+    tiene una versión con ese alias, la conserva y regresa 'conservado': la API puede arrancar
+    con lo ya sembrado. Si no hay nada local que servir, propaga el error.
+    """
+    destino = MlflowClient(tracking_uri=destino_uri, registry_uri=destino_uri)
+    existente = _version_con_alias(destino, nombre, alias)
+    try:
+        return _copiar_modelo(origen_uri, destino_uri, nombre, alias, existente)
+    except Exception as error:  # cualquier falla del origen se trata igual
+        if existente is None:
+            raise
+        logger.warning(
+            f"{nombre}@{alias}: no se pudo copiar del origen ({error}); se conserva la copia "
+            f"local v{existente.version} (origen v{existente.tags.get('origen_version', '?')})"
+        )
+        return "conservado"
+
+
+def _copiar_modelo(origen_uri: str, destino_uri: str, nombre: str, alias: str, existente) -> str:
+    """Copia la versión de origen salvo que el alias local ya apunte a una copia de ella."""
     origen = MlflowClient(tracking_uri=origen_uri, registry_uri=origen_uri)
     destino = MlflowClient(tracking_uri=destino_uri, registry_uri=destino_uri)
 
     version_origen = origen.get_model_version_by_alias(nombre, alias)
-    existente = _version_con_alias(destino, nombre, alias)
     if existente and existente.tags.get("origen_version") == str(version_origen.version):
         logger.info(f"{nombre}@{alias}: ya sembrado (origen v{version_origen.version}), se omite")
         return "omitido"
@@ -108,7 +129,8 @@ def main() -> int:
         except Exception as error:  # noqa: BLE001 - se reporta y se sigue con los demás
             fallos += 1
             logger.error(f"{pregunta}: no se pudo sembrar {nombre}@{alias}: {error}")
-    # Salida distinta de cero: depends_on (service_completed_successfully) no arranca la API
+    # Solo falla si a algún modelo no le queda copia local: con salida distinta de cero,
+    # depends_on (service_completed_successfully) no arranca la API
     return 1 if fallos else 0
 
 
