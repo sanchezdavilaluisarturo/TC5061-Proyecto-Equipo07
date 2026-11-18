@@ -1889,9 +1889,9 @@ Las pruebas unitarias del sembrador (`tests/test_sembrador.py`, con dos MLflow e
   - `POST` a P1, P2 y P3 con las peticiones de `references/`: 200, y 422 con petición vacía. Los umbrales de P2 coinciden con los del run de origen en el servidor del equipo.
   - Una segunda siembra omitió las tres versiones.
   - Con el origen inalcanzable y el volumen sembrado, la API arrancó en `ok`. Con el volumen vacío, el sembrador salió con 1 y `api-local` no arrancó.
-  - `docker compose run --rm locust` (humo de 15 s) respondió sin errores, y `docker compose up -d api` quedó sano en el 8001 con los champions del servidor del equipo.
+  - `docker compose run --rm locust` (humo de 15 s) respondió sin errores, `dozzle` respondió en el 8080 y `docker compose up -d api` quedó sano en el 8001 con los champions del servidor del equipo.
 
-  No se probó la prueba de carga completa de 5 minutos dentro de Compose.
+  Evidencia en `reports/evidencias/compose_local.txt`. No se probó la prueba de carga completa de 5 minutos dentro de Compose.
 
 ### Trabajo futuro
 
