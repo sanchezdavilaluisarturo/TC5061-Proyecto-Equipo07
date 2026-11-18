@@ -1840,6 +1840,21 @@ Decisiones de diseño:
 - **Perfiles**: `docker compose up` levanta solo lo indispensable (la API); el monitoreo, la carga y el MLflow de respaldo se activan cuando se necesitan.
 - **Variables de entorno y volúmenes**: la URI de MLflow viene del `.env`; el MLflow local guarda su base y sus artefactos en el volumen `mlflow-datos`; Locust monta `locust/` y `references/` en solo lectura.
 
+### Servidor (EC2) frente al modo reproducible
+
+El modo autocontenido (`api-local`) está pensado para reproducir el proyecto en cualquier máquina, que es lo que pide la entrega. No reemplaza lo que corre en el EC2 del equipo:
+
+| | EC2 del equipo (producción) | Modo reproducible (`api-local`) |
+|---|---|---|
+| MLflow | Proceso de Python (gunicorn, puerto 5000) fuera de Docker, con el Model Registry real | Contenedor `mlflow` con volumen propio, que arranca vacío |
+| Origen de los modelos | El Registry real: la API carga el alias `champion` vigente (P1 v3, P2 v4, P3 v4) | Copia sembrada del servidor del equipo; en el MLflow local queda como v1 de cada modelo, con `origen_version` en las etiquetas |
+| API | Contenedor lanzado con `docker run` por `deploy-api.yml` | Servicio `api-local` de Compose, que espera al sembrador |
+| Dependencia del servidor del equipo | Total | Solo durante la siembra |
+| Cuando se promueve un champion nuevo | La API lo toma al reiniciarse | Hay que volver a correr `docker compose run --rm sembrador` y reiniciar `api-local` |
+| Uso | Servir tráfico real | Reproducir, evaluar y probar sin tocar producción |
+
+En el EC2 no se siembra: ahí el MLflow ya es la fuente de verdad, y una copia solo se desactualizaría. Por eso el despliegue (`deploy-api.yml`) no cambia con esta entrega; llevar el MLflow real a Compose sigue siendo la fase posterior descrita abajo.
+
 ### Verificación
 
 Probado el 17-nov-2026 en macOS (Apple Silicon, Docker 29.1.3, Compose 2.40.3), con el MLflow del equipo: `docker compose up -d --build` deja la API en `healthy` y `/salud` regresa `ok` con P1 v3, P2 v4 y P3 v4 cargados; `POST /p3/segmentar` responde con el champion de P3; el servicio `locust` alcanza a la API por la red interna (`http://api:8000`) y `dozzle` responde en el puerto 8080. La evidencia está en `reports/evidencias/compose_smoke.txt`. Después se probó `docker compose up api-local --build` (18-nov-2026): el sembrador copió P1 v3, P2 v4 y P3 v4 como v1 locales, `/salud` regresó `ok` con los tres cargados, los umbrales de P2 se leen del run local y una segunda corrida del sembrador omitió las tres versiones. No se probó el perfil `mlflow-local` vacío ni la prueba de carga completa de 5 minutos dentro de Compose.
