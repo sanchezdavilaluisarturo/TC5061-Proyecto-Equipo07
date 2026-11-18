@@ -1,0 +1,100 @@
+# Prueba del modo reproducible de Docker Compose (`docker compose up api-local`): levanta el MLflow
+# local, el sembrador copia los champion del servidor del equipo (secret MLFLOW_TRACKING_URI, que se
+# usa como origen) y la API los sirve desde ahí. Comprueba en una máquina limpia que la siembra y el
+# arranque encadenado funcionan, no solo en la del equipo.
+name: Compose - modo reproducible (sembrador + api-local)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "docker-compose.yml"
+      - "tc5061_proyecto_equipo07/sembrador.py"
+      - "tc5061_proyecto_equipo07/api/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "requirements-api.txt"
+      - "references/api_*.json"
+      - ".github/workflows/compose.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api-local:
+    name: Sembrar y levantar api-local
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Origen de la siembra: el servidor del equipo
+      MLFLOW_ORIGEN_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comprobar la URL de origen
+        run: test -n "$MLFLOW_ORIGEN_URI" || (echo "Falta el secret MLFLOW_TRACKING_URI" && exit 1)
+      - name: Levantar api-local (mlflow, sembrador y API)
+        run: docker compose up api-local --build -d
+      - name: Esperar a que la API cargue los modelos sembrados
+        run: |
+          for intento in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/salud > /dev/null && exit 0
+            sleep 3
+          done
+          echo "La API no respondió en 3 minutos" && exit 1
+      - name: El sembrador terminó bien
+        run: |
+          codigo=$(docker inspect -f '{{.State.ExitCode}}' tc5061-equipo07-sembrador)
+          test "$codigo" = "0" || (echo "El sembrador salió con código $codigo" && exit 1)
+      - name: Los tres modelos salen del MLflow local (versión 1 sembrada)
+        run: |
+          curl -sf http://127.0.0.1:8000/salud | python3 -c '
+          import json, sys
+          s = json.load(sys.stdin)
+          print(s)
+          ok = s["estado"] == "ok" and all(m["listo"] and m["version"] == 1 for m in s["modelos"].values())
+          sys.exit(0 if ok else 1)'
+      - name: Smoke test de los endpoints
+        run: make api-smoke PYTHON_INTERPRETER=python3
+      - name: Predicción de P3 con el modelo sembrado
+        run: |
+          curl -sf -X POST http://127.0.0.1:8000/p3/segmentar -H "Content-Type: application/json" \
+            -d @references/api_p3_peticion.json | python3 -c '
+          import json, sys
+          r = json.load(sys.stdin)
+          print(r)
+          sys.exit(0 if r["version"] == 1 and len(r["predicciones"]) == 3 else 1)'
+      - name: Idempotencia (segunda corrida omite las tres versiones)
+        run: |
+          docker compose run --rm sembrador 2>&1 | tee sembrador2.log
+          test "$(grep -c 'ya sembrado' sembrador2.log)" = "3"
+      - name: Logs
+        if: always()
+        run: docker compose logs --no-color
+
+  siembra-fallida:
+    name: Si la siembra falla, api-local no arranca
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Levantar con un origen inalcanzable
+        env:
+          # El dominio .invalid nunca resuelve (RFC 2606)
+          MLFLOW_ORIGEN_URI: https://mlflow.invalid
+        # Debe fallar: el sembrador sale con código 1 y depends_on corta el arranque
+        run: |
+          if docker compose up api-local --build -d; then
+            echo "Se esperaba que la siembra fallara y api-local no arrancara" && exit 1
+          fi
+      - name: api-local no quedó corriendo
+        run: |
+          estado=$(docker inspect -f '{{.State.Status}}' tc5061-equipo07-api-local)
+          echo "estado de api-local: $estado"
+          test "$estado" != "running"
+      - name: Logs del sembrador
+        if: always()
+        run: docker logs tc5061-equipo07-sembrador
