@@ -2029,6 +2029,45 @@ Las llamadas por segundo son las de `POST /p3/segmentar`; Locust las suma dos ve
 - **Costo en el tope:** unos USD 0.0011 por millón de estaciones (USD 0.0416 por hora entre 37 millones de estaciones por hora), o unos USD 0.0020 si se cobra el exceso de créditos de CPU del `t3`.
 - **Siguiente paso:** `--workers 2` en `uvicorn` debería acercar el tope a la CPU completa de la instancia; hay que repetir esta prueba para medirlo.
 
+## Pruebas de carga con Locust (P1)
+
+Se midió `POST /p1/predecir` bajo carga concurrente: latencia, peticiones y predicciones por segundo, tasa de error y consumo de CPU y memoria del contenedor, para estimar el costo por predicción.
+
+### Escenario
+
+| Elemento | Decisión | Por qué |
+|---|---|---|
+| Endpoint | `POST /p1/predecir` | Predice los viajes de mañana por estación-hora |
+| Consumidores | `BatchNocturno` (peso 1): la red completa, 472 estaciones x 20 horas = 9,440 registros en una llamada. `ConsultaEstacion` (peso 4): 1 estación x 20 horas | El uso principal de P1 es un batch al cierre del día; la consulta mide el costo fijo de cada llamada. El batch cabe en una petición (tope de 10,000 registros) |
+| Payload | Se reciclan las estaciones de `references/api_p1_peticion.json` con `origen_id` nuevos, las 20 horas de servicio (0 y de 5 a 23) y un mismo día (jueves 19-nov-2026, hábil y sin festivo) | La API valida con Pydantic estricto (horas sin servicio, fin de semana coherente con el día); inventar datos daría 422. Los dos payloads se validaron con `P1Peticion` |
+| Tamaño | Consulta: 5.9 KB. Batch: 2.78 MB | El batch pesa: la latencia que mide Locust incluye subirlo desde la máquina que genera la carga |
+| Pausa | Entre 0.5 y 2 s por usuario | Simula consumidores reales, no un bucle sin pausa |
+| Validación | Un 200 con menos predicciones de las enviadas, o sin la suma por zona, cuenta como fallo | Evita falsos éxitos |
+| Carga | Escalones de 60 s: 5, 10, 20, 40 y 80 usuarios | Los mismos de P3, para comparar las preguntas |
+| Medición | Cada petición se guarda en `p1_peticiones.csv` y CPU y memoria en `docker_stats.csv`; `graficas_p1.py` calcula todo por escalón | Los percentiles de `stats_history` de Locust son acumulados desde el inicio de la prueba y no sirven para comparar escalones |
+
+### Cómo ejecutarlo
+
+```bash
+pip install -r requirements-carga.txt
+
+# Humo (3 usuarios, 25 s): -u, -r y -t mandan
+locust -f locust/locustfile_p1.py --headless --host http://127.0.0.1:8000 -u 3 -r 1 -t 25s
+
+# En otra terminal, CPU y memoria del contenedor mientras corre la prueba (Ctrl+C al terminar).
+# Contenedor: tc5061-equipo07-api-local en el sistema local; tc5061-equipo07-api en el EC2
+locust/docker_stats.sh tc5061-equipo07-api-local reports/carga/p1/docker_stats.csv
+
+# Prueba completa por escalones (5 min). Al cargar escalones_p1.py, Locust ignora -u y -t
+locust -f locust/locustfile_p1.py,locust/escalones_p1.py --headless \
+  --host http://127.0.0.1:8000 --csv reports/carga/p1/p1 --html reports/carga/p1/p1_reporte.html
+
+# Tabla por escalón, costo por millón de predicciones y gráficas
+python locust/graficas_p1.py reports/carga/p1
+```
+
+`--host` es la API a probar: la del sistema local (`docker compose up -d --build`, en el puerto 8000) o la del equipo. `graficas_p1.py` toma por defecto USD 0.0416 por hora (EC2 `t3.medium`, Linux on-demand, us-east-2) y se cambia con `--precio-hora`.
+
 ## Monitoreo y drift
 
 Entregable 8: el proyecto detecta cuándo los datos de producción se alejan de los de entrenamiento (drift, con Evidently) y decide con evidencia si una versión nueva del modelo es mejor que la vigente (A/B testing entre versiones del Model Registry). La base es común a las tres preguntas (`monitoreo.py`); cada pregunta tiene su propio módulo (`modeling/monitoreo_p1.py`, `monitoreo_p2.py` y `monitoreo_p3.py`) y su propia sección más abajo.
