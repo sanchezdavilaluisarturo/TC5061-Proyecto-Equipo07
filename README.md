@@ -1373,7 +1373,7 @@ El aviso de `pytest` al cargar P3 no es un error: MLflow anotó `pytest` entre l
 
 `make api-smoke`, con la API levantada, comprueba en segundos que el servicio está completo: `/salud` en `ok` (los tres modelos cargados), una predicción de P1 con `references/api_p1_peticion.json`, las predicciones de P2 con `references/api_p2_peticion.json`, los segmentos de P3 con `references/api_p3_peticion.json` (deben regresar las 3 estaciones) y un `422` ante una petición vacía a cada uno de los tres endpoints. Falla si cualquiera no se cumple.
 
-La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
+La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR (y en cada push a `performance_main` o `main`) que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
 
 ### Despliegue en el EC2
 
@@ -1381,7 +1381,7 @@ La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7ml
 
 | Acción | Dónde corre | Qué deja al terminar |
 |---|---|---|
-| `api.yml` | Máquina temporal de GitHub, en cada PR | Nada: comprueba que la imagen se construye y responde, y todo se destruye |
+| `api.yml` | Máquina temporal de GitHub, en cada PR y en push a `performance_main` o `main` | En push, la imagen publicada en GHCR; en PR nada: comprueba que la imagen se construye y responde, y todo se destruye |
 | `deploy-api.yml` | El EC2, al hacer merge a `api_rest` | El contenedor corriendo con el commit recién integrado (`--restart unless-stopped`) |
 
 Flujo completo, desde el merge hasta la verificación (fuente editable en `references/despliegue-api.candidate.json` y versión interactiva en [`references/despliegue-api.html`](references/despliegue-api.html), generada con [Archify](https://github.com/tt-a1i/archify)):
@@ -1872,7 +1872,7 @@ En el EC2 no se siembra: ahí el MLflow ya es la fuente de verdad, y una copia s
 
 ### Pruebas en CI
 
-El workflow `.github/workflows/compose.yml` corre en cada PR que toca el Compose, el sembrador, la API o la imagen:
+El workflow `.github/workflows/compose.yml` corre en cada PR, y en cada push a `performance_main` o `main`, que toca el Compose, el sembrador, la API o la imagen:
 
 | Job | Qué comprueba |
 |---|---|
@@ -1880,6 +1880,18 @@ El workflow `.github/workflows/compose.yml` corre en cada PR que toca el Compose
 | `siembra-fallida` | Con el origen inalcanzable y el volumen vacío, `docker compose up` falla, el sembrador sale con 1 y `api-local` no queda corriendo |
 
 Las pruebas unitarias del sembrador (`tests/test_sembrador.py`, con dos MLflow en SQLite y sin red) corren en el CI de calidad.
+
+### CI/CD en push y publicación de la imagen
+
+Los tres workflows de verificación corren en PR y también en push a `performance_main` y `main`, las ramas que se integran:
+
+| Workflow | Qué agrega en esta entrega |
+|---|---|
+| `TC5061-Proyecto-Equipo07.yml` (calidad: ruff, pytest, bandit, pip-audit) | Push a `performance_main` y `main`; ya tenía caché de pip. El entrenamiento de P1, P2 y P3 sigue corriendo solo a mano |
+| `api.yml` (imagen y smoke test) | Push; build con caché de capas de GitHub Actions (`type=gha`), que evita repetir el `pip install` de la imagen si no cambian los requirements; en push, la imagen que pasó el smoke test se publica en GHCR (`ghcr.io/<dueño>/tc5061-equipo07-api`) con el commit y la rama como etiquetas; resumen del run con tamaño de la imagen, `/salud` y dónde se publicó |
+| `compose.yml` (sistema completo) | Push; resumen del run con el estado de cada servicio y `/salud` de `api-local` |
+
+El despliegue al EC2 (`deploy-api.yml`) es el paso de CD que lleva la imagen a producción.
 
 ### Verificación
 
