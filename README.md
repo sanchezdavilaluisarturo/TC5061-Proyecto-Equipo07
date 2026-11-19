@@ -2162,6 +2162,146 @@ La unidad de P1 es la predicción de una estación-hora. Con el precio de la ins
 | Correr el batch como tarea programada en lugar de depender de una API prendida 24/7 | El batch usa menos de un segundo de CPU al día contra USD 1.00 diario de la instancia | Media: aplica si P1 deja de compartir la instancia con P2, P3 y MLflow |
 | Imagen más ligera, sin la librería de GPU de XGBoost | El build local tardó 766 s y descarga `nvidia_nccl_cu12` (351 MB), que no se usa | Por verificar: requiere probar una variante de XGBoost solo para CPU |
 
+## Pruebas de carga con Locust (P2)
+
+Se midió `POST /p2/predecir` bajo carga concurrente: latencia, peticiones y predicciones por segundo, tasa de error y consumo de CPU y memoria del contenedor, para estimar el costo por predicción.
+
+### Escenario
+
+| Elemento | Decisión | Por qué |
+|---|---|---|
+| Endpoint | `POST /p2/predecir` | Clasifica el riesgo de cada estación para las próximas 2 horas |
+| Consumidores | `BarridoBin` (peso 1): la red completa, 472 estaciones en una llamada. `UsuarioConsulta` (peso 4): 1 estación | El uso principal de P2 es un proceso que califica toda la red al cierre de cada bloque de 30 minutos; la consulta mide el costo fijo de cada llamada. En operación el barrido es una llamada cada 30 minutos; aquí se repite para estresar el servidor |
+| Payload | Se reciclan los registros de `references/api_p2_peticion.json` cambiando solo el id de estación | La API valida con Pydantic estricto; inventar datos daría 422 |
+| Tamaño | Consulta: 477 B de petición y 333 B de respuesta. Barrido: 222 KB y 73 KB | El barrido es el que pesa en la red |
+| Pausa | Entre 0.5 y 2 s por usuario | Simula consumidores reales, no un bucle sin pausa |
+| Validación | Un 200 con menos predicciones de las enviadas, o con un `por_clase` que no suma el número de registros, cuenta como fallo | Evita falsos éxitos |
+| Carga | Escalones de 60 s: 5, 10, 20, 40, 80, 160 y 320 usuarios | Los cinco primeros son los de P1 y P3, para comparar; 160 y 320 confirman el tope |
+| Medición | `--csv-full-history`, con CPU y memoria de `docker_stats.sh` (local) o exportadas de Dozzle (EC2) | Con esa opción, los percentiles de `stats_history` son de una ventana móvil de 10 s (P3 usa los acumulados; P1 los calcula de cada petición) y sirven para comparar escalones |
+
+### Cómo ejecutarlo
+
+Cada corrida guarda en su carpeta: `reports/carga/p2/` (sistema de Compose) y `reports/carga/p2/ec2/` (EC2). La prueba completa usa un maestro y 3 workers de Locust (en Windows no existe `--processes`; en Linux o WSL basta con `--processes 3`).
+
+```bash
+pip install -r requirements-carga.txt
+
+# Humo (3 usuarios, 25 s): -u, -r y -t mandan
+locust -f locust/locustfile_p2.py --headless --host http://127.0.0.1:8000 -u 3 -r 1 -t 25s
+```
+
+**Prueba completa contra el sistema local**, con la API limitada a los recursos de un `t3.medium` (2 vCPU y 4 GB):
+
+```bash
+docker compose up -d --build
+docker update --cpus 2 --memory 4g --memory-swap 4g tc5061-equipo07-api-local
+
+# Terminal 2: CPU y memoria del contenedor (Ctrl+C al terminar)
+locust/docker_stats.sh tc5061-equipo07-api-local reports/carga/p2/docker_stats.csv
+
+# Terminales 3 a 5: un worker en cada una
+locust -f locust/locustfile_p2.py,locust/escalones_p2.py --worker --master-host 127.0.0.1
+
+# Terminal 1: maestro, escalones de 5 a 320 usuarios (7 min). Al cargar escalones_p2.py, Locust ignora -u y -t
+locust -f locust/locustfile_p2.py,locust/escalones_p2.py --master --headless --expect-workers 3 \
+  --host http://127.0.0.1:8000 --csv reports/carga/p2/p2 --csv-full-history \
+  --html reports/carga/p2/p2_reporte.html
+
+python locust/graficas_p2.py reports/carga/p2/p2 reports/carga/p2/docker_stats.csv
+docker compose up -d --force-recreate api-local   # quita los límites de docker update
+```
+
+**Prueba completa contra el EC2.** Dozzle guarda solo las últimas 300 muestras (una por segundo) y la prueba dura 420 s, así que CPU y memoria se exportan dos veces y se unen por marca de tiempo. La página de Dozzle se deja abierta durante la prueba.
+
+```bash
+mkdir -p reports/carga/p2/ec2
+# Workers igual que arriba. Maestro, con la exportación final encadenada:
+locust -f locust/locustfile_p2.py,locust/escalones_p2.py --master --headless --expect-workers 3 \
+  --host https://api.equipo7mlops.com --csv reports/carga/p2/ec2/p2 --csv-full-history \
+  --html reports/carga/p2/ec2/p2_reporte.html ; \
+  locust/exportar_dozzle.sh reports/carga/p2/ec2/docker_stats_fin.csv 450
+
+# En otra terminal, cuando la prueba llega a 80 usuarios (~4 min):
+locust/exportar_dozzle.sh reports/carga/p2/ec2/docker_stats_medio.csv 450
+
+# Unir las dos exportaciones y graficar
+python -c "
+import pandas as pd
+d = pd.concat([pd.read_csv(f'reports/carga/p2/ec2/docker_stats_{p}.csv') for p in ('medio', 'fin')])
+d.drop_duplicates('timestamp', keep='last').sort_values('timestamp').to_csv(
+    'reports/carga/p2/ec2/docker_stats.csv', index=False)"
+python locust/graficas_p2.py reports/carga/p2/ec2/p2 reports/carga/p2/ec2/docker_stats.csv
+```
+
+### Resultados (19-nov-2026)
+
+Dos corridas con el mismo escenario:
+
+- **EC2** (`https://api.equipo7mlops.com`, champion P2 v4): la carga se generó desde una red con 172 Mbps de subida y 40 Mbps de bajada (speed test de ese momento). CPU y memoria exportadas de Dozzle; las dos exportaciones coinciden exactamente en los 125 s en que se traslapan.
+- **Local** (`docker compose up -d --build`, champion sembrado como v1, copia del v4): API limitada a 2 vCPU y 4 GB con `docker update`; Locust y la API en la misma laptop. Sirve como el tiempo del servidor sin red. Reemplaza una corrida del 18-nov cuyo CSV de CPU y memoria quedó vacío.
+
+| Métrica | EC2 | Local |
+|---|---|---|
+| Peticiones | 11,634 | 15,134 |
+| Errores | 2 (0.02 %), `502 Bad Gateway` en los primeros 30 s del escalón de 160 usuarios | 0 |
+| Tope | ~47 peticiones/s (~4,300 predicciones/s) | ~68 peticiones/s (~6,400 predicciones/s) |
+| CPU del contenedor | pico de 173 % (de 200 %) | pico de 173 % |
+| Memoria del contenedor | máximo 18.5 % | máximo 18.8 % (772 MB) |
+
+Por escalón (sin los primeros 15 s de cada uno; latencias en ms, mediana de los percentiles de 10 s):
+
+| Usuarios | Peticiones/s EC2 / local | Predicciones/s EC2 / local | Consulta p50 / p95 EC2 | Consulta p50 / p95 local | Barrido p50 EC2 / local | CPU media EC2 / local |
+|---|---|---|---|---|---|---|
+| 5 | 3.7 / 4.0 | 327 / 343 | 59 / 82 | 10 / 19 | 100 / 28 | 11 / 10 % |
+| 10 | 7.4 / 7.7 | 684 / 727 | 61 / 84 | 10 / 21 | 100 / 27 | 19 / 21 % |
+| 20 | 15.0 / 15.4 | 1,404 / 1,498 | 61 / 100 | 10 / 27 | 110 / 28 | 39 / 40 % |
+| 40 | 29.7 / 31.5 | 2,765 / 2,996 | 78 / 160 | 13 / 44 | 140 / 31 | 79 / 86 % |
+| 80 | 46.5 / 58.6 | 4,266 / 5,338 | 390 / 900 | 45 / 310 | 475 / 64 | 142 / 100 % |
+| 160 | 47.5 / 68.2 | 4,299 / 6,357 | 2,100 / 2,500 | 1,100 / 1,600 | 2,300 / 1,100 | 149 / 141 % |
+| 320 | 46.2 / 67.0 | 4,281 / 6,376 | 5,900 / 6,700 | 3,800 / 4,200 | 6,300 / 3,900 | 147 / 140 % |
+
+![Latencia vs usuarios (EC2)](reports/carga/p2/ec2/p2_latencia.png)
+![Throughput y errores (EC2)](reports/carga/p2/ec2/p2_rps_errores.png)
+![CPU y memoria (EC2)](reports/carga/p2/ec2/p2_recursos.png)
+
+Las tablas completas están en `reports/carga/p2/ec2/p2_escalones.csv` (EC2) y `reports/carga/p2/p2_escalones.csv` (local); las gráficas de la corrida local están en `reports/carga/p2/`.
+
+### Lectura
+
+- **El límite es un solo proceso `uvicorn`, no la instancia.** El EC2 llega a su tope (~47 peticiones/s) con 80 usuarios y la corrida local (~68) con 160. De ahí en adelante el throughput no crece y la latencia es pura espera: con 160 usuarios, una pausa promedio de 1.25 s y 1.1 s de respuesta, la ley de Little, aproximada con la mediana, da 160 / 2.35 ≈ 68 peticiones/s, lo medido en local. La CPU se estanca en ~140–150 % de 200 % en las dos corridas: un solo proceso `uvicorn` no aprovecha los dos vCPU. La memoria sobra (menos de 19 %).
+- **Agrupar estaciones sale casi gratis.** Sin carga y sin red, 1 estación tarda 10 ms y 472 tardan 28 ms: cada llamada paga ~10 ms fijos (HTTP, validación, DataFrame) y cada estación adicional ~0.04 ms. Calificar la red con 472 llamadas de una estación costaría ~4.7 s de servidor, contra 28 ms en una sola llamada.
+- **La red suma ~50 ms por llamada, pero no fue el límite.** Sin carga, la consulta tarda 59 ms en el EC2 contra 10 ms en local (ida y vuelta, TLS y proxy). A saturación la prueba usó ~17 Mbps de subida (10 % de la conexión) y ~5.5 Mbps de bajada (14 %), así que, a diferencia de P1, el tope medido es el del servidor.
+- **El EC2 satura antes que la emulación local.** Hasta 40 usuarios las dos corridas usan casi la misma CPU por petición; con 160 y 320, el EC2 gasta ~3.1 puntos de CPU por petición/s contra ~2.1 en local, y rinde menos. La fila de 80 en local no sirve para comparar: `docker_stats.sh` toma una muestra cada ~2 s (22 por escalón) y su media sale baja. Posibles causas, sin verificar: en la familia `t3` los 2 vCPU suelen ser dos hilos de un mismo núcleo físico; el EC2 comparte host con MLflow y con el proxy; y TLS y el proxy agregan trabajo por petición. El costo se calcula con el EC2.
+- **Errores:** 2 respuestas 502 de 11,634, en los primeros 30 s del escalón de 160 usuarios (a los 14 y 25 s de entrar), con la cola llena: el proxy se rindió y `/salud` siguió en `ok`.
+- **Limitaciones:** una corrida por escenario. En local, Locust y la API comparten la laptop (la API limitada a 2 de 16 CPU). El EC2 comparte host con MLflow. El payload recicla los registros del ejemplo.
+
+### FinOps: costo por predicción
+
+La unidad de P2 es la predicción de riesgo de una estación en un bloque de 30 minutos. Instancia de referencia: EC2 `t3.medium` (2 vCPU, 4 GB), USD 0.0416 por hora (Linux on-demand, us-east-2). Con el precio fijo, el costo por predicción depende solo de cuántas se atienden por hora. El recargo del `t3` aplica cuando la CPU media rebasa el piso de 40 % (20 % por vCPU): en modo *unlimited* el exceso cuesta USD 0.05 por vCPU-hora.
+
+| Usuarios | Predicciones/hora (EC2) | USD por millón de predicciones | Con recargo del `t3` | USD por millón de peticiones, con recargo |
+|---|---|---|---|---|
+| 5 | 1.2 millones | 0.0353 | 0.0353 | 3.13 |
+| 10 | 2.5 millones | 0.0169 | 0.0169 | 1.56 |
+| 20 | 5.1 millones | 0.0082 | 0.0082 | 0.77 |
+| 40 | 10.0 millones | **0.0042** | **0.0061** | 0.57 |
+| 80 | 15.4 millones | 0.0027 | 0.0060 | 0.55 |
+| 160 | 15.5 millones | 0.0027 | 0.0062 | 0.56 |
+| 320 | 15.4 millones | 0.0027 | 0.0062 | 0.57 |
+
+- **Punto de operación: 40 usuarios.** Es el último escalón con p95 por debajo de 400 ms (160 ms la consulta, 330 ms el barrido): **USD 0.0042 por millón de predicciones, o 0.0061 con el recargo**. Saturar no abarata: desde 80 usuarios, con el recargo, el costo se queda en ~USD 0.006 y la latencia pasa de milisegundos a segundos.
+- **Con el uso de operación, casi todo lo que se paga es espera.** El barrido es una llamada al cierre de cada bloque de 30 minutos con predicción (de 05:00 a 22:30): 36 llamadas y 16,992 predicciones al día, ~1 s de servidor (36 × 28 ms) de las 24 horas que se cobran (USD 1.00 al día). Si la instancia sirviera solo a P2, cada millón de predicciones costaría unos **USD 59**, unas 14,000 veces más que a capacidad. Compartirla con P1, P3 y MLflow reparte ese costo fijo, pero el gasto lo sigue determinando el tiempo encendido y no el cómputo.
+- **Escalabilidad:** una instancia atiende unas 30 peticiones por segundo (~24 consultas y ~6 barridos) con p95 de 160 ms en la consulta y 330 ms en el barrido. Con un barrido cada 30 minutos quedaría más capacidad para consultas, pero no se midió. Para más, se escala horizontalmente (cada instancia suma ~30 peticiones/s) o se aprovecha el segundo vCPU (ver abajo) antes de agregar instancias.
+
+### Optimizaciones propuestas
+
+| Optimización | Dato que la justifica | Viabilidad |
+|---|---|---|
+| Mandar siempre la red completa en una sola llamada (como el barrido) y no una llamada por estación | 472 estaciones tardan 28 ms y una sola 10 ms: ~0.04 ms por estación adicional contra ~10 ms fijos por llamada | Alta: el endpoint ya acepta hasta 1,000 registros |
+| `--workers 2` en `uvicorn` | La CPU se estanca en ~150 % de 200 % en las dos corridas, con la memoria por debajo de 19 % (dos procesos caben en 4 GB) | Alta: un cambio en el `CMD` del `Dockerfile`; hay que repetir la prueba para medirlo (ganancia esperada de hasta ~30 %) |
+| Correr el barrido como tarea programada en lugar de depender de una API prendida 24/7 | El barrido usa ~1 s de servidor al día contra USD 1.00 diario de la instancia | Media: aplica si P2 deja de compartir la instancia con P1, P3 y MLflow |
+| Instancia con menos memoria (2 GB) | La memoria máxima fue de 772 MB con los tres modelos cargados | Por verificar: los 772 MB son solo de la API; en el EC2 el host también corre MLflow y el proxy, cuyo consumo no se midió. Además, hay que confirmar el precio y repetir la prueba |
+
 ## Monitoreo y drift
 
 Entregable 8: el proyecto detecta cuándo los datos de producción se alejan de los de entrenamiento (drift, con Evidently) y decide con evidencia si una versión nueva del modelo es mejor que la vigente (A/B testing entre versiones del Model Registry). La base es común a las tres preguntas (`monitoreo.py`); cada pregunta tiene su propio módulo (`modeling/monitoreo_p1.py`, `monitoreo_p2.py` y `monitoreo_p3.py`) y su propia sección más abajo.
