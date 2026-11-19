@@ -13,11 +13,12 @@ nuevos y las 20 horas de servicio de un mismo día, en vez de inventar datos.
 Además de los CSV de Locust, cada petición se guarda en --archivo-peticiones: los percentiles de
 stats_history son acumulados desde el inicio, y con este archivo se calculan por escalón.
 
-Humo (3 usuarios, 25 s):
+Humo (3 usuarios, 25 s); sin --archivo-peticiones escribe en reports/carga/p1/humo/:
     locust -f locust/locustfile_p1.py --headless --host URL -u 3 -r 1 -t 25s
-Prueba completa por escalones (5 -> 80 usuarios, 5 min):
+Prueba completa por escalones (5 -> 80 usuarios, ~5 min), cada corrida en su carpeta:
     locust -f locust/locustfile_p1.py,locust/escalones_p1.py --headless --host URL \
-        --csv reports/carga/p1/p1 --html reports/carga/p1/p1_reporte.html
+        --csv CARPETA/p1 --html CARPETA/p1_reporte.html \
+        --archivo-peticiones CARPETA/p1_peticiones.csv
 """
 
 import copy
@@ -65,7 +66,7 @@ REGISTROS = {
 def _argumentos(parser) -> None:
     parser.add_argument(
         "--archivo-peticiones",
-        default="reports/carga/p1/p1_peticiones.csv",
+        default="reports/carga/p1/humo/p1_peticiones.csv",
         help="CSV con una fila por petición (tiempo, nombre, latencia, éxito, usuarios)",
     )
 
