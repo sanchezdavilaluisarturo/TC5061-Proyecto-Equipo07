@@ -1219,7 +1219,7 @@ Igual que con `tornado`, se actualizó en lugar de aceptarla: `requirements.txt`
 **Datos sensibles:**
 
 - `.gitignore` excluye `.env`, `data/`, `models/*`, `*.pkl`, `*.joblib`, `mlruns/`, `mlartifacts/` y `mlflow.db`.
-- `.env.example` solo trae la URL del servidor de MLflow; el `.env` real no se versiona y se carga con `python-dotenv`.
+- `.env.example` solo trae la URL del servidor de MLflow y, comentadas, las variables opcionales de Docker Compose (sin credenciales); el `.env` real no se versiona y se carga con `python-dotenv`.
 - En GitHub Actions la URL llega como secret del repositorio (`MLFLOW_TRACKING_URI`) y no se muestra en los logs.
 - Las columnas personales de los viajes no entran a ninguna tabla de modelado (ver [Privacidad](#privacidad)).
 - Se revisó el historial de todas las ramas buscando contraseñas, tokens, llaves y archivos `.env`, `.pem` o `.db`, sin hallazgos.
@@ -1808,62 +1808,94 @@ Swagger de la API desplegada (https://api.equipo7mlops.com/docs): `POST /p3/segm
 
 ## Orquestación con Docker Compose
 
-El `docker-compose.yml` de la raíz levanta el sistema con un solo comando. Funciona igual con `podman-compose`.
+El `docker-compose.yml` de la raíz levanta el sistema completo con un solo comando: el MLflow local, el sembrador que lo llena con los modelos champion del servidor del equipo y la API que los sirve.
 
 ```bash
-cp .env.example .env                      # solo la primera vez; apunta al MLflow del equipo
-docker compose up -d --build              # API en http://127.0.0.1:8000 (documentación en /docs)
-docker compose ps                         # estado y salud de los servicios
-docker compose down                       # apagar
+docker compose up -d --build              # sistema completo: API en http://127.0.0.1:8000 (docs en /docs), MLflow en http://127.0.0.1:5000
+docker compose ps -a                      # estado y salud de los servicios (el sembrador aparece como Exited (0))
+docker compose down                       # apagar; el MLflow local conserva lo sembrado
+docker compose down -v                    # apagar y borrar el MLflow local (el siguiente up vuelve a sembrar)
 ```
+
+No hace falta un `.env`: los valores por defecto apuntan al servidor del equipo. El `.env.example` lista las variables opcionales.
 
 | Servicio | Perfil | Qué hace |
 |---|---|---|
-| `api` | (siempre) | Construye la imagen del `Dockerfile` y sirve P1, P2 y P3 en el puerto 8000. Descarga los modelos del Model Registry al arrancar; `MLFLOW_TRACKING_URI` sale del `.env` (por defecto, el servidor del equipo). Se reinicia sola (`unless-stopped`) y usa el `HEALTHCHECK` de la imagen sobre `/salud` |
-| `mlflow` | `mlflow-local`, `local` | MLflow local (equivale a `make mlflow-local`), con volumen propio y `healthcheck`. Con `mlflow-local` arranca vacío (la API queda en `degradado` hasta que haya modelos); con `local` lo llena el sembrador. Publica en `127.0.0.1:${MLFLOW_PUERTO:-5000}` (en macOS el 5000 suele estar ocupado por AirPlay: `MLFLOW_PUERTO=5001`) |
-| `sembrador` | `local` | Corre una vez y termina: copia del servidor del equipo las versiones `champion` de P1, P2 y P3 al MLflow local (mismo nombre y alias; conserva las etiquetas y agrega `origen_version` y `origen_uri`) y recrea un run local con los parámetros de origen, de donde la API lee los umbrales de P2. Es idempotente |
-| `api-local` | `local` | La API apuntando a `http://mlflow:5000`. Arranca solo cuando el sembrador terminó bien (`service_completed_successfully`) |
+| `mlflow` | (siempre) | MLflow local (equivale a `make mlflow-local`): base SQLite y artefactos en el volumen `mlflow-datos`, con `healthcheck` sobre `/health`. Publica en `127.0.0.1:${MLFLOW_PUERTO:-5000}` (en macOS el 5000 suele estar ocupado por AirPlay: `MLFLOW_PUERTO=5001` en el `.env`) |
+| `sembrador` | (siempre) | Corre una vez y termina, cuando `mlflow` está sano. Copia del servidor del equipo (`MLFLOW_ORIGEN_URI`) la versión con el alias `champion` de P1, P2 y P3 al MLflow local, con el mismo nombre y alias. Conserva las etiquetas, agrega `origen_version`, `origen_uri` y `origen_run_id`, y recrea un run local con los parámetros de origen, del que la API lee los umbrales de P2 (`source_run_id` apunta a ese run). Código en `tc5061_proyecto_equipo07/sembrador.py` |
+| `api-local` | (siempre) | La API apuntando a `http://mlflow:5000`, en el puerto 8000. Arranca solo si el sembrador terminó bien (`service_completed_successfully`). Se reinicia sola (`unless-stopped`) y usa el `HEALTHCHECK` de la imagen sobre `/salud` |
+| `api` | `servidor` | La API contra el MLflow del equipo, igual que el contenedor del EC2. Usa el puerto `${API_SERVIDOR_PUERTO:-8001}` para no chocar con `api-local`; `MLFLOW_TRACKING_URI` sale del `.env` |
 | `dozzle` | `monitoreo` | Panel de CPU, memoria y logs de los contenedores (el que el equipo tiene en el EC2). Solo escucha en `127.0.0.1:8080` |
-| `locust` | `carga` | Prueba de carga escalonada de P3 contra la API del propio Compose; resultados en `reports/carga/compose/` |
+| `locust` | `carga` | Prueba de carga escalonada de P3 contra `api-local` por la red interna; resultados en `reports/carga/compose/` |
 
 ```bash
-docker compose --profile monitoreo up -d                    # panel de recursos en http://127.0.0.1:8080
-docker compose --profile carga up --abort-on-container-exit # prueba de carga de P3 (5 min)
-docker compose --profile mlflow-local up -d --build         # API más MLflow local vacío
-docker compose up api-local --build                         # autocontenido: MLflow local + sembrador + API
+docker compose run --rm locust              # prueba de carga de P3 (5 min) contra el sistema levantado
+docker compose --profile monitoreo up -d    # panel de recursos en http://127.0.0.1:8080
+docker compose up -d api                    # solo la API contra el MLflow del equipo, en http://127.0.0.1:8001
+docker compose run --rm sembrador           # volver a sembrar tras promover un champion...
+docker compose restart api-local            # ...y que la API lo cargue
 ```
 
-**Modo autocontenido (`api-local`).** Nombrar `api-local` levanta solo sus dependencias (`mlflow` sano, `sembrador` terminado), no la `api` normal, que usa el mismo puerto 8000. El servidor del equipo solo se necesita durante la siembra; después la API corre contra el MLflow local. Si la siembra falla, el sembrador sale con código distinto de cero y la API no arranca (falla visible, no una API "degradada" en silencio). Para sembrar otro alias: `MODELO_ALIAS=challenger`; para otro origen: `MLFLOW_ORIGEN_URI`. Un detalle de MLflow 3: el servidor rechaza con 403 (`Invalid Host header`) los hosts que no conoce, por lo que el servicio `mlflow` declara `--allowed-hosts "mlflow:5000,localhost:*,127.0.0.1:*"`; sin eso ni el sembrador ni la API pueden usar `http://mlflow:5000`.
+**Cómo se comporta el sembrador.**
+- **Idempotente:** si el alias local ya apunta a una copia de la versión de origen, la omite. Si el alias se movió en el servidor del equipo, copia la versión nueva y mueve el alias local.
+- **Sin servidor del equipo:** si el origen no responde pero el volumen ya tiene el modelo, conserva esa copia y termina bien. El servidor del equipo solo se necesita la primera vez (o para actualizar). En el servicio se bajan los reintentos HTTP de MLflow (`MLFLOW_HTTP_REQUEST_MAX_RETRIES=2`, `MLFLOW_HTTP_REQUEST_TIMEOUT=30`), para que un origen caído se detecte en segundos y no en minutos.
+- **Falla visible:** si a algún modelo no le queda copia local (por ejemplo, la primera vez sin red), sale con código 1, `docker compose up` regresa error y la API no arranca, en lugar de quedar "degradada" en silencio.
+- **Otro alias u origen:** `MODELO_ALIAS=challenger` o `MLFLOW_ORIGEN_URI=<url>` en el `.env`.
+
+Notas:
+- **Por qué `docker compose run --rm locust` y no `up --abort-on-container-exit`:** con ese flag Compose apaga todo en cuanto termina un contenedor, y el sembrador termina (bien) al inicio. `run` levanta las dependencias que falten (el sembrador vuelve a correr y omite lo ya sembrado) y corre Locust contra el sistema.
+- **`--allowed-hosts` en el servicio `mlflow`:** MLflow 3 rechaza con 403 (`Invalid Host header`) los hosts que no conoce; sin `mlflow:5000` en la lista, ni el sembrador ni la API pueden usar `http://mlflow:5000`.
+- **Git Bash en Windows:** convierte los argumentos que empiezan con `/` en rutas de Windows. Para pasarle rutas del contenedor a `docker compose run` (por ejemplo, `-f /mnt/locust/locustfile_p3.py`), anteponer `MSYS_NO_PATHCONV=1`. Sin argumentos no hace falta.
+- **`podman-compose`:** la actividad lo permite, pero solo se probó con Docker Compose.
 
 Decisiones de diseño:
-- **Una red propia (`mibici`)**: los servicios se hablan por nombre (`http://api:8000`, `http://mlflow:5000`) y no exponen puertos de más.
-- **Perfiles**: `docker compose up` levanta solo lo indispensable (la API); el monitoreo, la carga y el MLflow de respaldo se activan cuando se necesitan.
-- **Variables de entorno y volúmenes**: la URI de MLflow viene del `.env`; el MLflow local guarda su base y sus artefactos en el volumen `mlflow-datos`; Locust monta `locust/` y `references/` en solo lectura.
+- **El sistema completo es lo predeterminado:** `docker compose up` levanta la API y el servidor de MLflow juntos, y la API sirve los modelos desde ese MLflow. El monitoreo, la carga y la réplica del EC2 son perfiles que se activan cuando se necesitan.
+- **Arranque encadenado con condiciones:** `mlflow` sano (`service_healthy`) → sembrador terminado con éxito (`service_completed_successfully`) → `api-local`. Locust espera a que `api-local` esté sana.
+- **Una red propia (`mibici`)**: los servicios se hablan por nombre (`http://mlflow:5000`, `http://api-local:8000`). MLflow y Dozzle solo publican en `127.0.0.1`.
+- **Variables de entorno y volúmenes**: el origen, el alias y los puertos vienen del `.env` con valores por defecto; el MLflow local guarda su base y sus artefactos en el volumen `mlflow-datos`; Locust monta `locust/` y `references/` en solo lectura.
+- **Una sola imagen:** `mlflow`, `sembrador`, `api-local` y `api` usan la imagen del `Dockerfile`, que ya trae MLflow en la versión del proyecto.
 
-### Servidor (EC2) frente al modo reproducible
+### Servidor (EC2) frente al sistema de Compose
 
-El modo autocontenido (`api-local`) está pensado para reproducir el proyecto en cualquier máquina, que es lo que pide la entrega. No reemplaza lo que corre en el EC2 del equipo:
+El sistema de Compose está pensado para reproducir el proyecto en cualquier máquina. No reemplaza lo que corre en el EC2 del equipo:
 
-| | EC2 del equipo (producción) | Modo reproducible (`api-local`) |
+| | EC2 del equipo (producción) | Sistema de Compose (`docker compose up`) |
 |---|---|---|
-| MLflow | Proceso de Python (gunicorn, puerto 5000) fuera de Docker, con el Model Registry real | Contenedor `mlflow` con volumen propio, que arranca vacío |
+| MLflow | Proceso de Python (gunicorn, puerto 5000) fuera de Docker, con el Model Registry real | Contenedor `mlflow` con volumen propio, que arranca vacío la primera vez |
 | Origen de los modelos | El Registry real: la API carga el alias `champion` vigente (P1 v3, P2 v4, P3 v4) | Copia sembrada del servidor del equipo; en el MLflow local queda como v1 de cada modelo, con `origen_version` en las etiquetas |
-| API | Contenedor lanzado con `docker run` por `deploy-api.yml` | Servicio `api-local` de Compose, que espera al sembrador |
-| Dependencia del servidor del equipo | Total | Solo durante la siembra |
-| Cuando se promueve un champion nuevo | La API lo toma al reiniciarse | Hay que volver a correr `docker compose run --rm sembrador` y reiniciar `api-local` |
+| API | Contenedor lanzado con `docker run` por `deploy-api.yml` | Servicio `api-local`, que espera al sembrador |
+| Dependencia del servidor del equipo | Total | Solo en la primera siembra o para actualizar |
+| Cuando se promueve un champion nuevo | La API lo toma al reiniciarse | `docker compose run --rm sembrador` y `docker compose restart api-local` |
 | Uso | Servir tráfico real | Reproducir, evaluar y probar sin tocar producción |
 
-En el EC2 no se siembra: ahí el MLflow ya es la fuente de verdad, y una copia solo se desactualizaría. Por eso el despliegue (`deploy-api.yml`) no cambia con esta entrega; llevar el MLflow real a Compose sigue siendo la fase posterior descrita abajo.
+En el EC2 no se siembra: ahí el MLflow ya es la fuente de verdad, y una copia solo se desactualizaría. Por eso el despliegue (`deploy-api.yml`) no cambia; el perfil `servidor` reproduce ese contenedor dentro de Compose.
+
+### Pruebas en CI
+
+El workflow `.github/workflows/compose.yml` corre en cada PR que toca el Compose, el sembrador, la API o la imagen:
+
+| Job | Qué comprueba |
+|---|---|
+| `sistema` | `docker compose up -d --build` levanta solo `mlflow`, `sembrador` y `api-local`; el sembrador sale con 0; `/salud` en `ok` con los tres modelos en v1; `make api-smoke` (P1, P2 y P3); una segunda siembra omite los tres; un humo de Locust de 15 s contra `api-local` sin errores; y, con el origen en `https://mlflow.invalid` y el volumen ya sembrado, la API vuelve a arrancar en `ok` |
+| `siembra-fallida` | Con el origen inalcanzable y el volumen vacío, `docker compose up` falla, el sembrador sale con 1 y `api-local` no queda corriendo |
+
+Las pruebas unitarias del sembrador (`tests/test_sembrador.py`, con dos MLflow en SQLite y sin red) corren en el CI de calidad.
 
 ### Verificación
 
-Probado el 17-nov-2026 en macOS (Apple Silicon, Docker 29.1.3, Compose 2.40.3), con el MLflow del equipo: `docker compose up -d --build` deja la API en `healthy` y `/salud` regresa `ok` con P1 v3, P2 v4 y P3 v4 cargados; `POST /p3/segmentar` responde con el champion de P3; el servicio `locust` alcanza a la API por la red interna (`http://api:8000`) y `dozzle` responde en el puerto 8080. La evidencia está en `reports/evidencias/compose_smoke.txt`. Después se probó `docker compose up api-local --build` (18-nov-2026): el sembrador copió P1 v3, P2 v4 y P3 v4 como v1 locales, `/salud` regresó `ok` con los tres cargados, los umbrales de P2 se leen del run local y una segunda corrida del sembrador omitió las tres versiones. No se probó el perfil `mlflow-local` vacío ni la prueba de carga completa de 5 minutos dentro de Compose.
+- **17-nov-2026, macOS** (Apple Silicon, Docker 29.1.3, Compose 2.40.3), con el esquema anterior (la API sola contra el MLflow del equipo): `docker compose up -d --build` dejó la API en `healthy` con P1 v3, P2 v4 y P3 v4; `locust` alcanzó a la API por la red interna y `dozzle` respondió en el 8080. Evidencia en `reports/evidencias/compose_smoke.txt`.
+- **18-nov-2026, Windows 11** (Docker 29.9.2, Compose 5.6.1), con el sistema completo:
+  - `docker compose up -d --build`: el sembrador copió P1 v3, P2 v4 y P3 v4 como v1 locales; `/salud` en `ok`.
+  - `POST` a P1, P2 y P3 con las peticiones de `references/`: 200, y 422 con petición vacía. Los umbrales de P2 coinciden con los del run de origen en el servidor del equipo.
+  - Una segunda siembra omitió las tres versiones.
+  - Con el origen inalcanzable y el volumen sembrado, la API arrancó en `ok`. Con el volumen vacío, el sembrador salió con 1 y `api-local` no arrancó.
+  - `docker compose run --rm locust` (humo de 15 s) respondió sin errores, `dozzle` respondió en el 8080 y `docker compose up -d api` quedó sano en el 8001 con los champions del servidor del equipo.
 
-### Estado actual y fases siguientes
+  Evidencia en `reports/evidencias/compose_local.txt`. No se probó la prueba de carga completa de 5 minutos dentro de Compose.
 
-En el EC2 del equipo la API corre como un contenedor lanzado con `docker run` y desplegado por `deploy-api.yml`; el `docker-compose.yml` reproduce esa misma configuración (imagen, puerto, reinicio, variable de MLflow) y agrega la orquestación.
+### Trabajo futuro
 
-**MLflow, en una fase posterior, se podría agregar al Compose.** Hoy el MLflow del equipo corre en ese mismo EC2 como un proceso de Python (gunicorn, puerto 5000) fuera de Docker, y la API lo consulta por URL; por eso el servicio `mlflow` del Compose es solo un respaldo local y no el del servidor. Para integrarlo habría que: (1) empaquetarlo en un servicio con su base de datos (hoy SQLite en disco) y un volumen para los artefactos; (2) migrar el historial de runs y el Model Registry para no perder los modelos champion; (3) apuntar el despliegue (`deploy-api.yml`) a `docker compose up -d` y a la URI interna `http://mlflow:5000`. También pueden sumarse más adelante Redis y un worker de RQ para predicciones asíncronas (opcional en la actividad).
+- **Llevar el MLflow real del EC2 a Compose.** Hoy corre como un proceso de Python (gunicorn, puerto 5000) fuera de Docker. Para integrarlo habría que: (1) empaquetarlo en un servicio con su base de datos (hoy SQLite en disco) y un volumen para los artefactos; (2) migrar el historial de runs y el Model Registry para no perder los modelos champion; (3) cambiar el despliegue (`deploy-api.yml`) a `docker compose up -d` con la URI interna `http://mlflow:5000`. Con eso el sembrador dejaría de hacer falta en el servidor.
 
 ## Pruebas de carga con Locust (P3)
 

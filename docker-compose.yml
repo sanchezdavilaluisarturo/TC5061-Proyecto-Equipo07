@@ -1,34 +1,27 @@
 # Orquestación de MiBici Equipo 7 (Docker Compose o `podman-compose`).
 #
-#   docker compose up -d --build         API en http://127.0.0.1:8000 (docs en /docs)
-#   docker compose --profile carga up    API + prueba de carga de P3 con Locust
-#   docker compose up api-local --build                   Autocontenido: MLflow local + sembrador + API
-#   docker compose --profile mlflow-local up -d --build   API + MLflow local vacío de respaldo
-#   docker compose --profile monitoreo up -d              Panel Dozzle en http://127.0.0.1:8080
+#   docker compose up -d --build                  Sistema completo: MLflow local + sembrador + API
+#                                                 (API en http://127.0.0.1:8000, docs en /docs;
+#                                                 MLflow en http://127.0.0.1:5000)
+#   docker compose run --rm locust                Prueba de carga de P3 contra el sistema levantado
+#   docker compose --profile monitoreo up -d      + panel Dozzle en http://127.0.0.1:8080
+#   docker compose up -d api                      Solo la API contra el MLflow del equipo (réplica
+#                                                 del EC2), en http://127.0.0.1:8001
+#   docker compose run --rm sembrador             Volver a sembrar tras promover un champion
+#                                                 (después: docker compose restart api-local)
+#   docker compose down                           Apagar (el MLflow local conserva lo sembrado)
+#   docker compose down -v                        Apagar y borrar el MLflow local
 #
-# El MLFLOW_TRACKING_URI sale del .env (copiar de .env.example) y, si no existe, usa el servidor
-# del equipo. Los modelos no van en la imagen: la API los descarga del Model Registry al arrancar.
+# Los modelos no van en la imagen. En el sistema completo, el sembrador los copia del servidor del
+# equipo (MLFLOW_ORIGEN_URI) al MLflow local y la API los lee de ahí; el servidor del equipo solo
+# se necesita la primera vez. Variables opcionales en el .env (copiar de .env.example).
 
 name: mibici
 
 services:
-  api:
-    build: .
-    image: tc5061-equipo07-api:latest
-    container_name: tc5061-equipo07-api
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-https://mlflow.equipo7mlops.com}
-    networks: [mibici]
-    # El HEALTHCHECK de la imagen (Dockerfile) consulta /salud; Compose lo usa en depends_on
-
-  # MLflow local de respaldo (equivale a `make mlflow-local`). Arranca vacío: sin modelos
-  # registrados la API queda "degradado" hasta que se entrene o se copien los modelos.
-  # Para que la API lo use: MLFLOW_TRACKING_URI=http://mlflow:5000 en el .env
+  # MLflow local (equivale a `make mlflow-local`), con base SQLite y artefactos en el volumen
+  # `mlflow-datos`. Arranca vacío la primera vez; lo llena el sembrador.
   mlflow:
-    profiles: [mlflow-local, local]
     build: .
     image: tc5061-equipo07-api:latest # misma imagen: ya trae mlflow en la versión del proyecto
     container_name: tc5061-equipo07-mlflow
@@ -45,18 +38,18 @@ services:
     volumes:
       - mlflow-datos:/mlflow
     healthcheck:
+      # La imagen no trae curl; el HEALTHCHECK del Dockerfile (/salud en el 8000) no aplica aquí
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')"]
       interval: 5s
       timeout: 5s
       retries: 12
     networks: [mibici]
 
-  # Perfil `local`: copia del servidor del equipo las versiones champion de P1, P2 y P3 al MLflow
-  # local (mismo nombre y alias; deja en las etiquetas origen_version y origen_uri) y termina.
-  # Es idempotente: si el volumen ya tiene esa versión no la vuelve a copiar.
-  # Necesita red hacia MLFLOW_ORIGEN_URI solo en esta corrida; la API ya no depende de él.
+  # Copia del servidor del equipo las versiones champion de P1, P2 y P3 al MLflow local (mismo
+  # nombre y alias; deja en las etiquetas origen_version, origen_uri y origen_run_id) y termina.
+  # Idempotente: si el volumen ya tiene esa versión no la vuelve a copiar. Si el origen no
+  # responde pero el volumen ya está sembrado, conserva lo que hay y termina bien.
   sembrador:
-    profiles: [local]
     build: .
     image: tc5061-equipo07-api:latest
     container_name: tc5061-equipo07-sembrador
@@ -66,15 +59,18 @@ services:
       MLFLOW_ORIGEN_URI: ${MLFLOW_ORIGEN_URI:-https://mlflow.equipo7mlops.com}
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MODELO_ALIAS: ${MODELO_ALIAS:-champion}
+      # Con los valores de MLflow (7 reintentos, espera creciente) un origen caído tarda minutos
+      # en fallar; así se detecta en segundos y se pasa a la copia local
+      MLFLOW_HTTP_REQUEST_MAX_RETRIES: "2"
+      MLFLOW_HTTP_REQUEST_TIMEOUT: "30"
     depends_on:
       mlflow:
         condition: service_healthy
     networks: [mibici]
 
-  # API que apunta al MLflow local ya sembrado. Arranca solo si el sembrador terminó bien.
-  # Usa el mismo puerto que `api`: no levantar los dos a la vez (con `up api-local` Compose solo levanta sus dependencias, no `api`).
+  # La API del sistema: lee los modelos del MLflow local ya sembrado. Arranca solo si el
+  # sembrador terminó bien.
   api-local:
-    profiles: [local]
     build: .
     image: tc5061-equipo07-api:latest
     container_name: tc5061-equipo07-api-local
@@ -87,6 +83,22 @@ services:
     depends_on:
       sembrador:
         condition: service_completed_successfully
+    networks: [mibici]
+    # El HEALTHCHECK de la imagen (Dockerfile) consulta /salud; Compose lo usa en depends_on
+
+  # Perfil `servidor`: la API contra el MLflow del equipo, igual que el contenedor del EC2
+  # (`deploy-api.yml`). Se levanta sola con `docker compose up -d api`. Usa otro puerto para no
+  # chocar con api-local si se activa el perfil junto con el sistema completo.
+  api:
+    profiles: [servidor]
+    build: .
+    image: tc5061-equipo07-api:latest
+    container_name: tc5061-equipo07-api
+    restart: unless-stopped
+    ports:
+      - "${API_SERVIDOR_PUERTO:-8001}:8000"
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-https://mlflow.equipo7mlops.com}
     networks: [mibici]
 
   # Panel de CPU, memoria y logs de los contenedores (el que corre en el EC2, equivale a
@@ -103,16 +115,18 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [mibici]
 
-  # Prueba de carga de P3(escalones de 5 a 80 usuarios, 5 min). Resultados en reports/carga/compose/
+  # Prueba de carga de P3 (escalones de 5 a 80 usuarios, 5 min) contra api-local. Resultados en
+  # reports/carga/compose/. Se corre con `docker compose run --rm locust`: con
+  # `up --abort-on-container-exit` todo se apagaría en cuanto termina el sembrador
   locust:
     profiles: [carga]
     image: locustio/locust:2.47.0
     depends_on:
-      api:
+      api-local:
         condition: service_healthy
     command: >
       -f /mnt/locust/locustfile_p3.py,/mnt/locust/escalones_p3.py
-      --headless --host http://api:8000
+      --headless --host http://api-local:8000
       --csv /mnt/reports/carga/compose/p3 --html /mnt/reports/carga/compose/p3_reporte.html
     volumes:
       - ./locust:/mnt/locust:ro
