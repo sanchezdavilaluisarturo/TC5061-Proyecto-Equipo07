@@ -78,7 +78,7 @@ def _abrir_archivo(environment, **kwargs) -> None:
     ruta = Path(environment.parsed_options.archivo_peticiones)
     ruta.parent.mkdir(parents=True, exist_ok=True)
     _salida["archivo"] = ruta.open("w", newline="", encoding="utf-8")
-    _salida["csv"] = csv.writer(_salida["archivo"])
+    _salida["csv"] = csv.writer(_salida["archivo"], lineterminator="\n")
     _salida["csv"].writerow(["timestamp", "nombre", "latencia_ms", "exito", "usuarios"])
     _salida["entorno"] = environment
 

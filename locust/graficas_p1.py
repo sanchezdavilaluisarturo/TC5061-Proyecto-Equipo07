@@ -144,7 +144,11 @@ def graficar(peticiones, stats, tabla, carpeta: Path) -> None:
     ax.axhline(
         100 * PISO_VCPU, color=BERMELLON, linestyle="--", label="piso de créditos t3 (2 x 20 %)"
     )
-    ax.set(xlabel="segundos", ylabel="%", title="P1: CPU y memoria del contenedor (docker stats)")
+    ax.set(
+        xlabel="segundos",
+        ylabel="%",
+        title="P1: CPU y memoria del contenedor (docker stats o Dozzle)",
+    )
     ax.legend()
     fig.tight_layout()
     fig.savefig(carpeta / "p1_recursos.png", dpi=150)
