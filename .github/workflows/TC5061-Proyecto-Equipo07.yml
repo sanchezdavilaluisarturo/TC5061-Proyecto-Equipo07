@@ -38,6 +38,15 @@ on:
         description: "P3: fallar si el modelo alternativo no cumple los criterios de aceptación"
         type: boolean
         default: false
+  push:
+    branches: [main, performance_main]
+    paths:
+      - "tc5061_proyecto_equipo07/**"
+      - "tests/**"
+      - "requirements.txt"
+      - "requirements-api.txt"
+      - "Makefile"
+      - ".github/workflows/**"
   pull_request:
     paths:
       - "tc5061_proyecto_equipo07/**"

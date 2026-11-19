@@ -69,7 +69,7 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 
 **Pruebas y chequeos:** `make pruebas` y `make seguridad`; ver [Pruebas y chequeos de calidad](#pruebas-y-chequeos-de-calidad).
 
-**GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff`, `pytest` y `make seguridad`) en cada PR que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
+**GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff`, `pytest` y `make seguridad`) en cada PR, y en cada push a `performance_main` o `main`, que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
 **MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`). En la Fase 2, P2 agrega la búsqueda `p2-xgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p2-xgb` y `p2-xgb-optuna`, y el modelo registrado `mibici-equipo07-p2-riesgo` (alias `champion` y `challenger`).
 
@@ -1373,7 +1373,7 @@ El aviso de `pytest` al cargar P3 no es un error: MLflow anotó `pytest` entre l
 
 `make api-smoke`, con la API levantada, comprueba en segundos que el servicio está completo: `/salud` en `ok` (los tres modelos cargados), una predicción de P1 con `references/api_p1_peticion.json`, las predicciones de P2 con `references/api_p2_peticion.json`, los segmentos de P3 con `references/api_p3_peticion.json` (deben regresar las 3 estaciones) y un `422` ante una petición vacía a cada uno de los tres endpoints. Falla si cualquiera no se cumple.
 
-La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
+La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR (y en cada push a `performance_main` o `main`) que toca la API, el `Dockerfile` o las dependencias: construye la imagen en una máquina limpia, la levanta contra el servidor MLflow del equipo (secret `MLFLOW_TRACKING_URI`), espera a que carguen los modelos, corre `make api-smoke` y muestra los logs del contenedor. Así se comprueba que la imagen se construye y responde fuera de las computadoras del equipo, y que un cambio no la rompe antes de integrarlo; es el paso de *smoke tests* sobre el artefacto que describen Treveil et al. (2020, cap. 6).
 
 ### Despliegue en el EC2
 
@@ -1381,7 +1381,7 @@ La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7ml
 
 | Acción | Dónde corre | Qué deja al terminar |
 |---|---|---|
-| `api.yml` | Máquina temporal de GitHub, en cada PR | Nada: comprueba que la imagen se construye y responde, y todo se destruye |
+| `api.yml` | Máquina temporal de GitHub, en cada PR y en push a `performance_main` o `main` | En push, la imagen publicada en GHCR; en PR nada: comprueba que la imagen se construye y responde, y todo se destruye |
 | `deploy-api.yml` | El EC2, al hacer merge a `api_rest` | El contenedor corriendo con el commit recién integrado (`--restart unless-stopped`) |
 
 Flujo completo, desde el merge hasta la verificación (fuente editable en `references/despliegue-api.candidate.json` y versión interactiva en [`references/despliegue-api.html`](references/despliegue-api.html), generada con [Archify](https://github.com/tt-a1i/archify)):
@@ -1872,7 +1872,7 @@ En el EC2 no se siembra: ahí el MLflow ya es la fuente de verdad, y una copia s
 
 ### Pruebas en CI
 
-El workflow `.github/workflows/compose.yml` corre en cada PR que toca el Compose, el sembrador, la API o la imagen:
+El workflow `.github/workflows/compose.yml` corre en cada PR, y en cada push a `performance_main` o `main`, que toca el Compose, el sembrador, la API o la imagen:
 
 | Job | Qué comprueba |
 |---|---|
@@ -1880,6 +1880,18 @@ El workflow `.github/workflows/compose.yml` corre en cada PR que toca el Compose
 | `siembra-fallida` | Con el origen inalcanzable y el volumen vacío, `docker compose up` falla, el sembrador sale con 1 y `api-local` no queda corriendo |
 
 Las pruebas unitarias del sembrador (`tests/test_sembrador.py`, con dos MLflow en SQLite y sin red) corren en el CI de calidad.
+
+### CI/CD en push y publicación de la imagen
+
+Los tres workflows de verificación corren en PR y también en push a `performance_main` y `main`, las ramas que se integran:
+
+| Workflow | Qué agrega en esta entrega |
+|---|---|
+| `TC5061-Proyecto-Equipo07.yml` (calidad: ruff, pytest, bandit, pip-audit) | Push a `performance_main` y `main`; ya tenía caché de pip. El entrenamiento de P1, P2 y P3 sigue corriendo solo a mano |
+| `api.yml` (imagen y smoke test) | Push; build con caché de capas de GitHub Actions (`type=gha`), que evita repetir el `pip install` de la imagen si no cambian los requirements; en push, la imagen que pasó el smoke test se publica en GHCR (`ghcr.io/<dueño>/tc5061-equipo07-api`) con el commit y la rama como etiquetas; resumen del run con tamaño de la imagen, `/salud` y dónde se publicó |
+| `compose.yml` (sistema completo) | Push; resumen del run con el estado de cada servicio y `/salud` de `api-local` |
+
+El despliegue al EC2 (`deploy-api.yml`) es el paso de CD que lleva la imagen a producción.
 
 ### Verificación
 
@@ -2028,6 +2040,127 @@ Las llamadas por segundo son las de `POST /p3/segmentar`; Locust las suma dos ve
 - **Comparación con el modo sin agrupar:** una llamada por estación saturaba en unas 28 llamadas por segundo, es decir unas 28 estaciones por segundo; agrupadas son unas 10,000. El tope de la instancia sube unas 360 veces en estaciones.
 - **Costo en el tope:** unos USD 0.0011 por millón de estaciones (USD 0.0416 por hora entre 37 millones de estaciones por hora), o unos USD 0.0020 si se cobra el exceso de créditos de CPU del `t3`.
 - **Siguiente paso:** `--workers 2` en `uvicorn` debería acercar el tope a la CPU completa de la instancia; hay que repetir esta prueba para medirlo.
+
+## Pruebas de carga con Locust (P1)
+
+Se midió `POST /p1/predecir` bajo carga concurrente: latencia, peticiones y predicciones por segundo, tasa de error y consumo de CPU y memoria del contenedor, para estimar el costo por predicción.
+
+### Escenario
+
+| Elemento | Decisión | Por qué |
+|---|---|---|
+| Endpoint | `POST /p1/predecir` | Predice los viajes de mañana por estación-hora |
+| Consumidores | `BatchNocturno` (peso 1): la red completa, 472 estaciones x 20 horas = 9,440 registros en una llamada. `ConsultaEstacion` (peso 4): 1 estación x 20 horas | El uso principal de P1 es un batch al cierre del día; la consulta mide el costo fijo de cada llamada. El batch cabe en una petición (tope de 10,000 registros) |
+| Payload | Se reciclan las estaciones de `references/api_p1_peticion.json` con `origen_id` nuevos, las 20 horas de servicio (0 y de 5 a 23) y un mismo día (jueves 19-nov-2026, hábil y sin festivo) | La API valida con Pydantic estricto (horas sin servicio, fin de semana coherente con el día); inventar datos daría 422. Los dos payloads se validaron con `P1Peticion` |
+| Tamaño | Consulta: 5.9 KB. Batch: 2.78 MB | El batch pesa: la latencia que mide Locust incluye subirlo desde la máquina que genera la carga |
+| Pausa | Entre 0.5 y 2 s por usuario | Simula consumidores reales, no un bucle sin pausa |
+| Validación | Un 200 con menos predicciones de las enviadas, o sin la suma por zona, cuenta como fallo | Evita falsos éxitos |
+| Carga | Escalones de 60 s: 5, 10, 20, 40 y 80 usuarios | Los mismos de P3, para comparar las preguntas |
+| Medición | Cada petición se guarda en `p1_peticiones.csv` y CPU y memoria en `docker_stats.csv`; `graficas_p1.py` calcula todo por escalón | Los percentiles de `stats_history` de Locust son acumulados desde el inicio de la prueba y no sirven para comparar escalones |
+
+### Cómo ejecutarlo
+
+Cada corrida guarda en su propia carpeta: `reports/carga/p1/humo/`, `reports/carga/p1/local/` (sistema de Compose) y `reports/carga/p1/` (EC2).
+
+```bash
+pip install -r requirements-carga.txt   # Locust 2.47.0, la misma versión de la imagen de Compose
+
+# Humo contra el sistema local (3 usuarios, 25 s): -u, -r y -t mandan
+locust -f locust/locustfile_p1.py --headless --host http://127.0.0.1:8000 -u 3 -r 1 -t 25s \
+  --archivo-peticiones reports/carga/p1/humo/p1_peticiones.csv --only-summary
+```
+
+**Prueba completa contra el sistema local** (`docker compose up -d --build`):
+
+```bash
+mkdir -p reports/carga/p1/local
+# Terminal 2: CPU y memoria del contenedor mientras corre la prueba (Ctrl+C al terminar)
+locust/docker_stats.sh tc5061-equipo07-api-local reports/carga/p1/local/docker_stats.csv
+
+# Terminal 1: escalones de 5 a 80 usuarios (~5 min). Al cargar escalones_p1.py, Locust ignora -u y -t
+locust -f locust/locustfile_p1.py,locust/escalones_p1.py --headless --host http://127.0.0.1:8000 \
+  --csv reports/carga/p1/local/p1 --html reports/carga/p1/local/p1_reporte.html \
+  --archivo-peticiones reports/carga/p1/local/p1_peticiones.csv --only-summary
+
+python locust/graficas_p1.py reports/carga/p1/local
+```
+
+**Prueba completa contra el EC2.** Sin acceso a `docker stats` en el servidor, CPU y memoria se exportan de Dozzle justo al terminar Locust (el `;` encadena los dos comandos):
+
+```bash
+locust -f locust/locustfile_p1.py,locust/escalones_p1.py --headless --host https://api.equipo7mlops.com \
+  --csv reports/carga/p1/p1 --html reports/carga/p1/p1_reporte.html \
+  --archivo-peticiones reports/carga/p1/p1_peticiones.csv --only-summary ; \
+  locust/exportar_dozzle.sh reports/carga/p1/docker_stats.csv
+
+python locust/graficas_p1.py reports/carga/p1
+```
+
+`graficas_p1.py` toma por defecto USD 0.0416 por hora (EC2 `t3.medium`, Linux on-demand, us-east-2) y se cambia con `--precio-hora`.
+
+### Resultados (18-nov-2026)
+
+Dos corridas con el mismo escenario:
+
+- **EC2** (`https://api.equipo7mlops.com`, champion P1 v3): la carga se generó desde una red de hotel con 14.4 Mbps de subida (speed test de ese momento). CPU y memoria exportadas de Dozzle.
+- **Local** (`docker compose up -d --build`, champion sembrado como v1): Locust y la API en la misma laptop, sin red de por medio. Sirve como el tiempo del servidor sin red; no se usa para el costo porque comparten CPU.
+
+| Métrica | EC2 | Local |
+|---|---|---|
+| Peticiones | 3,456 | 5,149 |
+| Errores | 0 | 0 |
+| Latencia global | p50 670 ms, p95 3.1 s | p50 340 ms, p95 1.5 s |
+| CPU del contenedor | pico de 179 % (de 200 %) | pico de 168 % |
+| Memoria del contenedor | máximo 19.4 % | máximo 7.0 % |
+
+Por escalón (p50 y p95 de cada escalón, calculados con `p1_peticiones.csv`):
+
+| Usuarios | Predicciones/s EC2 | Predicciones/s local | Consulta p50 EC2 / local | Batch p50 EC2 / local | CPU media EC2 |
+|---|---|---|---|---|---|
+| 5 | 2,710 | 7,176 | 206 / 15 ms | 2.6 s / 93 ms | 21 % |
+| 10 | 4,138 | 15,236 | 334 / 16 ms | 3.7 s / 102 ms | 36 % |
+| 20 | 5,487 | 28,084 | 495 / 21 ms | 5.3 s / 170 ms | 55 % |
+| 40 | 5,751 | 45,860 | 631 / 201 ms | 12.4 s / 567 ms | 80 % |
+| 80 | 5,005 | 45,959 | 1,250 / 921 ms | 26.0 s / 2.4 s | 112 % |
+
+![Latencia por escalón (EC2)](reports/carga/p1/p1_latencia.png)
+![Throughput y errores (EC2)](reports/carga/p1/p1_rps_errores.png)
+![CPU y memoria (EC2)](reports/carga/p1/p1_recursos.png)
+
+Las tablas completas están en `reports/carga/p1/p1_escalones.csv` (EC2) y `reports/carga/p1/local/p1_escalones.csv` (local), con sus gráficas.
+
+### Lectura
+
+- **En el EC2 el límite fue la red del generador, no el servidor.** El batch tarda 2.6 s contra 93 ms en local, aun con un solo usuario de batch: subir 2.78 MB a 14.4 Mbps toma al menos 1.5 s. Las predicciones se estancan en unas 5,700/s con la CPU del EC2 en 80 % de 200 %, es decir, con capacidad de sobra.
+- **En local el límite fue la CPU.** Las predicciones suben casi lineal hasta 40 usuarios (45,860/s) y de ahí no crecen; solo crece la espera.
+- **Las consultas chicas esperan detrás de los batch.** En local, la consulta de 1 estación pasa de 21 ms a 201 ms de p50 entre 20 y 40 usuarios sin volverse más cara: comparte un solo proceso `uvicorn` con los batch de 9,440 registros. En el EC2 pasa lo mismo y se suma la red.
+- **Sin errores en ninguna corrida:** el sistema se degrada en latencia, pero no se rompe.
+- **Limitaciones:** una corrida por escenario; la del EC2 desde una conexión lenta (repetirla desde una red rápida daría la capacidad real del servidor); el payload recicla 5 estaciones del ejemplo, así que su compresibilidad no representa datos reales; la alineación de Dozzle es de ±1-2 s (una muestra por segundo); el EC2 comparte host con MLflow.
+
+### FinOps: costo por predicción
+
+La unidad de P1 es la predicción de una estación-hora. Con el precio de la instancia fijo, el costo por predicción depende solo de cuántas se atienden por hora:
+
+| Usuarios | Predicciones/hora (EC2) | USD por millón de predicciones | Con recargo del `t3` |
+|---|---|---|---|
+| 5 | 9.8 millones | 0.0043 | 0.0043 |
+| 10 | 14.9 millones | 0.0028 | 0.0028 |
+| 20 | 19.8 millones | 0.0021 | 0.0025 |
+| 40 | 20.7 millones | **0.0020** | **0.0030** |
+| 80 | 18.0 millones | 0.0023 | 0.0043 |
+
+- **Recargo del `t3`:** el `t3.medium` tiene un piso de 20 % por vCPU (40 % de los dos). Desde 20 usuarios la CPU media lo rebasa, y en modo *unlimited* el exceso cuesta USD 0.05 por vCPU-hora.
+- **Es una cota pesimista:** como el límite fue la red del generador, el servidor podía atender más; con una red rápida el costo por predicción bajaría.
+- **El costo real de operación lo domina el tiempo ocioso.** P1 corre un batch al día. El cómputo del batch es menos de un segundo de CPU (a USD 0.0208 por vCPU-hora, menos de una milésima de centavo), pero una instancia prendida 24 horas cuesta USD 1.00 al día. Si existiera solo para P1, serían unos USD 106 por millón de predicciones. Hoy se comparte con P2, P3 y MLflow, lo que diluye ese costo, pero la conclusión se mantiene.
+
+### Optimizaciones propuestas
+
+| Optimización | Dato que la justifica | Viabilidad |
+|---|---|---|
+| Que el endpoint reciba la fecha y calcule las features del lado del servidor, en vez de recibirlas ya calculadas | El batch pesa 2.78 MB y en el EC2 ~96 % de su latencia fue red (2.6 s contra 93 ms en local) | Media: el servidor necesita los datos de estaciones y los rezagos |
+| Separar batch y consultas, o `--workers 2` en `uvicorn` | La consulta pasa de 21 ms a 201 ms de p50 al saturarse el proceso, sin volverse más cara | Alta: un cambio en el `CMD` del `Dockerfile`; hay que repetir la prueba para medirlo |
+| Correr el batch como tarea programada en lugar de depender de una API prendida 24/7 | El batch usa menos de un segundo de CPU al día contra USD 1.00 diario de la instancia | Media: aplica si P1 deja de compartir la instancia con P2, P3 y MLflow |
+| Imagen más ligera, sin la librería de GPU de XGBoost | El build local tardó 766 s y descarga `nvidia_nccl_cu12` (351 MB), que no se usa | Por verificar: requiere probar una variante de XGBoost solo para CPU |
 
 ## Monitoreo y drift
 
