@@ -2057,6 +2057,8 @@ locust -f locust/locustfile_p1.py --headless --host http://127.0.0.1:8000 -u 3 -
 # En otra terminal, CPU y memoria del contenedor mientras corre la prueba (Ctrl+C al terminar).
 # Contenedor: tc5061-equipo07-api-local en el sistema local; tc5061-equipo07-api en el EC2
 locust/docker_stats.sh tc5061-equipo07-api-local reports/carga/p1/docker_stats.csv
+# Contra el EC2 no hay acceso a docker stats: al terminar Locust, exportar lo que guardó Dozzle
+locust/exportar_dozzle.sh reports/carga/p1/docker_stats.csv
 
 # Prueba completa por escalones (5 min). Al cargar escalones_p1.py, Locust ignora -u y -t
 locust -f locust/locustfile_p1.py,locust/escalones_p1.py --headless \
