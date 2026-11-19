@@ -5,10 +5,14 @@ Dos consumidores, como se usaría P2 en operación:
 - BarridoBin: el proceso que al cierre de cada bin de 30 min califica la red completa (472).
   En operación es una llamada cada 30 min; aquí se comprime para estresar el servidor.
 
+Límites de recursos: docker update --cpus 2 --memory 4g --memory-swap 4g tc5061-equipo07-api-local
 Humo:     locust -f locust/locustfile_p2.py --headless --host URL -u 3 -r 1 -t 25s
-Completa: locust -f locust/locustfile_p2.py,locust/escalones_p2.py --master --headless --expect-workers N_WORKERS \
-              --host URL --csv reports/carga/p2/p2 --csv reports/carga/p2/p2 --csv-full-history \
+Master:   locust -f locust/locustfile_p2.py,locust/escalones_p2.py --master --headless \
+              --expect-workers N_WORKERS --host URL --csv reports/carga/p2/p2 --csv-full-history \
               --html reports/carga/p2/p2_reporte.html
+Workers:  locust -f locust/locustfile_p2.py,locust/escalones_p2.py --worker --master-host 127.0.0.1
+
+--csv-full-history es obligatorio: graficas_p2.py lo necesita para separar los dos tipos de petición.
 """
 
 import copy
