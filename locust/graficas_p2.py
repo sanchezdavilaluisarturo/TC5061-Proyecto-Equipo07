@@ -1,4 +1,7 @@
-"""Uso: python locust/graficas_p2.py reports/carga/p2/p2 reports/carga/p2/docker_stats.csv"""
+"""Uso: python locust/graficas_p2.py reports/carga/p2/p2 reports/carga/p2/docker_stats.csv
+Genera <prefijo>_latencia.png, _rps_errores.png, _recursos.png y _escalones.csv (tabla por
+escalón con el costo por predicción).
+"""
 
 import sys
 from pathlib import Path
@@ -6,6 +9,7 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+from escalones_p2 import EscalonesP2
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -52,3 +56,45 @@ ax.set(xlabel="segundos", ylabel="%", title="P2: recursos del contenedor")
 ax.legend()
 fig.tight_layout()
 fig.savefig(f"{prefijo}_recursos.png", dpi=150)
+
+
+# Tabla por escalón con el costo por predicción
+PRECIO_HORA = 0.0416  # EC2 t3.medium, Linux on-demand
+PISO_CPU = 40  # % de 200: piso de 20 % por vCPU del t3
+RECARGO_VCPU_HORA = 0.05  # USD por vCPU-hora sobre el piso (modo unlimited)
+DESCARTE = 15  # s al inicio de cada escalón, mientras entran los usuarios
+CONSULTA = "POST /p2/predecir [1 estacion]"
+BARRIDO = "POST /p2/predecir [472 estaciones]"
+
+por_nombre = historia.pivot_table(
+    index="Timestamp", columns="Name", values=["Requests/s", "50%", "95%"]
+)
+filas, inicio = [], 0
+for fin, usuarios, _ in EscalonesP2.escalones:
+    ventana = total[(total["t"] >= inicio + DESCARTE) & (total["t"] < fin)]
+    marcas = ventana["Timestamp"]
+    rps = por_nombre["Requests/s"].loc[marcas]
+    t_rec = rec["timestamp"] - t0
+    cpu = rec.loc[(t_rec >= inicio + DESCARTE) & (t_rec < fin), ["cpu_pct", "mem_pct"]]
+    predicciones_s = (rps[CONSULTA] + 472 * rps[BARRIDO]).mean()
+    peticiones_s = ventana["Requests/s"].mean()
+    exceso = max(cpu["cpu_pct"].mean() - PISO_CPU, 0) / 100
+    usd_hora_recargo = PRECIO_HORA + exceso * RECARGO_VCPU_HORA
+    fila = {"usuarios": usuarios, "peticiones_s": peticiones_s, "predicciones_s": predicciones_s}
+    # Percentiles de ventana móvil de 10 s (--csv-full-history): mediana dentro del escalón
+    for clave, nombre in [("consulta", CONSULTA), ("barrido", BARRIDO)]:
+        for p in ["50%", "95%"]:
+            valores = pd.to_numeric(por_nombre[p][nombre].loc[marcas], errors="coerce")
+            fila[f"{clave}_p{p[:-1]}_ms"] = valores.median()
+    fila |= {
+        "cpu_media_pct": cpu["cpu_pct"].mean(),
+        "cpu_max_pct": cpu["cpu_pct"].max(),
+        "mem_max_pct": cpu["mem_pct"].max(),
+        "fallos_acumulados": int(ventana["Total Failure Count"].iloc[-1]),
+        "usd_millon_predicciones": PRECIO_HORA / (predicciones_s * 3600) * 1e6,
+        "usd_millon_predicciones_recargo": usd_hora_recargo / (predicciones_s * 3600) * 1e6,
+        "usd_millon_peticiones_recargo": usd_hora_recargo / (peticiones_s * 3600) * 1e6,
+    }
+    filas.append(fila)
+    inicio = fin
+pd.DataFrame(filas).round(4).to_csv(f"{prefijo}_escalones.csv", index=False)
