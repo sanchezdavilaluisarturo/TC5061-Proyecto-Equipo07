@@ -2070,6 +2070,70 @@ python locust/graficas_p1.py reports/carga/p1
 
 `--host` es la API a probar: la del sistema local (`docker compose up -d --build`, en el puerto 8000) o la del equipo. `graficas_p1.py` toma por defecto USD 0.0416 por hora (EC2 `t3.medium`, Linux on-demand, us-east-2) y se cambia con `--precio-hora`.
 
+### Resultados (18-nov-2026)
+
+Dos corridas con el mismo escenario:
+
+- **EC2** (`https://api.equipo7mlops.com`, champion P1 v3): la carga se generó desde una red de hotel con 14.4 Mbps de subida (speed test de ese momento). CPU y memoria exportadas de Dozzle.
+- **Local** (`docker compose up -d --build`, champion sembrado como v1): Locust y la API en la misma laptop, sin red de por medio. Sirve como el tiempo del servidor sin red; no se usa para el costo porque comparten CPU.
+
+| Métrica | EC2 | Local |
+|---|---|---|
+| Peticiones | 3,456 | 5,149 |
+| Errores | 0 | 0 |
+| Latencia global | p50 670 ms, p95 3.1 s | p50 340 ms, p95 1.5 s |
+| CPU del contenedor | pico de 179 % (de 200 %) | pico de 168 % |
+| Memoria del contenedor | máximo 19.4 % | máximo 7.0 % |
+
+Por escalón (p50 y p95 de cada escalón, calculados con `p1_peticiones.csv`):
+
+| Usuarios | Predicciones/s EC2 | Predicciones/s local | Consulta p50 EC2 / local | Batch p50 EC2 / local | CPU media EC2 |
+|---|---|---|---|---|---|
+| 5 | 2,710 | 7,176 | 206 / 15 ms | 2.6 s / 93 ms | 21 % |
+| 10 | 4,138 | 15,236 | 334 / 16 ms | 3.7 s / 102 ms | 36 % |
+| 20 | 5,487 | 28,084 | 495 / 21 ms | 5.3 s / 170 ms | 55 % |
+| 40 | 5,751 | 45,860 | 631 / 201 ms | 12.4 s / 567 ms | 80 % |
+| 80 | 5,005 | 45,959 | 1,250 / 921 ms | 26.0 s / 2.4 s | 112 % |
+
+![Latencia por escalón (EC2)](reports/carga/p1/p1_latencia.png)
+![Throughput y errores (EC2)](reports/carga/p1/p1_rps_errores.png)
+![CPU y memoria (EC2)](reports/carga/p1/p1_recursos.png)
+
+Las tablas completas están en `reports/carga/p1/p1_escalones.csv` (EC2) y `reports/carga/p1/local/p1_escalones.csv` (local), con sus gráficas.
+
+### Lectura
+
+- **En el EC2 el límite fue la red del generador, no el servidor.** El batch tarda 2.6 s contra 93 ms en local, aun con un solo usuario de batch: subir 2.78 MB a 14.4 Mbps toma al menos 1.5 s. Las predicciones se estancan en unas 5,700/s con la CPU del EC2 en 80 % de 200 %, es decir, con capacidad de sobra.
+- **En local el límite fue la CPU.** Las predicciones suben casi lineal hasta 40 usuarios (45,860/s) y de ahí no crecen; solo crece la espera.
+- **Las consultas chicas esperan detrás de los batch.** En local, la consulta de 1 estación pasa de 21 ms a 201 ms de p50 entre 20 y 40 usuarios sin volverse más cara: comparte un solo proceso `uvicorn` con los batch de 9,440 registros. En el EC2 pasa lo mismo y se suma la red.
+- **Sin errores en ninguna corrida:** el sistema se degrada en latencia, pero no se rompe.
+- **Limitaciones:** una corrida por escenario; la del EC2 desde una conexión lenta (repetirla desde una red rápida daría la capacidad real del servidor); el payload recicla 5 estaciones del ejemplo, así que su compresibilidad no representa datos reales; la alineación de Dozzle es de ±1-2 s (una muestra por segundo); el EC2 comparte host con MLflow.
+
+### FinOps: costo por predicción
+
+La unidad de P1 es la predicción de una estación-hora. Con el precio de la instancia fijo, el costo por predicción depende solo de cuántas se atienden por hora:
+
+| Usuarios | Predicciones/hora (EC2) | USD por millón de predicciones | Con recargo del `t3` |
+|---|---|---|---|
+| 5 | 9.8 millones | 0.0043 | 0.0043 |
+| 10 | 14.9 millones | 0.0028 | 0.0028 |
+| 20 | 19.8 millones | 0.0021 | 0.0025 |
+| 40 | 20.7 millones | **0.0020** | **0.0030** |
+| 80 | 18.0 millones | 0.0023 | 0.0043 |
+
+- **Recargo del `t3`:** el `t3.medium` tiene un piso de 20 % por vCPU (40 % de los dos). Desde 20 usuarios la CPU media lo rebasa, y en modo *unlimited* el exceso cuesta USD 0.05 por vCPU-hora.
+- **Es una cota pesimista:** como el límite fue la red del generador, el servidor podía atender más; con una red rápida el costo por predicción bajaría.
+- **El costo real de operación lo domina el tiempo ocioso.** P1 corre un batch al día. El cómputo del batch es menos de un segundo de CPU (a USD 0.0208 por vCPU-hora, menos de una milésima de centavo), pero una instancia prendida 24 horas cuesta USD 1.00 al día. Si existiera solo para P1, serían unos USD 106 por millón de predicciones. Hoy se comparte con P2, P3 y MLflow, lo que diluye ese costo, pero la conclusión se mantiene.
+
+### Optimizaciones propuestas
+
+| Optimización | Dato que la justifica | Viabilidad |
+|---|---|---|
+| Que el endpoint reciba la fecha y calcule las features del lado del servidor, en vez de recibirlas ya calculadas | El batch pesa 2.78 MB y en el EC2 ~96 % de su latencia fue red (2.6 s contra 93 ms en local) | Media: el servidor necesita los datos de estaciones y los rezagos |
+| Separar batch y consultas, o `--workers 2` en `uvicorn` | La consulta pasa de 21 ms a 201 ms de p50 al saturarse el proceso, sin volverse más cara | Alta: un cambio en el `CMD` del `Dockerfile`; hay que repetir la prueba para medirlo |
+| Correr el batch como tarea programada en lugar de depender de una API prendida 24/7 | El batch usa menos de un segundo de CPU al día contra USD 1.00 diario de la instancia | Media: aplica si P1 deja de compartir la instancia con P2, P3 y MLflow |
+| Imagen más ligera, sin la librería de GPU de XGBoost | El build local tardó 766 s y descarga `nvidia_nccl_cu12` (351 MB), que no se usa | Por verificar: requiere probar una variante de XGBoost solo para CPU |
+
 ## Monitoreo y drift
 
 Entregable 8: el proyecto detecta cuándo los datos de producción se alejan de los de entrenamiento (drift, con Evidently) y decide con evidencia si una versión nueva del modelo es mejor que la vigente (A/B testing entre versiones del Model Registry). La base es común a las tres preguntas (`monitoreo.py`); cada pregunta tiene su propio módulo (`modeling/monitoreo_p1.py`, `monitoreo_p2.py` y `monitoreo_p3.py`) y su propia sección más abajo.
