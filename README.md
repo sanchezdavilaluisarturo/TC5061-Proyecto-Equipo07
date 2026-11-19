@@ -1296,7 +1296,7 @@ Los modelos campeones de P1, P2 y P3 se sirven con una API REST hecha con FastAP
 | Origen del modelo | El contenedor descarga el modelo del Model Registry al arrancar (`models:/<nombre>@<alias>`); el modelo no va dentro de la imagen | Una sola imagen sirve cualquier versión: cambiar de modelo o regresar a la versión anterior (*rollback*) es mover el alias en el Registry y reiniciar el contenedor, sin reconstruir la imagen | Treveil et al. (2020, cap. 6); MLflow (s.f.-a) |
 | Entorno | `requirements-api.txt` con solo las librerías que usa la API, instaladas con las versiones fijadas en `requirements.txt` | El entorno se reconstruye igual en cualquier máquina y con las mismas versiones con las que se entrenaron los modelos (scikit-learn, XGBoost) | Treveil et al. (2020, cap. 6) |
 | Monitoreo básico | Endpoint `/salud` (*health check*) y `HEALTHCHECK` en la imagen | Permite comprobar que el servicio está vivo y qué versión de cada modelo cargó | Treveil et al. (2020, cap. 6) |
-| Despliegue | La API corre en un EC2 del equipo (https://api.equipo7mlops.com) y se actualiza sola con cada merge a `api_rest` (ver [Despliegue en el EC2](#despliegue-en-el-ec2)) | Un despliegue manual depende de quién se acuerde y de qué comandos corrió; con una acción, lo que corre en el servidor es siempre un commit conocido y el *rollback* es un comando | Treveil et al. (2020, cap. 6) |
+| Despliegue | La API corre en un EC2 del equipo (https://api.equipo7mlops.com) y se actualiza sola con cada merge a `api_rest`, `monitoreo_drift`, `performance_main` o `main` (ver [Despliegue en el EC2](#despliegue-en-el-ec2)) | Un despliegue manual depende de quién se acuerde y de qué comandos corrió; con una acción, lo que corre en el servidor es siempre un commit conocido y el *rollback* es un comando | Treveil et al. (2020, cap. 6) |
 
 ### Cómo carga los modelos
 
@@ -1868,7 +1868,7 @@ El sistema de Compose está pensado para reproducir el proyecto en cualquier má
 | Cuando se promueve un champion nuevo | La API lo toma al reiniciarse | `docker compose run --rm sembrador` y `docker compose restart api-local` |
 | Uso | Servir tráfico real | Reproducir, evaluar y probar sin tocar producción |
 
-En el EC2 no se siembra: ahí el MLflow ya es la fuente de verdad, y una copia solo se desactualizaría. Por eso el despliegue (`deploy-api.yml`) no cambia; el perfil `servidor` reproduce ese contenedor dentro de Compose.
+En el EC2 no se siembra: ahí el MLflow ya es la fuente de verdad, y una copia solo se desactualizaría. Por eso el despliegue (`deploy-api.yml`) no cambia su forma de desplegar (solo se le agregaron `performance_main` y `main` como ramas que lo disparan); el perfil `servidor` reproduce ese contenedor dentro de Compose.
 
 ### Pruebas en CI
 
@@ -2832,7 +2832,7 @@ Huyen (2022, cap. 9) y Treveil et al. (2020, cap. 7) discuten reentrenar por cal
 - `EDA` es la rama de integración del equipo. Cada integrante trabaja en su rama (`feat/<tema>`, `fix/<tema>`, `docs/<tema>`) creada desde `EDA`, abre un PR hacia `EDA` y, al cerrar cada entrega, se abre un PR `EDA → main`.
 - En la Fase 2 la rama de integración es `mlflow_run` (creada desde `main`): las ramas de cada pregunta (`tuning/p1`, `tuning/p2`, `tuning/p3`) salen de ella y vuelven por PR.
 - En la entrega de pruebas y seguridad la rama de integración es `calidad_pruebas` (creada desde `main`), que trae el módulo de validación y los chequeos de seguridad: las ramas de cada pregunta (`testing/p1`, `testing/p2`, `testing/p3`) salen de ella y vuelven por PR, y `calidad_pruebas` entra a `main` por PR.
-- En la entrega de la API REST la rama de integración es `api_rest` (creada desde `main`), que trae la base de la API y el `Dockerfile`: las ramas de cada pregunta (`api/p1`, `api/p2`, `api/p3`) y la del despliegue (`api/server`) salen de ella y vuelven por PR, y `api_rest` entra a `main` por PR. Cada merge a `api_rest` despliega la API en el EC2 (`deploy-api.yml`), así que esa rama siempre debe dejar la API en un estado que arranque.
+- En la entrega de la API REST la rama de integración es `api_rest` (creada desde `main`), que trae la base de la API y el `Dockerfile`: las ramas de cada pregunta (`api/p1`, `api/p2`, `api/p3`) y la del despliegue (`api/server`) salen de ella y vuelven por PR, y `api_rest` entra a `main` por PR. Cada merge a `api_rest`, `monitoreo_drift`, `performance_main` o `main` despliega la API en el EC2 (`deploy-api.yml`), así que esas ramas siempre deben dejar la API en un estado que arranque; si dos se integran seguidas, queda desplegado el último push.
 - Commits con [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/) en español, sin alcance entre paréntesis y mencionando la pregunta: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `build:`, `ci:`, `style:`, `chore:`.
 - Cada integrante abre al menos un PR y revisa al menos uno de otro integrante.
 - En cada PR, GitHub Actions corre `ruff`, `pytest` y `make seguridad` (`TC5061-Proyecto-Equipo07.yml`).
