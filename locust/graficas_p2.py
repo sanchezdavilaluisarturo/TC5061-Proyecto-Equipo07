@@ -48,7 +48,7 @@ rec = rec[(rec["timestamp"] >= t0) & (rec["timestamp"] <= total["Timestamp"].ilo
 fig, ax = plt.subplots(figsize=(9, 4))
 ax.plot(rec["timestamp"] - t0, rec["cpu_pct"], label="CPU % (200 = 2 vCPU)")
 ax.plot(rec["timestamp"] - t0, rec["mem_pct"], label="memoria % (de 4 GB)")
-ax.set(xlabel="segundos", ylabel="%", title="P2: recursos del contenedor (docker stats)")
+ax.set(xlabel="segundos", ylabel="%", title="P2: recursos del contenedor")
 ax.legend()
 fig.tight_layout()
 fig.savefig(f"{prefijo}_recursos.png", dpi=150)
