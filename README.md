@@ -1377,12 +1377,12 @@ La acción `api.yml` de GitHub Actions corre ese mismo smoke test en cada PR que
 
 ### Despliegue en el EC2
 
-La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7mlops.com. La acción `deploy-api.yml` la actualiza con cada push a `api_rest` o a `monitoreo_drift` (es decir, al hacer merge de un PR) que toque `tc5061_proyecto_equipo07/`, el `Dockerfile`, los `requirements*.txt` o el propio workflow; también se puede lanzar a mano en *Actions > Run workflow*.
+La API vive en un EC2 (Amazon Linux con Docker) detrás de https://api.equipo7mlops.com. La acción `deploy-api.yml` la actualiza con cada push a `api_rest`, `monitoreo_drift`, `performance_main` o `main` (es decir, al hacer merge de un PR) que toque `tc5061_proyecto_equipo07/`, el `Dockerfile`, los `requirements*.txt` o el propio workflow; también se puede lanzar a mano en *Actions > Run workflow*.
 
 | Acción | Dónde corre | Qué deja al terminar |
 |---|---|---|
 | `api.yml` | Máquina temporal de GitHub, en cada PR | Nada: comprueba que la imagen se construye y responde, y todo se destruye |
-| `deploy-api.yml` | El EC2, al hacer merge a `api_rest` | El contenedor corriendo con el commit recién integrado (`--restart unless-stopped`) |
+| `deploy-api.yml` | El EC2, al hacer merge a `api_rest`, `monitoreo_drift`, `performance_main` o `main` | El contenedor corriendo con el commit recién integrado (`--restart unless-stopped`) |
 
 Flujo completo, desde el merge hasta la verificación (fuente editable en `references/despliegue-api.candidate.json` y versión interactiva en [`references/despliegue-api.html`](references/despliegue-api.html), generada con [Archify](https://github.com/tt-a1i/archify)):
 
@@ -2649,7 +2649,7 @@ Huyen (2022, cap. 9) y Treveil et al. (2020, cap. 7) discuten reentrenar por cal
 │   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
 │   ├── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
 │   ├── api.yml                        <- Smoke test de la imagen de la API en cada PR
-│   └── deploy-api.yml                 <- Despliegue de la API en el EC2 al hacer merge a api_rest
+│   └── deploy-api.yml                 <- Despliegue de la API en el EC2 al hacer merge a api_rest, monitoreo_drift, performance_main o main
 ├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
 ├── .dockerignore      <- Lo que no entra al contexto de construcción de la imagen (datos, .env, .git)
 ├── Dockerfile         <- Imagen de la API (estándar OCI: Docker o Podman)

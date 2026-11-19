@@ -1,5 +1,5 @@
 # Despliegue de la API en el EC2 del equipo (https://api.equipo7mlops.com).
-# Con cada push a api_rest o monitoreo_drift (por ejemplo, al hacer merge de un PR) entra por SSH al servidor,
+# Con cada push a api_rest, monitoreo_drift, performance_main o main (por ejemplo, al hacer merge de un PR) entra por SSH al servidor,
 # trae ese commit, reconstruye la imagen y reemplaza el contenedor. Termina en rojo si /salud no
 # queda en "ok", y en los logs se ve por qué. A mano: Actions > Run workflow.
 #
@@ -12,14 +12,14 @@
 #   EC2_SSH_KEY          llave privada SSH completa, con sus líneas BEGIN y END
 #   MLFLOW_TRACKING_URI  URL del servidor MLflow del que la API descarga los modelos
 #
-# En el EC2: el repositorio clonado en ~/apps/mibici-api (la rama que se despliega, api_rest o monitoreo_drift) y Docker instalado.
+# En el EC2: el repositorio clonado en ~/apps/mibici-api (la rama que se despliega: api_rest, monitoreo_drift, performance_main o main) y Docker instalado.
 # Rollback: docker tag tc5061-equipo07-api:anterior tc5061-equipo07-api:latest y repetir el
 # docker run de este archivo.
 name: API - desplegar en el EC2
 
 on:
   push:
-    branches: [api_rest, monitoreo_drift]
+    branches: [api_rest, monitoreo_drift, performance_main, main]
     paths:
       - "tc5061_proyecto_equipo07/**"
       - "Dockerfile"
