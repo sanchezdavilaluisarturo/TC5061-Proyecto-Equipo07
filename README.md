@@ -2060,27 +2060,43 @@ Se midió `POST /p1/predecir` bajo carga concurrente: latencia, peticiones y pre
 
 ### Cómo ejecutarlo
 
+Cada corrida guarda en su propia carpeta: `reports/carga/p1/humo/`, `reports/carga/p1/local/` (sistema de Compose) y `reports/carga/p1/` (EC2).
+
 ```bash
-pip install -r requirements-carga.txt
+pip install -r requirements-carga.txt   # Locust 2.47.0, la misma versión de la imagen de Compose
 
-# Humo (3 usuarios, 25 s): -u, -r y -t mandan
-locust -f locust/locustfile_p1.py --headless --host http://127.0.0.1:8000 -u 3 -r 1 -t 25s
+# Humo contra el sistema local (3 usuarios, 25 s): -u, -r y -t mandan
+locust -f locust/locustfile_p1.py --headless --host http://127.0.0.1:8000 -u 3 -r 1 -t 25s \
+  --archivo-peticiones reports/carga/p1/humo/p1_peticiones.csv --only-summary
+```
 
-# En otra terminal, CPU y memoria del contenedor mientras corre la prueba (Ctrl+C al terminar).
-# Contenedor: tc5061-equipo07-api-local en el sistema local; tc5061-equipo07-api en el EC2
-locust/docker_stats.sh tc5061-equipo07-api-local reports/carga/p1/docker_stats.csv
-# Contra el EC2 no hay acceso a docker stats: al terminar Locust, exportar lo que guardó Dozzle
-locust/exportar_dozzle.sh reports/carga/p1/docker_stats.csv
+**Prueba completa contra el sistema local** (`docker compose up -d --build`):
 
-# Prueba completa por escalones (5 min). Al cargar escalones_p1.py, Locust ignora -u y -t
-locust -f locust/locustfile_p1.py,locust/escalones_p1.py --headless \
-  --host http://127.0.0.1:8000 --csv reports/carga/p1/p1 --html reports/carga/p1/p1_reporte.html
+```bash
+mkdir -p reports/carga/p1/local
+# Terminal 2: CPU y memoria del contenedor mientras corre la prueba (Ctrl+C al terminar)
+locust/docker_stats.sh tc5061-equipo07-api-local reports/carga/p1/local/docker_stats.csv
 
-# Tabla por escalón, costo por millón de predicciones y gráficas
+# Terminal 1: escalones de 5 a 80 usuarios (~5 min). Al cargar escalones_p1.py, Locust ignora -u y -t
+locust -f locust/locustfile_p1.py,locust/escalones_p1.py --headless --host http://127.0.0.1:8000 \
+  --csv reports/carga/p1/local/p1 --html reports/carga/p1/local/p1_reporte.html \
+  --archivo-peticiones reports/carga/p1/local/p1_peticiones.csv --only-summary
+
+python locust/graficas_p1.py reports/carga/p1/local
+```
+
+**Prueba completa contra el EC2.** Sin acceso a `docker stats` en el servidor, CPU y memoria se exportan de Dozzle justo al terminar Locust (el `;` encadena los dos comandos):
+
+```bash
+locust -f locust/locustfile_p1.py,locust/escalones_p1.py --headless --host https://api.equipo7mlops.com \
+  --csv reports/carga/p1/p1 --html reports/carga/p1/p1_reporte.html \
+  --archivo-peticiones reports/carga/p1/p1_peticiones.csv --only-summary ; \
+  locust/exportar_dozzle.sh reports/carga/p1/docker_stats.csv
+
 python locust/graficas_p1.py reports/carga/p1
 ```
 
-`--host` es la API a probar: la del sistema local (`docker compose up -d --build`, en el puerto 8000) o la del equipo. `graficas_p1.py` toma por defecto USD 0.0416 por hora (EC2 `t3.medium`, Linux on-demand, us-east-2) y se cambia con `--precio-hora`.
+`graficas_p1.py` toma por defecto USD 0.0416 por hora (EC2 `t3.medium`, Linux on-demand, us-east-2) y se cambia con `--precio-hora`.
 
 ### Resultados (18-nov-2026)
 
