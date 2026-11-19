@@ -38,11 +38,23 @@ ETIQUETAS = {NOMBRE_CONSULTA: "consulta (1 estación)", NOMBRE_BATCH: "batch (re
 COLORES = {NOMBRE_CONSULTA: AZUL, NOMBRE_BATCH: NARANJA}
 
 
-def asignar_escalon(segundos: pd.Series) -> pd.Series:
-    """Usuarios del escalón al que pertenece cada segundo desde el inicio de la prueba."""
-    fines = [fin for fin, _, _ in EscalonesP1.escalones]
-    usuarios = [u for _, u, _ in EscalonesP1.escalones]
-    return pd.cut(segundos, bins=[0, *fines], labels=usuarios, right=False).astype("Int64")
+def asignar_escalon(peticiones: pd.DataFrame) -> pd.Series:
+    """Escalón de cada petición por los usuarios activos, no por el reloj.
+
+    Locust no cambia de escalón exacto en 60, 120... s (en la corrida local fue cada ~55 s).
+    Los escalones solo suben, así que se toma el máximo acumulado: al apagar, el conteo baja.
+    """
+    pasos = sorted(u for _, u, _ in EscalonesP1.escalones)
+    maximo = peticiones.sort_values("t")["usuarios"].cummax()
+    return maximo.map(lambda u: next(p for p in pasos if p >= u))
+
+
+def escalon_de_stats(stats: pd.DataFrame, peticiones: pd.DataFrame) -> pd.Series:
+    """Cada muestra de CPU va al escalón cuyas peticiones cubren ese segundo."""
+    limites = peticiones.groupby("escalon")["t"].agg(["min", "max"])
+    intervalos = pd.IntervalIndex.from_arrays(limites["min"], limites["max"], closed="both")
+    posicion = intervalos.get_indexer(stats["t"])
+    return pd.Series(limites.index.to_numpy()[posicion], index=stats.index).where(posicion >= 0)
 
 
 def resumir_escalones(
@@ -151,10 +163,10 @@ def main() -> None:
     peticiones["t"] = peticiones["timestamp"] - inicio
     stats["t"] = stats["timestamp"] - inicio
     stats = stats[stats["t"].between(0, peticiones["t"].max())].copy()
-    peticiones["escalon"] = asignar_escalon(peticiones["t"])
-    stats["escalon"] = asignar_escalon(stats["t"])
+    peticiones["escalon"] = asignar_escalon(peticiones)
+    stats["escalon"] = escalon_de_stats(stats, peticiones)
 
-    tabla = resumir_escalones(peticiones.dropna(subset="escalon"), stats, args.precio_hora)
+    tabla = resumir_escalones(peticiones, stats, args.precio_hora)
     tabla.to_csv(args.carpeta / "p1_escalones.csv", index=False)
     graficar(peticiones, stats, tabla, args.carpeta)
     print(tabla.to_string(index=False))
