@@ -10,6 +10,18 @@ name: Compose - sistema completo (mlflow + sembrador + api-local)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main, performance_main]
+    paths:
+      - "docker-compose.yml"
+      - "tc5061_proyecto_equipo07/sembrador.py"
+      - "tc5061_proyecto_equipo07/api/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "requirements-api.txt"
+      - "references/api_*.json"
+      - "locust/locustfile_p3.py"
+      - ".github/workflows/compose.yml"
   pull_request:
     paths:
       - "docker-compose.yml"
@@ -102,6 +114,18 @@ jobs:
             sleep 3
           done
           echo "La API no quedó en ok con el origen caído" && exit 1
+      - name: Resumen del run
+        if: always()
+        run: |
+          {
+            echo "## Compose: sistema completo"
+            echo ""
+            echo "| Servicio | Estado |"
+            echo "|---|---|"
+            docker compose ps -a --format '| {{.Service}} | {{.Status}} |'
+            echo ""
+            echo "/salud de api-local: \`$(curl -s http://127.0.0.1:8000/salud || echo 'sin respuesta')\`"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Logs
         if: always()
         run: docker compose logs --no-color
