@@ -1,10 +1,22 @@
 # Smoke test de la imagen de la API: construye el Dockerfile, levanta el contenedor contra el
 # servidor MLflow del equipo (secret MLFLOW_TRACKING_URI) y corre `make api-smoke`.
 # Comprueba en una máquina limpia que la imagen se construye y responde, no solo en la del equipo.
+# En push a performance_main o main, la imagen que pasó el smoke test se publica en GHCR.
 name: API - smoke test de la imagen
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main, performance_main]
+    paths:
+      - "tc5061_proyecto_equipo07/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "requirements.txt"
+      - "requirements-api.txt"
+      - "references/api_*.json"
+      - "Makefile"
+      - ".github/workflows/api.yml"
   pull_request:
     paths:
       - "tc5061_proyecto_equipo07/**"
@@ -23,18 +35,34 @@ concurrency:
   group: api-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Registro de contenedores de GitHub; el nombre queda ligado al dueño del repo
+  IMAGEN_GHCR: ghcr.io/${{ github.repository_owner }}/tc5061-equipo07-api
+
 jobs:
   imagen:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write # solo lo usa la publicación en GHCR, que corre únicamente en push
     steps:
       - uses: actions/checkout@v4
       - name: Comprobar la URL de MLflow
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
         run: test -n "$MLFLOW_TRACKING_URI" || (echo "Falta el secret MLFLOW_TRACKING_URI" && exit 1)
-      - name: Construir la imagen
-        run: make api-build
+      - uses: docker/setup-buildx-action@v3
+      - name: Construir la imagen (con caché de capas de GitHub Actions)
+        # Equivale a `make api-build`; la caché evita repetir el pip install (~10 min) si no
+        # cambiaron los requirements
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: tc5061-equipo07-api
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Levantar el contenedor
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
@@ -50,6 +78,34 @@ jobs:
           echo "La API no respondió en 3 minutos" && exit 1
       - name: Smoke test
         run: make api-smoke PYTHON_INTERPRETER=python3
+      - name: Publicar en GHCR (solo en push)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Se publica la misma imagen que pasó el smoke test, con el commit y la rama como etiquetas
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for etiqueta in "${GITHUB_SHA::7}" "${{ github.ref_name }}"; do
+            docker tag tc5061-equipo07-api "$IMAGEN_GHCR:$etiqueta"
+            docker push "$IMAGEN_GHCR:$etiqueta"
+          done
+      - name: Resumen del run
+        if: always()
+        run: |
+          {
+            echo "## API: imagen y smoke test"
+            echo ""
+            echo "| Dato | Valor |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA::7}\` (${{ github.ref_name }}) |"
+            echo "| Tamaño de la imagen | $(docker image inspect tc5061-equipo07-api --format '{{.Size}}' 2>/dev/null | awk '{printf "%.0f MB", $1/1e6}') |"
+            echo "| /salud | \`$(curl -s http://127.0.0.1:8000/salud || echo 'sin respuesta')\` |"
+            if [ "${{ github.event_name }}" = "push" ] && [ "${{ job.status }}" = "success" ]; then
+              echo "| Publicada en | \`$IMAGEN_GHCR:${GITHUB_SHA::7}\` y \`:${{ github.ref_name }}\` |"
+            else
+              echo "| Publicada en | no se publica en PR ni si falla el smoke test |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Logs del contenedor
         if: always()
         run: docker logs tc5061-equipo07-api

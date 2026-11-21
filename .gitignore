@@ -210,3 +210,6 @@ models/*
 # Reportes de Evidently de P1: viven como artefactos del run p1-drift en MLflow
 reports/monitoreo/p1_*.html
 reports/monitoreo/p1_*.json
+
+# Resultados de las pruebas de carga que corren dentro de Compose (se generan, no se versionan)
+reports/carga/compose/

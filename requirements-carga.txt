@@ -1,0 +1,4 @@
+# Herramientas de la prueba de carga (no van en la imagen de la API)
+locust
+pandas
+matplotlib

@@ -1,0 +1,75 @@
+# Sistema completo de docker compose: MLflow local + sembrador + api-local
+# (18-nov-2026, Windows 11, Docker 29.9.2, Compose 5.6.1; origen: https://mlflow.equipo7mlops.com)
+
+## 1. Arranque desde cero (volumen vacío)
+
+$ docker compose down -v
+$ docker compose up -d --build   ->  exit 0 en 28 s
+$ docker compose ps -a
+NAME                        STATUS                           PORTS
+tc5061-equipo07-api-local   Up 1 second (health: starting)   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp
+tc5061-equipo07-mlflow      Up 25 seconds (healthy)          127.0.0.1:5000->5000/tcp
+tc5061-equipo07-sembrador   Exited (0) 1 second ago
+
+$ docker logs tc5061-equipo07-sembrador
+INFO     Sembrando champion desde https://mlflow.equipo7mlops.com hacia http://mlflow:5000
+SUCCESS  mibici-equipo07-p1-demanda@champion: origen v3 -> local v1
+SUCCESS  mibici-equipo07-p2-riesgo@champion: origen v4 -> local v1
+SUCCESS  mibici-equipo07-p3-segmentos@champion: origen v4 -> local v1
+
+## 2. La API sirve los modelos sembrados
+
+$ curl -s http://127.0.0.1:8000/salud   ->  estado ok; p1, p2 y p3 en versión 1 (local), listos
+$ curl -X POST http://127.0.0.1:8000/p1/predecir -d @references/api_p1_peticion.json    ->  HTTP 200, v1, 5 predicciones, por_zona {GDL: 11.7216}
+$ curl -X POST http://127.0.0.1:8000/p2/predecir -d @references/api_p2_peticion.json    ->  HTTP 200, v1, umbrales {sin_bicis: 0.2957, sin_anclajes: 0.2686}, por_clase {sin_riesgo: 4, sin_bicis: 0, sin_anclajes: 1}
+$ curl -X POST http://127.0.0.1:8000/p3/segmentar -d @references/api_p3_peticion.json   ->  HTTP 200, v1, 3 predicciones, grupos {0: 2, 1: 1}
+Peticiones vacías ({"registros": []} y {"estaciones": []})   ->  HTTP 422 en los tres endpoints
+
+Umbrales de P2: run de origen (servidor del equipo, v4) frente al run local (v1, origen_version=4)
+  servidor del equipo  umbral_sin_bicis=0.2956666052341461  umbral_sin_anclajes=0.26860353350639343
+  MLflow local         umbral_sin_bicis=0.2956666052341461  umbral_sin_anclajes=0.26860353350639343
+
+## 3. Idempotencia
+
+$ docker compose run --rm sembrador   ->  4 s
+INFO     mibici-equipo07-p1-demanda@champion: ya sembrado (origen v3), se omite
+INFO     mibici-equipo07-p2-riesgo@champion: ya sembrado (origen v4), se omite
+INFO     mibici-equipo07-p3-segmentos@champion: ya sembrado (origen v4), se omite
+
+## 4. Red interna y perfiles
+
+$ docker compose run --rm locust -f /mnt/locust/locustfile_p3.py --headless --host http://api-local:8000 -u 2 -r 1 -t 15s
+exit 0; 20 peticiones, 0 errores, p50 11 ms, p95 22 ms, max 21 ms (percentiles aproximados de Locust) (1, 50 y 470 estaciones)
+
+$ docker compose --profile monitoreo up -d dozzle   ->  http://127.0.0.1:8080 responde HTTP 200
+
+$ docker compose up -d api   (perfil servidor)   ->  /salud ok en el 8001 con p1 v3, p2 v4 y p3 v4 del servidor del equipo
+tc5061-equipo07-api         Up 10 seconds (healthy)       0.0.0.0:8001->8000/tcp
+tc5061-equipo07-api-local   Up About a minute (healthy)   0.0.0.0:8000->8000/tcp
+tc5061-equipo07-mlflow      Up About a minute (healthy)   127.0.0.1:5000->5000/tcp
+
+## 5. Sin el servidor del equipo, con el volumen ya sembrado
+
+$ docker compose down
+$ MLFLOW_ORIGEN_URI=https://mlflow.invalid docker compose up -d   ->  exit 0 en 29 s
+WARNING  mibici-equipo07-p1-demanda@champion: no se pudo copiar del origen (...); se conserva la copia local v1 (origen v3)
+WARNING  mibici-equipo07-p2-riesgo@champion: no se pudo copiar del origen (...); se conserva la copia local v1 (origen v4)
+WARNING  mibici-equipo07-p3-segmentos@champion: no se pudo copiar del origen (...); se conserva la copia local v1 (origen v4)
+$ curl -s http://127.0.0.1:8000/salud   ->  estado ok, p1, p2 y p3 en v1
+$ curl -X POST http://127.0.0.1:8000/p2/predecir -d @references/api_p2_peticion.json   ->  HTTP 200
+
+## 6. Sin el servidor del equipo y con el volumen vacío (falla visible)
+
+$ docker compose down -v
+$ MLFLOW_ORIGEN_URI=https://mlflow.invalid docker compose up -d   ->  exit 1 en 27 s
+service "sembrador" didn't complete successfully: exit 1
+tc5061-equipo07-api-local   Created
+tc5061-equipo07-mlflow      Up 27 seconds (healthy)
+tc5061-equipo07-sembrador   Exited (1) 1 second ago
+ERROR    p1: no se pudo sembrar mibici-equipo07-p1-demanda@champion
+ERROR    p2: no se pudo sembrar mibici-equipo07-p2-riesgo@champion
+ERROR    p3: no se pudo sembrar mibici-equipo07-p3-segmentos@champion
+
+## 7. Restauración
+
+$ docker compose down -v && docker compose up -d   ->  exit 0; sembrador Exited (0) con 3 copias; api-local healthy
