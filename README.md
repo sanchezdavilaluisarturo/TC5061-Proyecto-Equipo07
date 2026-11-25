@@ -2919,6 +2919,10 @@ Las 45 son las 44 variables más el grupo asignado.
 
 Huyen (2022, cap. 9) y Treveil et al. (2020, cap. 7) discuten reentrenar por calendario o por señal de degradación; aquí se combinan porque sin etiquetas la degradación solo se aproxima con la silueta y el drift.
 
+## Model Card
+
+La ficha de los tres modelos en producción está en [`references/model-card.md`](references/model-card.md), con la estructura de Mitchell et al. (2019): uso previsto y fuera de alcance, entradas y salida, datos de entrenamiento, métricas, linaje en el Registry, limitaciones, costo por inferencia, mantenimiento y consideraciones éticas. Resume lo documentado en este README; no agrega resultados.
+
 ## Estructura de carpetas
 
 ```
@@ -2953,30 +2957,36 @@ Huyen (2022, cap. 9) y Treveil et al. (2020, cap. 7) discuten reentrenar por cal
 │   ├── api_p2_peticion.json  <- Petición de ejemplo de la API de P2 (make api-probar-p2)
 │   ├── api_p3_peticion.json  <- Petición de ejemplo de la API de P3 (make api-probar-p3)
 │   ├── despliegue-api.png    <- Diagrama del despliegue de la API en el EC2 (fuente: despliegue-api.candidate.json; interactivo: despliegue-api.html)
+│   ├── model-card.md         <- Model Card de los tres modelos en producción
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/
 │   ├── figures/       <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
 │   ├── validacion/    <- Reportes de DeepChecks de cada pregunta (HTML y resumen CSV)
 │   ├── seguridad/     <- Reportes de bandit y pip-audit (JSON)
 │   ├── monitoreo/     <- Reportes de Evidently (HTML y JSON), A/B testing y estaciones nuevas
+│   ├── carga/         <- Resultados de Locust (CSV, HTML y gráficas): P3 en la raíz, p1/, p2/, agrupado/ y tope/
 │   └── evidencias/    <- Capturas de la ejecución de pruebas y chequeos
-├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3, monitoreo_p1, monitoreo_p2, monitoreo_p3), plots, validacion, monitoreo, api/ (main, modelos, p1, p2, p3)
+├── locust/           <- Pruebas de carga: locustfile y escalones por pregunta, gráficas y scripts de CPU y memoria
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3, monitoreo_p1, monitoreo_p2, monitoreo_p3), plots, validacion, monitoreo, sembrador, api/ (main, modelos, p1, p2, p3)
 ├── tests/             <- Pruebas (pytest) del módulo, de la validación con DeepChecks, de la API y del monitoreo
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
 │   ├── p1.yml                         <- Acción de P1: entrenamiento y registro en MLflow
 │   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
 │   ├── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
-│   ├── api.yml                        <- Smoke test de la imagen de la API en cada PR
+│   ├── api.yml                        <- Smoke test de la imagen de la API en cada PR; en push, publicación en GHCR
+│   ├── compose.yml                    <- Sistema completo de Docker Compose en PR y en push a performance_main y main
 │   └── deploy-api.yml                 <- Despliegue de la API en el EC2 al hacer merge a api_rest, monitoreo_drift, performance_main o main
 ├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
 ├── .dockerignore      <- Lo que no entra al contexto de construcción de la imagen (datos, .env, .git)
 ├── Dockerfile         <- Imagen de la API (estándar OCI: Docker o Podman)
+├── docker-compose.yml <- Sistema completo: MLflow local, sembrador y API (perfiles servidor, monitoreo y carga)
 ├── Makefile           <- Comandos del proyecto (make help)
 ├── MLproject          <- Puntos de entrada de `mlflow run` (ingest, train, tune, register)
 ├── python_env.yaml    <- Entorno aislado de `mlflow run` (Python 3.11 + requirements.txt)
 ├── pyproject.toml
 ├── requirements-api.txt   <- Librerías de la imagen de la API (versiones de requirements.txt)
+├── requirements-carga.txt <- Librerías de las pruebas de carga (Locust)
 └── requirements.txt   <- Dependencias con versiones fijadas
 ```
 
@@ -3036,6 +3046,8 @@ FastAPI. (s.f.). *FastAPI* [Documentación]. https://fastapi.tiangolo.com/
 Huyen, C. (2022). *Designing machine learning systems: An iterative process for production-ready applications*. O'Reilly Media.
 
 MiBici. (s.f.). *Datos abiertos* [Conjunto de datos]. Sistema de Bicicleta Pública del Área Metropolitana de Guadalajara. https://mibici.net/es/datos-abiertos/
+
+Mitchell, M., Wu, S., Zaldivar, A., Barnes, P., Vasserman, L., Hutchinson, B., Spitzer, E., Raji, I. D., & Gebru, T. (2019). Model cards for model reporting. En *Proceedings of the Conference on Fairness, Accountability, and Transparency* (pp. 220–229). https://doi.org/10.1145/3287560.3287596
 
 MLflow. (s.f.-a). *ML Model Registry* [Documentación]. https://mlflow.org/docs/latest/ml/model-registry/
 
