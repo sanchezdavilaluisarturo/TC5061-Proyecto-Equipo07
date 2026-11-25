@@ -71,7 +71,7 @@ Cada etapa es un comando del módulo `tc5061_proyecto_equipo07`; los notebooks s
 
 **GitHub Actions:** `TC5061-Proyecto-Equipo07.yml` corre el job de calidad (`ruff`, `pytest` y `make seguridad`) en cada PR, y en cada push a `performance_main` o `main`, que toca el módulo, las pruebas, el Makefile o los workflows. A mano (*Run workflow*) corre la calidad y luego la acción de cada pregunta (`p1.yml`, `p2.yml` y `p3.yml`), que también se puede correr sola. Las tres descargan los datos con caché por el hash del manifiesto, entrenan con su target de `make` y solo registran en MLflow si se marca `registrar`.
 
-**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`). En la Fase 2, P2 agrega la búsqueda `p2-xgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p2-xgb` y `p2-xgb-optuna`, y el modelo registrado `mibici-equipo07-p2-riesgo` (alias `champion` y `challenger`).
+**MLflow del equipo:** https://mlflow.equipo7mlops.com/ (la URL se define en `MLFLOW_TRACKING_URI`). Los runs de la entrega están en el experimento `mibici-equipo07`: `p1-baseline-promedio-4sem`, `p1-hgb-poisson` y `p1-xgb-poisson` (P1), `p2-baseline-historico` y `p2-hgb` (P2), y `p3-baseline` y `p3-pca_kmeans` (P3). En la Fase 2, P1 agrega las búsquedas `p1-xgb-optuna-busqueda` y `p1-hgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p1-xgb-optuna` y `p1-hgb-optuna` y el modelo registrado `mibici-equipo07-p1-demanda` (alias `champion`). En la Fase 2, P2 agrega la búsqueda `p2-xgb-optuna-busqueda` (con sus runs `trial_N`), los candidatos `p2-xgb` y `p2-xgb-optuna`, y el modelo registrado `mibici-equipo07-p2-riesgo` (alias `champion` y `challenger`). P3 registra `mibici-equipo07-p3-segmentos`. Las versiones vigentes de los tres, después del monitoreo, están en [Estado vigente del Model Registry](#estado-vigente-del-model-registry).
 
 ## Ejecución con MLflow Project
 
@@ -248,7 +248,7 @@ grupos = modelo.predict(modelo.input_example)  # o un DataFrame con las 44 varia
 - **Quien consume el modelo no cambia su código.** Promover una versión nueva es mover el alias, en una sola operación; la URI `models:/<nombre>@champion` sigue siendo la misma.
 - **Una sola forma de resolver el modelo.** Con etapas y alias a la vez, `models:/<nombre>/Production` y `models:/<nombre>@champion` podrían apuntar a versiones distintas. Aquí no se usan etapas: esa URI falla porque no hay versiones en la etapa.
 
-**Verificación** (24 de octubre de 2026, desde un directorio ajeno al repositorio, con MLflow 3.16.0 y scikit-learn 1.5.2, contra el servidor del equipo; `register` repite esta comprobación al terminar con `p1_verificar`, `p2_verificar` y `p3_verificar`):
+**Verificación** (24 de octubre de 2026, desde un directorio ajeno al repositorio, con MLflow 3.16.0 y scikit-learn 1.5.2, contra el servidor del equipo; `register` repite esta comprobación al terminar con `p1_verificar`, `p2_verificar` y `p3_verificar`). Las versiones de esta tabla son las de esa fecha, antes del monitoreo; las vigentes están en [Estado vigente del Model Registry](#estado-vigente-del-model-registry):
 
 | URI | Resultado |
 |---|---|
@@ -263,6 +263,18 @@ grupos = modelo.predict(modelo.input_example)  # o un DataFrame con las 44 varia
 | `models:/mibici-equipo07-p3-segmentos@noexiste` | Falla con "alias not found" |
 
 **Requisitos para consumirlo.** El entorno debe tener las versiones de MLflow y scikit-learn de `requirements.txt`. El modelo de P1 se guarda con cloudpickle y al cargarlo importa el paquete `tc5061_proyecto_equipo07`, así que ese paquete debe estar instalado. El `champion` de P2 es un `XGBClassifier` y carga sin el paquete; el baseline de P2 (`P2BaselineHistorico`) sí lo necesita. El `champion` de P3 es un `Pipeline` estándar de scikit-learn (serializado con skops) y cargó sin importarlo; un candidato de P3 con pesos por bloque sí lo necesita, porque usa la función `p3_aplicar_pesos`.
+
+### Estado vigente del Model Registry
+
+Verificado en la interfaz del servidor del equipo el 24-nov-2026. Es el estado después del monitoreo (Entregable 8): en P1 y P2 el challenger reentrenado ganó el A/B y se promovió; en P3 el champion se quedó.
+
+| Modelo registrado | `champion` (lo que sirve la API) | `challenger` | Cómo se llegó ahí | Evidencia |
+|---|---|---|---|---|
+| `mibici-equipo07-p1-demanda` | v3: la v2 reentrenada con datos hasta 2026-09 | Ninguno | Ganó el A/B a la v2 (MAE −6.9 % en octubre 2026) y se promovió con `make monitoreo-p1-promover`, que quita el alias `challenger` | [Monitoreo de P1](#monitoreo-de-p1); run `p1-ab-v2-vs-v3` |
+| `mibici-equipo07-p2-riesgo` | v4: la v3 reentrenada con datos hasta 2026-09 | Ninguno | Ganó el A/B a la v3 (log-loss −7.1 % y AP de riesgo de 0.353 a 0.418) y se promovió con `make monitoreo-p2-promover` | [Monitoreo de P2](#monitoreo-de-p2-riesgo-de-estación); run `p2-ab-v3-vs-v4` |
+| `mibici-equipo07-p3-segmentos` | v4: candidato de la búsqueda con Optuna | v5: la v4 reentrenada con datos hasta 2026-09 | La v5 no superó a la v4 en el A/B (p = 0.83), así que el champion se queda. Al registrar la v5 con el alias `challenger`, el alias dejó a la v3 (el baseline) | [Monitoreo de P3](#monitoreo-de-p3-segmentación-de-estaciones) |
+
+Las versiones anteriores siguen en el Registry sin alias, con su linaje (`reemplazada_por` en las que fueron champion). La ficha de cada modelo (uso previsto, datos, métricas, limitaciones y mantenimiento) está en el [Model Card](references/model-card.md).
 
 ### Problemas frecuentes
 
@@ -777,11 +789,12 @@ El resultado de test se reporta tal como salió: en AP de riesgo, el campeón no
 
 | Versión | Run de origen | Commit | `valid_ap_riesgo` | Alias |
 |---|---|---|---:|---|
-| 3 | `p2-xgb-optuna`, 15 trials (`db1ced6a7d8b4487974deb64bc82b047`) | `fb13fb2` | 0.4324 | `champion` |
-| 2 | `p2-xgb-optuna`, 30 trials (`e5aee1b4a34446d4bc709defe9cf359f`) | `e9602e3` | 0.4314 | `challenger` |
+| 4 | `p2-xgb-challenger` (`20be0d7ce2374ac49b2dff58a7c67ec1`), la v3 reentrenada con datos hasta 2026-09 (ver [Monitoreo de P2](#monitoreo-de-p2-riesgo-de-estación)) | `792a843` | n/a (sin métricas después de entrenar: todos sus datos son de entrenamiento; su prueba fue el A/B) | `champion`, promovida con el A/B `52f0d024c2a84978a34ab56185af0ffe` |
+| 3 | `p2-xgb-optuna`, 15 trials (`db1ced6a7d8b4487974deb64bc82b047`) | `fb13fb2` | 0.4324 | Sin alias (champion de la Fase 2 hasta el Entregable 8; reemplazada por la v4) |
+| 2 | `p2-xgb-optuna`, 30 trials (`e5aee1b4a34446d4bc709defe9cf359f`) | `e9602e3` | 0.4314 | Sin alias (challenger de la Fase 2; el alias pasó a la v4 al registrarla) |
 | 1 | `p2-xgb-optuna`, 15 trials (`db1ced6a7d8b4487974deb64bc82b047`) | `fb13fb2` | 0.4324 | — (queda en el historial) |
 
-Las versiones 1 y 3 apuntan al mismo run. La versión 1 anteriormente era el champion. El registro de la versión 3 únicamente se ejecutó con el fin de evaluar el comando de `register` al volver a registrar otro champion: tal como es deseado, solo la versión 3 conservó el alias, y la versión 1 lo perdió. Por lo tanto, para promover otra versión basta con registrar su run, y el alias se mueve.
+La tabla de resultados de arriba y la selección del campeón describen la Fase 2, cuando el champion era la v3 y el challenger la v2. Las versiones 1 y 3 apuntan al mismo run. La versión 1 anteriormente era el champion. El registro de la versión 3 únicamente se ejecutó con el fin de evaluar el comando de `register` al volver a registrar otro champion: tal como es deseado, solo la versión 3 conservó el alias, y la versión 1 lo perdió. Por lo tanto, para promover otra versión basta con registrar su run, y el alias se mueve.
 
 El modelo champion se carga con el siguiente comando:
 
@@ -909,15 +922,16 @@ mlflow run . -e register -P question=p3 -P run_id=<id del run> -P alias=champion
 - **No decide el campeón:** registra el run que se le indica y comprueba que `models:/<nombre>@<alias>` carga y asigna grupos (esquema de alias y verificación en [Cargar el modelo registrado](#cargar-el-modelo-registrado)). Si el run quedó con `aceptado=false`, advierte: el baseline sigue siendo el piso y es el que corresponde a `champion`.
 - **Solo runs con métricas por conjunto:** un run anterior a los prefijos `train_` y `valid_` se rechaza con un error claro y debe volver a registrarse.
 
-Estado actual del Registry (`mibici-equipo07-p3-segmentos`):
+Estado del Registry (`mibici-equipo07-p3-segmentos`, verificado el 24-nov-2026):
 
 | Versión | Alias | Run de origen | `train_silueta` | `valid_ari` | Aceptado |
 |---:|---|---|---:|---:|---|
+| 5 | `challenger` | `p3-challenger-datos-2026-09` (`2b3696b1f97f48cd86923849b5f8eac2`, commit `868f52e`): la v4 reentrenada con 399 estaciones de 2020-01 a 2026-09 (ver [Monitoreo de P3](#monitoreo-de-p3-segmentación-de-estaciones)) | 0.1618, sobre sus propias 399 estaciones: no es comparable con la de las demás filas (362 estaciones de train); la comparación válida es el A/B | n/a (se entrenó también con valid: no queda un año para medir la estabilidad) | n/a (se evaluó con el A/B: no superó a la v4) |
 | 4 | `champion` | `p3-pca_kmeans_optuna` | 0.1454 | 0.6726 | Sí |
-| 3 | `challenger` | `p3-baseline` | 0.1449 | 0.6561 | n/a |
+| 3 | sin alias (fue `challenger` hasta que se registró la v5) | `p3-baseline` | 0.1449 | 0.6561 | n/a |
 | 1 y 2 | sin alias | `p3-prueba-baseline` y `p3-prueba-pca_kmeans_optuna` (corridas de prueba) | 0.1449 y 0.1455 | 0.6561 y 0.6799 | n/a y sí |
 
-**Selección del campeón.** El campeón es el candidato de la búsqueda con Optuna porque cumple los tres criterios fijados de antemano (silueta mayor que el baseline, ARI de estabilidad mayor o igual y grupo mínimo de al menos 20 estaciones). La ventaja es de 0.0005 de silueta, así que en la práctica las dos versiones son equivalentes y el baseline queda como `challenger`. Si el equipo fija un margen mínimo de silueta para aceptar un modelo, esta promoción tendría que revisarse.
+**Selección del campeón.** El campeón es el candidato de la búsqueda con Optuna porque cumple los tres criterios fijados de antemano (silueta mayor que el baseline, ARI de estabilidad mayor o igual y grupo mínimo de al menos 20 estaciones). La ventaja es de 0.0005 de silueta, así que en la práctica las dos versiones son equivalentes y el baseline quedó como `challenger` (hasta que el monitoreo registró la v5 con ese alias). Si el equipo fija un margen mínimo de silueta para aceptar un modelo, esta promoción tendría que revisarse.
 
 > **Al crear un experimento nuevo en este servidor, usar `artifact_location="mlflow-artifacts:/<nombre>"`.** Sin esa opción el servidor asigna una ruta local suya (`/home/ec2-user/mlflow/artifacts/...`) y la subida de artefactos falla con `Errno 45`. El servidor es MLflow 3.16.1 y el `requirements.txt` fija el cliente en 3.16.0.
 
@@ -2905,6 +2919,10 @@ Las 45 son las 44 variables más el grupo asignado.
 
 Huyen (2022, cap. 9) y Treveil et al. (2020, cap. 7) discuten reentrenar por calendario o por señal de degradación; aquí se combinan porque sin etiquetas la degradación solo se aproxima con la silueta y el drift.
 
+## Model Card
+
+La ficha de los tres modelos en producción está en [`references/model-card.md`](references/model-card.md), con la estructura de Mitchell et al. (2019): uso previsto y fuera de alcance, entradas y salida, datos de entrenamiento, métricas, linaje en el Registry, limitaciones, costo por inferencia, mantenimiento y consideraciones éticas. Resume lo documentado en este README; no agrega resultados.
+
 ## Estructura de carpetas
 
 ```
@@ -2939,30 +2957,36 @@ Huyen (2022, cap. 9) y Treveil et al. (2020, cap. 7) discuten reentrenar por cal
 │   ├── api_p2_peticion.json  <- Petición de ejemplo de la API de P2 (make api-probar-p2)
 │   ├── api_p3_peticion.json  <- Petición de ejemplo de la API de P3 (make api-probar-p3)
 │   ├── despliegue-api.png    <- Diagrama del despliegue de la API en el EC2 (fuente: despliegue-api.candidate.json; interactivo: despliegue-api.html)
+│   ├── model-card.md         <- Model Card de los tres modelos en producción
 │   └── arquitectura.png      <- Diagrama de arquitectura (fuente editable: arquitectura.svg)
 ├── reports/
 │   ├── figures/       <- Gráficas y tablas de cada pregunta (p1_*, p2_*, p3_*)
 │   ├── validacion/    <- Reportes de DeepChecks de cada pregunta (HTML y resumen CSV)
 │   ├── seguridad/     <- Reportes de bandit y pip-audit (JSON)
 │   ├── monitoreo/     <- Reportes de Evidently (HTML y JSON), A/B testing y estaciones nuevas
+│   ├── carga/         <- Resultados de Locust (CSV, HTML y gráficas): P3 en la raíz, p1/, p2/, agrupado/ y tope/
 │   └── evidencias/    <- Capturas de la ejecución de pruebas y chequeos
-├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3, monitoreo_p1, monitoreo_p2, monitoreo_p3), plots, validacion, monitoreo, api/ (main, modelos, p1, p2, p3)
+├── locust/           <- Pruebas de carga: locustfile y escalones por pregunta, gráficas y scripts de CPU y memoria
+├── tc5061_proyecto_equipo07/   <- Módulo: config, dataset, features, modeling/ (train, predict, run, tuning_p1, tuning_p2, tuning_p3, registro_p1, registro_p2, registro_p3, monitoreo_p1, monitoreo_p2, monitoreo_p3), plots, validacion, monitoreo, sembrador, api/ (main, modelos, p1, p2, p3)
 ├── tests/             <- Pruebas (pytest) del módulo, de la validación con DeepChecks, de la API y del monitoreo
 ├── .github/workflows/
 │   ├── TC5061-Proyecto-Equipo07.yml   <- Calidad en los PR y acción que corre las 3 preguntas
 │   ├── p1.yml                         <- Acción de P1: entrenamiento y registro en MLflow
 │   ├── p2.yml                         <- Acción de P2: entrenamiento y registro en MLflow
 │   ├── p3.yml                         <- Acción de P3: entrenamiento y registro en MLflow
-│   ├── api.yml                        <- Smoke test de la imagen de la API en cada PR
+│   ├── api.yml                        <- Smoke test de la imagen de la API en cada PR; en push, publicación en GHCR
+│   ├── compose.yml                    <- Sistema completo de Docker Compose en PR y en push a performance_main y main
 │   └── deploy-api.yml                 <- Despliegue de la API en el EC2 al hacer merge a api_rest, monitoreo_drift, performance_main o main
 ├── .env.example       <- URL de MLflow (copiar a .env, que no se versiona)
 ├── .dockerignore      <- Lo que no entra al contexto de construcción de la imagen (datos, .env, .git)
 ├── Dockerfile         <- Imagen de la API (estándar OCI: Docker o Podman)
+├── docker-compose.yml <- Sistema completo: MLflow local, sembrador y API (perfiles servidor, monitoreo y carga)
 ├── Makefile           <- Comandos del proyecto (make help)
 ├── MLproject          <- Puntos de entrada de `mlflow run` (ingest, train, tune, register)
 ├── python_env.yaml    <- Entorno aislado de `mlflow run` (Python 3.11 + requirements.txt)
 ├── pyproject.toml
 ├── requirements-api.txt   <- Librerías de la imagen de la API (versiones de requirements.txt)
+├── requirements-carga.txt <- Librerías de las pruebas de carga (Locust)
 └── requirements.txt   <- Dependencias con versiones fijadas
 ```
 
@@ -3022,6 +3046,8 @@ FastAPI. (s.f.). *FastAPI* [Documentación]. https://fastapi.tiangolo.com/
 Huyen, C. (2022). *Designing machine learning systems: An iterative process for production-ready applications*. O'Reilly Media.
 
 MiBici. (s.f.). *Datos abiertos* [Conjunto de datos]. Sistema de Bicicleta Pública del Área Metropolitana de Guadalajara. https://mibici.net/es/datos-abiertos/
+
+Mitchell, M., Wu, S., Zaldivar, A., Barnes, P., Vasserman, L., Hutchinson, B., Spitzer, E., Raji, I. D., & Gebru, T. (2019). Model cards for model reporting. En *Proceedings of the Conference on Fairness, Accountability, and Transparency* (pp. 220–229). https://doi.org/10.1145/3287560.3287596
 
 MLflow. (s.f.-a). *ML Model Registry* [Documentación]. https://mlflow.org/docs/latest/ml/model-registry/
 
